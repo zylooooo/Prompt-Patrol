@@ -1,0 +1,48 @@
+services:
+  # Provision the PostgreSQL database for local development
+  postgres:
+    image: postgres:18-alpine
+    container_name: prompt-patrol-postgres
+    restart: unless-stopped
+    env_file:
+      - ./api/.env
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    ports:
+      - 5432:5432
+    networks:
+      - prompt-patrol-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # Start FastAPI Application
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: prompt-patrol-api
+    restart: unless-stopped
+    env_file:
+      - ./api/.env
+    ports:
+      - 8000:8000 # Leave ports open for development, close them later
+    networks:
+      - prompt-patrol-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  prompt-patrol-network:
+
+volumes:
+  postgres_data:
