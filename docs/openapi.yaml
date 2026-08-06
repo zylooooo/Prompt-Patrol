@@ -1,0 +1,2236 @@
+openapi: 3.0.3
+
+# =============================================================================
+# Prompt Patrol — API Contract
+# =============================================================================
+# STATUS: v0.5.1 — DRAFT. Auth + users + checks modules.
+#
+# This is a living document. Modules are added incrementally:
+#   [x] auth      — authentication & session lifecycle
+#   [x] users     — provisioning, roles, RBAC primitives
+#   [x] checks    — single-answer detection + history   (this draft)
+#   [ ] batches   — async batch submission + polling
+#   [ ] audit     — audit log retrieval
+#   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
+#
+# CHANGELOG
+#   0.5.1  Added GET /api/detector (capabilities). `question_text` requiredness
+#          moved out of the schema and onto a server-declared runtime flag
+#          (`requires_question_text`), so the ML team's pending decision no
+#          longer gates the contract or the batch CSV format. Added
+#          `DetectorInfo.used_question_text` and the `question_text_required`
+#          error code. See DECISION LOG [0.5.1].
+#   0.5.0  Checks module implemented. POST /api/checks (synchronous single
+#          detection), GET /api/checks (instructor-scoped history), GET
+#          /api/checks/{id}. `/history` removed as a separate module — it was
+#          a filtered list of checks under a second name.
+#          BREAKING vs. the ML team's proposed draft shape, on six points:
+#            (1) `instructor_id` removed from the request body — attribution
+#                comes from the authorizer context, never the client;
+#            (2) `threshold` (float) replaced by `strictness` (enum), mapped
+#                server-side to per-model calibrated FPR targets;
+#            (3) `model_version` removed from the request — server-owned;
+#            (4) `label` is a machine enum (`verdict`), not display copy;
+#            (5) abstention added — `uncertain` verdict + reason code;
+#            (6) `inference_id` -> `check_id` (uuid), distinct from
+#                `request_id`.
+#          `CheckResult` is the shared schema for single checks and for batch
+#          result rows — one frontend renderer for both. Requires ML sign-off.
+#          Added `explanation` and `spans` as nullable from v0 so the
+#          explanation spike and E5 do not force a breaking revision.
+#          OPEN QUESTIONS flagged inline on POST /api/checks: does the
+#          detector consume `question_text` at inference time, and what is the
+#          abstention rule.
+#   0.4.0  Users module implemented. /api/admin/sessions unblocked — root_admin
+#          check is now backed by users.require_role('root_admin'). Added
+#          POST/GET /api/users, GET /api/users/{id}, GET /api/users/me,
+#          PATCH /api/users/{id}/role, DELETE + POST .../restore for
+#          soft-delete/reactivate. Deletion revokes all of the target's
+#          sessions immediately via an internal sessions.revoke_all_for_user
+#          call — mirrors auth's resolve_or_reject call into users at
+#          callback time, in the opposite direction. Added `deactivated` and
+#          `conflict` error codes. OPEN QUESTION flagged on POST /api/users:
+#          delegation table grants instructor -> teaching_assistant
+#          provisioning per the chain in 0.3.0, but teaching_assistant is
+#          scoped as an E5 extension in the proposal — confirm whether that
+#          delegation authority should be live now or gated until E5.
+#   0.3.0  Invite-first provisioning model adopted: seeded root_admin →
+#          instructor → teaching_assistant delegation chain. No default role;
+#          unprovisioned logins are rejected before a session is created, via
+#          delegation to the users module. Authority switched from /common to
+#          tenant-scoped. Recorded the authorization-location decision.
+#   0.2.0  BREAKING. Removed `role` from the authorizer context — authorization
+#          is owned by the users module, not auth. Split `/auth/me` into
+#          `/auth/session` and a future `/users/me`. Removed
+#          `/auth/frontchannel-logout`. Admin endpoints blocked on users module.
+#   0.1.0  Initial auth draft.
+#
+# Expect 1-2 further breaking revisions before midterm.
+# =============================================================================
+
+info:
+  title: Prompt Patrol API
+  version: 0.5.1
+  description: |
+    Instructor-facing decision-support API for flagging potentially AI-generated
+    short answers in software engineering courses.
+
+    ## Authentication model
+
+    Prompt Patrol is an **OpenID Connect Relying Party**, not an OAuth client.
+    It has no third-party resource server and requests no delegated authority.
+    Entra ID answers exactly one question, once per login: *who is this person?*
+
+    Consequence: **no access token, no refresh token, and no JWT is stored
+    anywhere.** The ID token is validated, its claims extracted, and the token
+    discarded. See IETF `draft-ietf-oauth-browser-based-apps` §7.1
+    ("Single-Domain Browser-Based Applications").
+
+    Session state is server-side. The browser holds an opaque 256-bit random
+    identifier in a cookie; that value is a database lookup key, meaningless
+    outside this system.
+
+    The authority is **tenant-scoped**
+    (`login.microsoftonline.com/{tenant-id}/...`), never `/common`. With
+    `/common`, any Microsoft account could complete the flow, and a personal
+    account with a colliding email address could claim a provisioned slot
+    before the intended user's first login. See "Provisioning" below.
+
+    ## Authentication vs authorization — module boundary
+
+    Separate concerns, separate modules, enforced at different layers. The
+    split is by **granularity**, not preference: the dividing question is
+    whether a decision requires data the gateway does not have.
+
+    | Decision                            | Depends on      | Layer   | Owns  | Failure |
+    |-------------------------------------|-----------------|---------|-------|---------|
+    | Is there a valid session?           | credential only | Gateway | auth  | `401`   |
+    | May this user call this function?   | user attributes | Service | users | `403`   |
+    | May this user act on *this record*? | domain data     | Service | users | `403`   |
+
+    The authorizer resolves **identity only**. It injects `user_id`,
+    `session_id`, and `session_expires_at`, and has no opinion on what that
+    user may do.
+
+    Unauthenticated traffic never reaches application code.
+    *Authenticated-yet-unauthorized* traffic does, and receives a `403` from
+    the users module. This is correct — "forbidden" is an application-domain
+    judgement. See DECISION LOG [0.3.0] for the full rationale.
+
+    ### Session lifetime
+    | Rule              | Value  | Behaviour                                |
+    |-------------------|--------|------------------------------------------|
+    | Sliding idle      | 30 min | `last_seen_at` bumped on every request   |
+    | Absolute cap      | 4 h    | Set at creation, **never extended**      |
+
+    A session dies when either clock fires. The absolute cap bounds the window
+    during which a disabled Entra account retains access — Entra provides no
+    push-based revocation for custom applications (no CAE, no OIDC
+    back-channel logout), so this cap is the primary control, with
+    administrative revocation as the compensating control.
+
+    ## Provisioning — invite-first
+
+    **There is no default role and no self-service registration.** A user
+    record exists because someone with authority created it. Authentication
+    against Entra is necessary but not sufficient for access.
+
+    Delegation chain:
+
+    ```
+    root_admin  (seeded via migration, keyed on Entra `oid`)
+        └── provisions ──> instructor
+                              └── provisions ──> teaching_assistant
+    ```
+
+    `users.provisioned_by` records who granted each account access. For a tool
+    that produces integrity accusations, "who authorised this person" is a
+    question worth being able to answer.
+
+    Records are created **before** first login, keyed on email. First login
+    binds the Entra `oid`/`tid` to the pre-provisioned row permanently;
+    thereafter `email` is display data only.
+
+    ## Detection — service boundary
+
+    **This API is not the detector's API.** The backend owns persistence,
+    instructor identity, authorization, audit, and calibration policy. The
+    detector service owns exactly one thing: text in, normalised score out.
+
+    ```
+    SPA ──> POST /api/checks ──> backend ──> detector service
+                                    │           (stateless, no DB,
+                                    │            no user identity,
+                                    │            no threshold policy)
+                                    ├──> checks table   (result + optional text)
+                                    └──> audit table    (unconditional)
+    ```
+
+    The detector never sees a `user_id`, never writes to Postgres, and never
+    decides a verdict — it returns a score. Thresholding, abstention, and
+    labelling are backend policy, because they depend on calibration artefacts
+    and on the instructor's strictness setting, neither of which is a model
+    concern.
+
+    ### The score contract
+
+    Every detector adapter — fine-tuned RoBERTa/DeBERTa, RADAR, Fast-DetectGPT,
+    Binoculars — MUST emit `raw_score` normalised to `[0, 1]`, **monotonically
+    increasing in AI-likelihood**.
+
+    This is a hard requirement, not a convention. Zero-shot detectors do not
+    natively produce probabilities: Binoculars emits a cross-perplexity ratio
+    where *lower* means more AI-like. Without normalisation at the adapter
+    boundary, swapping the served detector silently inverts the frontend.
+
+    `raw_score` is **not a probability** and MUST NOT be rendered as a
+    percentage. `0.87` displayed as "87% likely AI-generated" is precisely the
+    wrongful-accusation failure mode this project exists to avoid. The
+    display-safe fields are `verdict` and the nullable calibrated `confidence`.
+
+    ### Strictness, not thresholds
+
+    The client sends a named strictness level. The server maps it to a
+    threshold calibrated for the *currently served model* at a target false
+    positive rate on the Mohler validation split.
+
+    | `strictness` | Target FPR | Instructor-facing meaning              |
+    |--------------|-----------|-----------------------------------------|
+    | `lenient`    | 5%        | Flag more, accept more false alarms     |
+    | `standard`   | 1%        | Default                                 |
+    | `strict`     | 0.1%      | Flag only high-confidence cases         |
+
+    Target FPRs are provisional pending E2/E3 calibration results — the enum
+    is stable, the numbers behind it are not.
+
+    A raw threshold from the client would defeat this entirely: score scales
+    are model-specific, so a stored `0.5` means something different after every
+    model swap, and the fixed-FPR guarantee reported in the evaluation report
+    would no longer describe what the deployed application does.
+
+    ### Third-party detectors are evaluation-only
+
+    GPTZero is a commercial API baseline for the comparative study. It MUST NOT
+    appear in the serving path. Calling it at request time would transmit
+    student answers to an overseas third-party processor on every check — a
+    PDPA exposure with no compensating benefit, since it is a benchmark
+    reference and not a deployment candidate.
+
+  contact:
+    name: Loo Zhi Yi — Backend / DevOps
+  license:
+    name: Academic use — SMU CS480
+
+servers:
+  - url: https://promptpatrol.smu.edu.sg
+    description: Production
+  - url: http://localhost:8000
+    description: Local development
+  - url: http://localhost:4010
+    description: Prism mock server
+
+# -----------------------------------------------------------------------------
+# Gateway configuration (non-OpenAPI; documents Terraform intent)
+# -----------------------------------------------------------------------------
+x-gateway-configuration:
+  authorizer:
+    type: REQUEST
+    identity_sources:
+      - $request.header.Cookie
+    result_ttl_seconds: 0   # MUST be 0. Caching reintroduces a revocation
+                            # window and defeats the server-side session store.
+    responsibilities:
+      - Parse the `__Host-pp_session` cookie.
+      - Look up the session row; reject if absent, revoked, past absolute
+        expiry, or idle beyond 30 minutes.
+      - Reject if the static CSRF header `X-PP-Client` is missing.
+      - Bump `last_seen_at`.
+      - Return an IAM policy plus the context object below.
+    authorizer_context:
+      # IDENTITY ONLY. Do not add `role`, `email`, or any profile field here.
+      # See DECISION LOG [0.3.0] — authorization is not a gateway concern.
+      user_id: uuid
+      session_id: uuid
+      session_expires_at: RFC 3339 timestamp
+    explicitly_out_of_scope:
+      - Role resolution
+      - Permission evaluation
+      - Profile hydration
+      - Any route-to-role mapping
+  network:
+    note: |
+      Gateway enforcement holds ONLY if ECS is unreachable by any other path.
+      The ECS task security group MUST accept ingress exclusively from the
+      API Gateway VPC Link. This SG rule is a security control, not hygiene.
+  csrf:
+    mechanism: |
+      Defence in depth: `SameSite=Strict` + `__Host-` prefix + a mandatory
+      static request header (`X-PP-Client: 1`), checked by the authorizer.
+
+      SameSite alone is insufficient here. SameSite is evaluated on *site*
+      (eTLD+1), so every other `*.smu.edu.sg` subdomain is same-site with this
+      application. A subdomain takeover anywhere in the university's DNS would
+      enable CSRF. A custom header forces a CORS preflight on any cross-origin
+      attempt, which the gateway will not approve.
+    header: X-PP-Client
+
+tags:
+  - name: auth
+    description: |
+      Authentication and session lifecycle. **This module does not handle
+      authorization.** It establishes *who* a caller is; the users module
+      decides what they may do, and whether they may be here at all.
+
+      `/auth/login` and `/auth/callback` are **browser redirect endpoints, not
+      JSON APIs**. The SPA must reach them via `window.location.href = ...`,
+      never `fetch()`. A `fetch()` against an opaque 302 will fail.
+  - name: auth-admin
+    description: |
+      Administrative session management. Role-gated by
+      `users.require_role('root_admin')`, now that the users module exists.
+  - name: users
+    description: |
+      Provisioning, profile, and roles. **Owns authorization** for the whole
+      system — auth resolves identity and asks this module "does this person
+      get in, and as what." See the module boundary table in
+      `info.description` and DECISION LOG [0.3.0].
+
+      No self-service registration. Every row exists because someone with
+      delegation authority created it (`provisioned_by`). See the
+      delegation table on `POST /api/users`.
+  - name: checks
+    description: |
+      Single-answer detection and check history. The instructor-facing core of
+      the application (E4).
+
+      Owns the *decision*, not the *score* — see "Detection — service boundary"
+      in `info.description`. The detector service is called synchronously and
+      returns a normalised score; thresholding, abstention, verdict assignment,
+      persistence, and audit all happen here.
+
+      `CheckResult` is shared with the batches module: a batch result row and a
+      single check are the same object, so the SPA has one renderer.
+
+# =============================================================================
+# PATHS
+# =============================================================================
+paths:
+
+  # ---------------------------------------------------------------------------
+  /api/auth/login:
+    get:
+      tags: [auth]
+      operationId: initiateLogin
+      summary: Begin the OIDC Authorization Code flow
+      x-auth-enforcement: NONE   # API Gateway: authorizationType = NONE
+      x-browser-navigation-only: true
+      description: |
+        Generates `state`, `nonce`, and a PKCE `code_verifier`, persists them
+        server-side keyed by a short-lived transaction id, and redirects the
+        browser to Entra's `/authorize` endpoint on the **tenant-scoped**
+        authority.
+
+        **Frontend contract:** `window.location.href = '/api/auth/login'`.
+        Do not call this with `fetch()` or Axios.
+
+        Scopes requested: `openid profile email`. Deliberately **not**
+        `offline_access` — no refresh token is wanted or stored.
+      parameters:
+        - name: returnTo
+          in: query
+          required: false
+          description: |
+            Path to return to after successful login, for deep links.
+
+            **MUST** be validated server-side as a site-relative path: it has
+            to begin with a single `/`, must not begin with `//`, and must not
+            contain a scheme. Anything else is rejected with 400.
+
+            The regex below is documentation, not enforcement. Unvalidated,
+            this parameter is an open redirect on an authentication endpoint —
+            a credible phishing primitive against instructors, and the most
+            likely security defect in this module.
+          schema:
+            type: string
+            pattern: '^\/(?!\/).*$'
+            maxLength: 512
+            example: /history?page=2
+      responses:
+        '302':
+          description: Redirect to the Entra ID authorization endpoint.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+                example: https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?client_id=...&response_type=code&code_challenge=...
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ---------------------------------------------------------------------------
+  /api/auth/callback:
+    get:
+      tags: [auth]
+      operationId: handleCallback
+      summary: OIDC redirect URI — called by Entra, not by the SPA
+      x-auth-enforcement: NONE
+      x-called-by: Microsoft Entra ID (browser redirect)
+      description: |
+        Registered in the Entra app registration as a **Web** redirect URI.
+        Not `SPA` — that platform type disables client secrets, and this is a
+        confidential client.
+
+        Server-side sequence:
+        1. Validate `state` against the stored transaction. Mismatch → 403.
+        2. Exchange `code` + `code_verifier` + client secret at Entra's
+           `/token` endpoint. *(egress required)*
+        3. Fetch JWKS on cache miss or `kid` rotation. *(egress required)*
+        4. Validate the ID token: signature, `iss`, `aud`, `exp`, `nonce`.
+           Reject if `tid` is not the configured SMU tenant.
+        5. Extract `oid`, `tid`, `email`, `name`, `sid`, `login_hint`.
+        6. **Delegate to the users module** —
+           `users.resolve_or_reject(oid, tid, email)`. See below.
+        7. Insert a fresh `sessions` row — a **new** session id on every login,
+           which defeats session fixation.
+        8. **Discard the ID token.** It is not persisted.
+
+        Steps 2 and 3 are the *only* backend-to-Entra traffic in the entire
+        system, and the sole justification for the NAT Gateway.
+
+        ### Step 6 — provisioning resolution
+        Auth cannot decide whether a person may use this system; that is a
+        users-module policy. But auth needs a `users.id` before it can insert a
+        session row. It therefore **asks**:
+
+        ```python
+        user = await users.resolve_or_reject(oid=..., tid=..., email=...)
+        ```
+
+        The users module resolves in this order:
+
+        | Case | Match | Action |
+        |------|-------|--------|
+        | Returning user | `(tenant_id, external_id)`, `deleted_at IS NULL` | Return the row |
+        | First login | `email` (case-insensitive) where `external_id IS NULL` and `deleted_at IS NULL` | Bind `oid`/`tid`, set `display_name`, stamp `first_login_at`, return |
+        | Deactivated | match found (by either rule above) but `deleted_at IS NOT NULL` | **Reject** — `deactivated`, not `not_provisioned` |
+        | Unprovisioned | no match at all | **Reject** — `not_provisioned` |
+
+        On rejection: **no user row is created/modified and no session is
+        issued.** Redirect to the SPA's `not_provisioned` or `deactivated`
+        route accordingly — these are deliberately distinguishable in the
+        response and in the audit log (never had access, vs. access was
+        revoked), even if you choose to show the end user the same generic
+        front-end copy for both. Repeated unprovisioned or deactivated login
+        attempts against this endpoint are a signal worth retaining.
+
+        Auth never names a role, never writes `users.role`, and never decides
+        eligibility. It delegates and acts on the answer.
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+          description: Authorization code. Present on success.
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+          description: Present instead of `code` when Entra rejects the request.
+          example: access_denied
+        - name: error_description
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: |
+            On success: session cookie set, redirect to the SPA (to `returnTo`
+            if supplied and validated, else `/`).
+
+            On rejected provisioning: **no cookie**, redirect to the SPA
+            `not_provisioned` route.
+
+            On an Entra-side error: redirect to the SPA error route with a
+            safe, non-reflected error code. Never render `error_description`
+            back to the browser unescaped.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: __Host-pp_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400
+            Location:
+              schema: { type: string, format: uri }
+        '403':
+          description: |
+            `state` mismatch, missing, or expired, or `tid` is not the
+            configured tenant. Indicates CSRF against the redirect URI, a stale
+            browser tab, or a cross-tenant attempt. Logged as a security event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Entra token endpoint unreachable or returned an error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ---------------------------------------------------------------------------
+  /api/auth/session:
+    get:
+      tags: [auth]
+      operationId: getSession
+      summary: Return current session state
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      description: |
+        The SPA's route guard. Called on application bootstrap; a 401 means
+        "navigate to login".
+
+        **Returns session state only — no profile, no role.** Those are owned
+        by the users module and served by `GET /api/users/me`. The SPA fires
+        both in parallel on bootstrap; there is no additional round-trip in
+        practice.
+
+        This handler performs no session lookup — the gateway authorizer
+        already did, and injected the context this response is built from.
+
+        > Replaces `GET /api/auth/me` from v0.1.0, which leaked `email`,
+        > `display_name`, and `role` into the auth module.
+      responses:
+        '200':
+          description: Active session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionState' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke all sessions for the current user
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      description: |
+        Global logout. Revokes **every** active session for this `user_id`,
+        not just the calling browser's — the chosen semantics for an academic
+        integrity tool.
+
+        Requires no role check: a user may always terminate their own sessions.
+
+        Sessions are soft-deleted (`revoked_at = now()`), never hard-deleted,
+        preserving referential integrity with audit entries.
+
+        Idempotent: a second call returns 204.
+
+        ### Two-step logout — the SPA must complete it
+        Revoking the local session is not sufficient. The Entra SSO session
+        survives, so the user can click "log in" and be silently readmitted.
+        This looks like a logout bug and is not.
+
+        The response carries `X-Entra-Logout-Url`. The SPA **must** navigate
+        to it:
+
+        ```ts
+        const res = await api.post('/api/auth/logout');
+        window.location.href = res.headers['x-entra-logout-url'];
+        ```
+
+        The URL is built server-side so tenant configuration never enters the
+        frontend bundle and does not vary between environments.
+
+        ### On `logout_hint`
+        The URL includes `logout_hint` when available, suppressing Entra's
+        account-picker prompt. Its value is the `login_hint` **claim issued by
+        Entra**, captured at callback.
+
+        It is *not* `users.id` and *not* the UPN. Both are ignored by Entra —
+        `users.id` is a UUID this system mints that Entra has never seen, and
+        Microsoft's documentation explicitly warns against passing UPNs. Either
+        substitution silently produces the account picker.
+
+        Requires the `login_hint` optional claim to be enabled on the ID token
+        in the Entra app registration (Token configuration).
+
+        ### Residual behaviour — document, do not fix
+        On domain-joined machines holding a valid Primary Refresh Token, the
+        next sign-in may complete silently even after a correct
+        `end_session_endpoint` redirect. That is device SSO working as
+        designed. Note it in the test plan so nobody spends a day on it.
+      responses:
+        '204':
+          description: All sessions for this user revoked; cookie cleared.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: __Host-pp_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
+            X-Entra-Logout-Url:
+              required: true
+              schema:
+                type: string
+                format: uri
+                example: https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/logout?post_logout_redirect_uri=https%3A%2F%2Fpromptpatrol.smu.edu.sg&logout_hint=...
+              description: |
+                `post_logout_redirect_uri` must be registered in the Entra app
+                registration, or Entra silently ignores it and strands the user
+                on a generic Microsoft page. Register production and
+                `http://localhost:5173` for development.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # ADMIN — BLOCKED ON USERS MODULE
+  # ---------------------------------------------------------------------------
+  /api/admin/sessions:
+    get:
+      tags: [auth-admin]
+      operationId: listSessions
+      summary: List active sessions across users
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY          # authentication only
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Administrative visibility into active sessions. This is the compensating
+        control for the absence of push-based revocation from Entra — the only
+        way to terminate access inside the 4-hour absolute cap.
+
+        Restricted to `root_admin`. **Not** instructors: the ability to
+        enumerate and terminate other instructors' sessions is a privilege
+        escalation path in a tool that produces integrity accusations.
+
+        Bootstrap is resolved — the root admin is seeded by migration, keyed on
+        a hardcoded Entra `oid`. Auditable, in version control, reproducible.
+
+        Still to add: `GET /api/auth/sessions`, returning only the caller's
+        own sessions ("sign out my other devices"). Needs no role check and
+        belongs in the auth module.
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Active sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SessionSummary' }
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/admin/sessions/{session_id}:
+    delete:
+      tags: [auth-admin]
+      operationId: revokeSession
+      summary: Revoke a single session
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY          # authentication only
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Soft-delete. Takes effect on the very next request, because the gateway
+        authorizer runs with `result_ttl_seconds = 0`.
+
+        Writes an audit entry recording actor, target, and timestamp.
+
+        Note the distinction from `DELETE /api/users/{id}`: this revokes ONE
+        session by `session_id`, for the "kick this one device" admin action.
+        `DELETE /api/users/{id}` revokes ALL sessions for a user as a side
+        effect of deactivating the account. Different granularity, different
+        trigger — don't conflate them when implementing.
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Revoked. Idempotent — an already-revoked session returns 204.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # USERS — provisioning, roles, RBAC primitives
+  # ---------------------------------------------------------------------------
+  /api/users/me:
+    get:
+      tags: [users]
+      operationId: getCurrentUser
+      summary: Return the current user's profile and role
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      description: |
+        Profile and role for the caller identified by the gateway-injected
+        `user_id`. Called alongside `GET /api/auth/session` on SPA bootstrap
+        — see the module boundary table in `info.description`. This is the
+        endpoint that v0.1.0's `GET /api/auth/me` was split into.
+      responses:
+        '200':
+          description: Current user's profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users:
+    post:
+      tags: [users]
+      operationId: provisionUser
+      summary: Provision a new user record (invite-first)
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY          # authentication only
+      x-authorization: |
+        users module — delegation-scoped, see table below. Not a single
+        require_role() call.
+      description: |
+        Creates a `users` row keyed on `email`, with `external_id`/`tenant_id`
+        left NULL — first login binds them (see `/api/auth/callback` step 6).
+        No session is created here; this is invitation, not authentication.
+
+        `provisioned_by` is set to the caller's `user_id` server-side. Never
+        accepted from the request body.
+
+        ### Delegation-scoped authorization
+        Enforces the delegation chain from `info.description` §Provisioning:
+
+        | Caller role           | May provision role     |
+        |------------------------|-------------------------|
+        | `root_admin`           | `instructor`             |
+        | `instructor`           | `teaching_assistant`     |
+        | `teaching_assistant`   | — (`403`)                |
+
+        `root_admin` itself can never be a value of `role` in the request
+        body — there is exactly one, created only by the seed migration,
+        `provisioned_by = NULL`. Requesting it is `403` regardless of caller.
+
+        > **OPEN QUESTION — confirm before this ships.** `teaching_assistant`
+        > is scoped as an E5 extension in the proposal (not yet built in the
+        > web app). This table gives `instructor` real delegation authority
+        > to provision TA accounts *today*, matching the chain already
+        > committed to in v0.3.0's decision log. If that authority shouldn't
+        > be live until E5 actually exists, restrict the caller column to
+        > `root_admin` only for now and revisit this table when E5 starts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreateRequest' }
+      responses:
+        '201':
+          description: User provisioned. `first_login_at` is null until they sign in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: |
+            Caller's role may not provision the requested role (see
+            delegation table), or the request named `root_admin`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            `email` already has a `users` row. If that row is soft-deleted,
+            use `POST /api/users/{id}/restore` instead — restoring an
+            existing account and provisioning a new one are different
+            audited actions, and collapsing them into upsert semantics here
+            would blur that distinction in the audit trail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: List / filter users
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Administrative directory view. Restricted to `root_admin`, same
+        rationale as `GET /api/admin/sessions` — an instructor enumerating
+        other instructors' accounts is a privilege-escalation-adjacent
+        surface in a tool used for integrity adjudication, even though
+        instructors have narrow delegation authority over TA provisioning.
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [root_admin, instructor, teaching_assistant]
+        - name: include_deleted
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include soft-deleted rows. Excluded by default.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/users/{id}:
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: Get a single user
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — require_role('root_admin') OR id == caller's user_id"
+      description: |
+        `root_admin` may fetch any user. Any other caller may fetch only
+        their own record. Functionally redundant with `GET /api/users/me`
+        for the self case — kept anyway so an admin-UI table and a
+        single-user drill-down can hit the same shape via the same route
+        pattern.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: User record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [users]
+      operationId: deleteUser
+      summary: Soft-delete a user and revoke all of their sessions
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Sets `deleted_at = now()`. Never a hard delete — the audit trail's
+        referential integrity depends on the row surviving, same rationale
+        as soft-deleted sessions.
+
+        **Immediately revokes every active session belonging to this user**,
+        not just the profile flag. This is the users module calling back
+        into auth-owned state — the mirror image of auth calling
+        `users.resolve_or_reject` at callback time (see
+        `/api/auth/callback` step 6), just in the other direction:
+
+        ```python
+        await sessions.revoke_all_for_user(user_id)
+        # internal cross-module call, not a public endpoint.
+        ```
+
+        This is why the gateway authorizer's `result_ttl_seconds = 0` matters
+        (see `x-gateway-configuration`): without it, a cached "session valid"
+        decision could outlive this revocation by up to the cache TTL, and
+        "immediately" would be false.
+
+        A deleted user hitting `/api/auth/callback` afterward is rejected
+        with the distinct `deactivated` error code, not `not_provisioned` —
+        the audit trail should be able to tell "never had access" apart from
+        "access was revoked."
+
+        Distinct from `DELETE /api/admin/sessions/{session_id}`, which
+        revokes exactly one session and does not touch the user record.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: |
+            Deleted; all sessions for this user revoked. Idempotent — an
+            already-deleted user returns 204.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/users/{id}/role:
+    patch:
+      tags: [users]
+      operationId: changeUserRole
+      summary: Change a user's role
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Isolated from `POST /api/users` and from a general profile update so
+        a role change is always its own distinct, audited action —
+        `actor_id`, `old_role`, `new_role`, `timestamp` — independent of
+        whatever fields a future general-update endpoint might cover.
+
+        Restricted to `root_admin` regardless of the delegation table on
+        `POST /api/users`: delegated provisioning (instructor →
+        teaching_assistant) grants authority to *create* an account at a
+        role, not to *reassign* role after the fact. Keeps every
+        role-escalation path in exactly one place for audit purposes —
+        see DECISION LOG [0.3.0] on why authorization stays centralised in
+        code rather than split across delegation paths.
+
+        Cannot target `root_admin`, in either direction — it is not
+        reassigned via API in or out.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserRolePatchRequest' }
+      responses:
+        '200':
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/users/{id}/restore:
+    post:
+      tags: [users]
+      operationId: restoreUser
+      summary: Reactivate a soft-deleted user
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: users module — require_role('root_admin')
+      description: |
+        Clears `deleted_at`. Kept as its own endpoint rather than folded into
+        `POST /api/users` as upsert-on-conflict — see the 409 note there.
+        Provisioning a new account and restoring an existing one are
+        different audited actions even though the end state looks similar.
+
+        Does **not** restore old sessions — all of the user's sessions were
+        revoked at deletion time and stay revoked. The user must complete
+        `/api/auth/login` again. `external_id`/`tenant_id` bound before
+        deletion are preserved, so the next login resolves as the
+        **returning-user** case in `/api/auth/callback`, not a second
+        first-login/provisioning event.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Restored user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: User is not currently deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ---------------------------------------------------------------------------
+  # CHECKS — single-answer detection
+  # ---------------------------------------------------------------------------
+  /api/detector:
+    get:
+      tags: [checks]
+      operationId: getDetectorCapabilities
+      summary: Declare the served detector's runtime input contract
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      description: |
+        Fetched once on SPA bootstrap, alongside `GET /api/auth/session` and
+        `GET /api/users/me`.
+
+        Exists so that facts about the served model which are **not yet known**
+        — and which will change as E2 progresses — do not have to be encoded in
+        the schema and revised. The schema stays fixed; the server declares its
+        current requirements; the SPA and the batch validator adapt.
+
+        This is the mechanism that keeps `question_text` reversible. See
+        DECISION LOG [0.5.1].
+
+        Cache for the session. A model swap mid-session is not a scenario worth
+        engineering for — the values change on deploy, and the 4-hour absolute
+        session cap bounds staleness.
+      responses:
+        '200':
+          description: Current detector capabilities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetectorCapabilities' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: |
+            Detector service unreachable. The SPA should disable submission
+            rather than let an instructor type an answer into a form that
+            cannot be submitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/checks:
+    post:
+      tags: [checks]
+      operationId: createCheck
+      summary: Run a detection on one short answer
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        users module — any provisioned, non-deleted user. No role gate:
+        detection is the product. Attribution is the control, not restriction.
+      description: |
+        Synchronous. Submits one short answer, returns a verdict.
+
+        `actor_id` on the persisted row is taken from the gateway-injected
+        `user_id`. **There is no `instructor_id` field in this request body,
+        and one supplied will be rejected with 400** (`additionalProperties:
+        false`). A client-settable attribution field on a tool that produces
+        academic-integrity accusations is a forgery primitive; whoever ran the
+        check is whoever's session ran it.
+
+        > Note the deliberate asymmetry with the audit module, where an
+        > instructor-supplied `actor_id` *filter* is silently overridden rather
+        > than rejected. That override prevents existence enumeration. Here
+        > there is nothing to enumerate, so failing loudly on a client bug is
+        > the better behaviour.
+
+        ### Why 201 and not 200
+        A check is a persisted resource with an identifier, retrievable at
+        `GET /api/checks/{id}` and listed in history. The audit row is written
+        unconditionally even when `retain_answer` is false. This is a creation,
+        not an RPC call.
+
+        ### Why synchronous — and the condition under which this changes
+        A fine-tuned encoder classifier (RoBERTa/DeBERTa, 256 tokens) is
+        order-of-hundreds-of-milliseconds. Synchronous is the right shape and
+        avoids inflicting the batch polling flow on the single-answer path.
+
+        **This assumption does not survive every outcome of E2.** Fast-DetectGPT
+        and Binoculars require full LLM forward passes — seconds on GPU, far
+        worse on CPU. If a zero-shot detector wins the comparison, this endpoint
+        migrates to the `202 + job_id + polling` pattern already used by
+        `/api/batches`, and `CheckResult` is unchanged by that migration —
+        only the delivery mechanism moves. Flagged so the decision is made
+        deliberately rather than discovered at integration.
+
+        Hard server-side timeout: 10s, returning `504` with
+        `detector_timeout`. No partial results.
+
+        ### Retention
+        `retain_answer` governs **only** whether `answer_text` is persisted on
+        the checks row. It does not govern the audit entry, which records actor,
+        timestamp, model version, and verdict unconditionally and is not
+        client-controllable.
+
+        > **OPEN — PDPA / retention policy.** Storing student answers requires a
+        > documented retention period and a purge job, and sponsor sign-off.
+        > Currently unassigned in the proposal. Until it lands, treat
+        > `retain_answer: true` as provisional. The contract is written so that
+        > defaulting it to `false` later is a config change, not a schema change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckCreateRequest' }
+      responses:
+        '201':
+          description: |
+            Detection complete. A `201` does **not** mean the answer is
+            AI-generated, nor that the detector was confident — check `verdict`,
+            which may be `uncertain`.
+          headers:
+            Location:
+              schema:
+                type: string
+                example: "/api/checks/3f9a1c20-5b8e-4a11-9d3c-7e2f6b0a4c88"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckResult' }
+        '400':
+          description: |
+            Malformed body, unknown field (notably `instructor_id`,
+            `threshold`, or `model_version` — all removed in 0.5.0), or
+            `answer_text` below the hard floor of 10 characters.
+
+            Note: an answer that is *short but non-trivial* is NOT a 400. It is
+            a successful check with `verdict: uncertain` and
+            `abstain_reason: answer_too_short`. The instructor still needs a
+            recorded, auditable outcome for that submission. Only unusable
+            input is a validation error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: '`answer_text` exceeds 10,000 characters.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: |
+            Detector service unavailable. Distinct from `500` — this is
+            retryable by the client and should render as "try again shortly",
+            not as a failed check. Nothing is persisted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '504':
+          description: Detector exceeded the 10s budget. Nothing is persisted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    get:
+      tags: [checks]
+      operationId: listChecks
+      summary: List past checks (history)
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        users module — object-level. Instructors and teaching assistants see
+        only their own checks; root_admin sees all.
+      description: |
+        This **is** the history feature. There is no `/api/history` — see
+        DECISION LOG [0.5.0].
+
+        Object-level scoping is applied server-side from the authorizer context.
+        An `actor_id` filter from a non-`root_admin` caller is **silently
+        overridden** to the caller's own `user_id`, never rejected — same
+        rationale as the audit module: a `403` on someone else's id confirms
+        that id exists, which is an enumeration oracle. Silent scoping leaks
+        nothing.
+
+        This is OWASP API1 territory and cannot be enforced at the gateway,
+        which has no idea which rows belong to whom. See DECISION LOG [0.3.0].
+
+        Returns `CheckSummary`, not `CheckResult` — history is a table view and
+        does not need explanations, spans, or full answer text. Drill down via
+        `GET /api/checks/{id}`.
+      parameters:
+        - name: actor_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: |
+            Honoured only for `root_admin`. Silently overridden to the caller's
+            own `user_id` for every other role. Do not rely on it in the SPA.
+        - name: verdict
+          in: query
+          schema: { $ref: '#/components/schemas/Verdict' }
+        - name: batch_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: |
+            Filter to checks produced by one batch. This is how the batches
+            module exposes its results — batch rows are ordinary checks.
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated checks, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CheckSummary' }
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/checks/{id}:
+    get:
+      tags: [checks]
+      operationId: getCheck
+      summary: Retrieve one past check
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        users module — object-level. `root_admin`, or the check's own
+        `actor_id`.
+      description: |
+        Returns the full `CheckResult`, including `answer_text` if it was
+        retained.
+
+        A check belonging to another instructor returns **404, not 403** — see
+        the `NotFound` response description. Distinguishing "exists but not
+        yours" from "does not exist" turns this endpoint into a probe for
+        whether a colleague has checked a particular submission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckResult' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+components:
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-pp_session
+      description: |
+        Opaque 256-bit CSPRNG session identifier. Carries no claims and is not
+        a token — it is a primary key into the `sessions` table and is
+        meaningless outside this system.
+
+        Attributes (per `draft-ietf-oauth-browser-based-apps` §6.1.3.2):
+        `Secure` and `HttpOnly` are MUST; `SameSite=Strict`, `Path=/`, absent
+        `Domain`, and the `__Host-` prefix are SHOULD and all applied.
+
+        Establishes identity only. Authorization is evaluated separately by the
+        users module.
+
+  schemas:
+
+    SessionState:
+      type: object
+      required: [user_id, session_expires_at, idle_expires_at]
+      description: |
+        Session state only. Deliberately excludes profile data and role — see
+        the module boundary note in `info.description`. For display name,
+        email, and role, call `GET /api/users/me`.
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: |
+            Internal identifier. Never sent to Entra — Entra has no knowledge
+            of it. Use as the key for `GET /api/users/me`.
+        session_expires_at:
+          type: string
+          format: date-time
+          description: |
+            Absolute expiry. Never extended. The SPA can use this to warn
+            before forced re-authentication.
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: Sliding 30-minute deadline; advances on each request.
+
+    SessionSummary:
+      type: object
+      required: [session_id, user_id, created_at, last_seen_at, absolute_expiry]
+      description: Administrative view of a session.
+      properties:
+        session_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        absolute_expiry: { type: string, format: date-time }
+        ip:
+          type: string
+          nullable: true
+          description: |
+            Recorded for audit correlation. Deliberately **not** enforced —
+            instructors move between campus WiFi, mobile, and VPN, and pinning
+            would cause spurious logouts. Detective control, not preventive.
+        user_agent:
+          type: string
+          nullable: true
+
+    User:
+      type: object
+      required: [id, email, role, created_at]
+      description: |
+        Profile and authorization state. Owned entirely by the users module —
+        the auth module never reads or writes `role` or `provisioned_by`; see
+        the module boundary table in `info.description`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+          description: |
+            Provisioning key (CITEXT, case-insensitive). Authoritative before
+            first login; display data only afterward — see "Provisioning" in
+            `info.description`.
+        display_name:
+          type: string
+          nullable: true
+          description: NULL until first login; set from the Entra `name` claim thereafter.
+        role:
+          type: string
+          enum: [root_admin, instructor, teaching_assistant]
+        provisioned_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: The provisioning caller's `user_id`. NULL only for the seeded `root_admin`.
+        first_login_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL means invite pending — this row has never completed a login.
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Soft-delete marker. NULL means active.
+
+    UserCreateRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [instructor, teaching_assistant]
+          description: |
+            `root_admin` is rejected here — see the delegation table on
+            `POST /api/users`.
+        display_name:
+          type: string
+          description: |
+            Optional admin-UI placeholder shown before first login.
+            Overwritten by the Entra `name` claim on first login — never
+            treat this value as authoritative.
+
+    UserRolePatchRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [instructor, teaching_assistant]
+          description: "`root_admin` cannot be assigned or removed via this endpoint."
+
+    # -------------------------------------------------------------------------
+    # CHECKS
+    # -------------------------------------------------------------------------
+
+    Strictness:
+      type: string
+      enum: [lenient, standard, strict]
+      default: standard
+      description: |
+        Instructor-facing flagging aggressiveness. Mapped **server-side** to a
+        threshold calibrated for the currently served model at a target FPR —
+        see the strictness table in `info.description`.
+
+        The client never sends a numeric threshold. Score scales are
+        model-specific, so a client-side threshold silently changes meaning on
+        every model swap and discards the fixed-FPR calibration that the whole
+        E2/E3 evaluation is built on.
+
+    Verdict:
+      type: string
+      enum: [ai_generated, human_written, uncertain]
+      description: |
+        Machine-readable. **Display copy is owned by the frontend** — an API
+        that returns "Likely AI-generated" forces the SPA to string-match,
+        makes wording changes breaking, and blocks i18n.
+
+        `uncertain` is a first-class outcome, not an error. The proposal
+        commits to abstention on low-signal input; a two-value label makes that
+        impossible and turns a coin flip into a stated verdict.
+
+    AbstainReason:
+      type: string
+      nullable: true
+      # `null` MUST be an explicit enum member in OAS 3.0 when nullable: true —
+      # otherwise generated validators reject null against the enum.
+      enum: [answer_too_short, low_signal, score_in_abstention_band, null]
+      description: |
+        Non-null iff `verdict == uncertain`. Drives the instructor-facing
+        explanation of *why* the tool declined to call it.
+
+        > **OPEN — abstention rule.** Needs a decision from the ML team before
+        > implementation. Candidates, not mutually exclusive:
+        >   (a) token-count floor (below N tokens, always abstain);
+        >   (b) score band around the threshold, width set by calibration;
+        >   (c) calibrated confidence below a floor.
+        > (b) requires the calibration work in E2 to be complete, so a v0 stub
+        > may ship with (a) only. The enum is written to accommodate all three
+        > so adding one later is non-breaking.
+
+    DetectorInfo:
+      type: object
+      required: [model_version, strictness_applied, used_question_text]
+      description: |
+        Provenance for the verdict. Reproducing a past decision needs both the
+        model *and* the operating point — the model version alone is not enough,
+        because recalibration changes the verdict for an unchanged score.
+
+        Present on every result, for audit trail and model swappability.
+      properties:
+        model_version:
+          type: string
+          example: roberta-base-detector-v0
+          description: |
+            Server-selected. **Not** client-settable — model selection is a
+            deployment concern, and a client that can pin a version can pin a
+            stale or unevaluated one.
+        calibration_version:
+          type: string
+          nullable: true
+          example: mohler-val-2026-07-01
+          description: |
+            Identifier of the calibration artefact (temperature + threshold
+            table) applied. NULL before E2 calibration exists. Correlates with
+            the MLflow run.
+        strictness_applied:
+          $ref: '#/components/schemas/Strictness'
+        threshold_applied:
+          type: number
+          format: float
+          nullable: true
+          description: |
+            The numeric threshold the server actually used. Returned for audit
+            and reproducibility — **not for display, and not for the SPA to
+            re-implement thresholding against.** The verdict is already decided.
+        target_fpr:
+          type: number
+          format: float
+          nullable: true
+          example: 0.01
+          description: |
+            False positive rate this threshold was calibrated to on the Mohler
+            validation split. This is the number that belongs in an
+            instructor-facing explanation of strictness, not `threshold_applied`.
+        used_question_text:
+          type: boolean
+          description: |
+            Whether `question_text` was actually fed to the detector for this
+            check, as opposed to merely stored.
+
+            Not cosmetic. Two checks carrying the same `model_version` are not
+            comparable if one was scored on (question, answer) and the other on
+            answer alone. Without this field, a history table silently mixes two
+            different input compositions and E3's reliability analysis has no
+            way to separate them after the fact.
+
+    CheckCreateRequest:
+      type: object
+      required: [answer_text]
+      additionalProperties: false   # rejects instructor_id / threshold /
+                                    # model_version with 400. Deliberate.
+      properties:
+        answer_text:
+          type: string
+          minLength: 10
+          maxLength: 10000
+          description: |
+            The student answer. `minLength` is a hard usability floor, not the
+            abstention boundary — short-but-real answers produce
+            `verdict: uncertain`, not a 400. See the 400 response on
+            `POST /api/checks`.
+
+            `maxLength` is well above the detector's 128–256 token window;
+            truncation policy for over-long input is a detector-adapter
+            concern and MUST be reported via `truncated` on the result rather
+            than silently applied.
+        question_text:
+          type: string
+          maxLength: 2000
+          nullable: true
+          description: |
+            The question the answer responds to.
+
+            **Permanently optional in this schema, by design.** Whether the
+            detector consumes it at inference is not yet decided, and the answer
+            is not knowable until fine-tuning is underway. Rather than guess and
+            revise, the requirement is expressed at **runtime**, not in the
+            schema:
+
+              `GET /api/detector` → `requires_question_text: boolean`
+
+            The SPA reads that flag on bootstrap and renders this input as
+            required or optional accordingly; the batch validator applies the
+            same flag to the uploaded file's columns. Flipping the server-side
+            answer is a config change and a redeploy — **not** a contract
+            revision, not a frontend release, not a change to the CSV format
+            instructors have already been taught.
+
+            If the flag is true and this field is absent, the request is
+            rejected with `400 question_text_required`. If the flag is false and
+            the field is supplied, it is stored as display metadata and not sent
+            to the detector — `detector.used_question_text` reports which
+            actually happened, per result.
+
+            > **To the ML team — the cheaper fix is on your side.** Fine-tuning
+            > with *question dropout* (randomly masking the question on some
+            > fraction of training examples) produces a model that scores
+            > correctly with or without it. That makes `requires_question_text`
+            > permanently false and removes the conditional entirely — one
+            > training-time decision instead of a runtime branch carried by the
+            > frontend, the batch validator, and the CSV format forever.
+            > Strongly preferred if the training pipeline can accommodate it.
+        external_ref:
+          type: string
+          maxLength: 128
+          nullable: true
+          description: |
+            Opaque instructor-supplied correlation key — a gradebook row id,
+            submission id, or student pseudonym. Stored, echoed back, never
+            interpreted.
+
+            Instructors grading in volume need to map results back to their own
+            records; without this they are matching on answer text by eye.
+            Becomes load-bearing in the batch module.
+
+            MUST NOT be used to carry student names or identifiers the
+            instructor would not otherwise store here — documented in the UI,
+            not enforceable in the contract.
+        strictness:
+          $ref: '#/components/schemas/Strictness'
+        retain_answer:
+          type: boolean
+          default: true
+          description: |
+            Whether `answer_text` is persisted on the checks row and visible in
+            history.
+
+            **Does not affect the audit entry**, which records actor, timestamp,
+            model version, and verdict unconditionally. Two stores, two
+            retention policies — a client-controllable audit trail would defeat
+            the purpose of having one.
+
+            Renamed from the proposed `save_to_history` to make that boundary
+            explicit at the call site.
+
+    CheckResult:
+      type: object
+      required:
+        [check_id, verdict, raw_score, detector, created_at, actor_id]
+      description: |
+        **Shared schema.** A single check and a batch result row are the same
+        object — the SPA renders both with one component. Requires ML team
+        sign-off before implementation begins.
+
+        Field tiers, per the agreed degradation model. The SPA must render
+        correctly with every Tier 2/3 field null:
+          Tier 1 (always present): check_id, verdict, raw_score, detector,
+                                   created_at, actor_id
+          Tier 2 (nullable):       confidence, abstain_reason, truncated
+          Tier 3 (removable UI):   explanation, spans
+      properties:
+        check_id:
+          type: string
+          format: uuid
+          description: |
+            Resource identifier. Distinct from `Error.request_id`, which is a
+            log-correlation value — conflating them (as `inference_id` did)
+            gives the system two identifier conventions and one ambiguous field.
+        actor_id:
+          type: string
+          format: uuid
+          description: |
+            Who ran the check. Taken from the gateway authorizer context at
+            creation. Never accepted from the client — see `POST /api/checks`.
+        batch_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL for single checks; set for rows produced by a batch.
+        external_ref:
+          type: string
+          nullable: true
+        verdict:
+          $ref: '#/components/schemas/Verdict'
+        raw_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.87
+          description: |
+            Normalised detector output. **Monotonically increasing in
+            AI-likelihood, and NOT a probability.**
+
+            Every detector adapter must satisfy this normalisation contract —
+            without it, swapping in a zero-shot detector whose native score runs
+            the other way (Binoculars) silently inverts the frontend.
+
+            **MUST NOT be rendered as a percentage.** "0.87" shown as "87%
+            likely AI-generated" is the exact wrongful-accusation failure mode
+            in the project motivation. Retained in the response for the audit
+            trail and for ML error analysis, not for instructor display.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          nullable: true
+          description: |
+            Calibrated probability (temperature scaling fitted on the Mohler
+            validation split). Unlike `raw_score`, this is display-safe —
+            preferably as a band rather than a bare number.
+
+            NULL until E2 calibration lands. The SPA must handle NULL from day
+            one; this field is the reason the tier system exists.
+        abstain_reason:
+          $ref: '#/components/schemas/AbstainReason'
+        truncated:
+          type: boolean
+          nullable: true
+          description: |
+            True if `answer_text` exceeded the detector's context window and was
+            truncated before scoring. Surfacing this matters — a verdict on a
+            truncated answer is a verdict on a different text than the
+            instructor submitted.
+        detector:
+          $ref: '#/components/schemas/DetectorInfo'
+        answer_text:
+          type: string
+          nullable: true
+          description: |
+            NULL if `retain_answer` was false, or if the retention window has
+            elapsed. Omitted from `CheckSummary` entirely.
+        question_text:
+          type: string
+          nullable: true
+        explanation:
+          type: object
+          nullable: true
+          description: |
+            **Tier 3.** NULL until the explanation spike promotes or kills the
+            feature. Shape is deliberately unspecified — auxiliary interpretable
+            signals (perplexity, length statistics, burstiness), not
+            model-internal attribution.
+
+            Present as a nullable field from v0 so that adding it is not a
+            breaking revision. The SPA hides the module on NULL.
+        spans:
+          type: array
+          nullable: true
+          description: |
+            **Tier 3 / E5.** Sentence- or span-level highlighting. NULL until
+            E5. Same reasoning as `explanation` — declared now, so shipping it
+            later costs the frontend nothing.
+          items:
+            type: object
+            required: [start, end, score]
+            properties:
+              start:
+                type: integer
+                description: Character offset into `answer_text`, inclusive.
+              end:
+                type: integer
+                description: Character offset into `answer_text`, exclusive.
+              score: { type: number, format: float, minimum: 0, maximum: 1 }
+        created_at:
+          type: string
+          format: date-time
+        latency_ms:
+          type: integer
+          nullable: true
+          description: |
+            End-to-end detector latency. Operational signal — this is the number
+            that tells you whether the synchronous single-check design survives
+            the model chosen in E2.
+
+    CheckSummary:
+      type: object
+      required: [check_id, verdict, created_at, actor_id]
+      description: |
+        History table row. Deliberately excludes `answer_text`, `explanation`,
+        and `spans` — a history list should not ship every stored student answer
+        to the browser to render a table. Drill down via `GET /api/checks/{id}`.
+      properties:
+        check_id:   { type: string, format: uuid }
+        actor_id:   { type: string, format: uuid }
+        batch_id:   { type: string, format: uuid, nullable: true }
+        external_ref: { type: string, nullable: true }
+        verdict:    { $ref: '#/components/schemas/Verdict' }
+        confidence: { type: number, format: float, nullable: true }
+        model_version: { type: string }
+        answer_preview:
+          type: string
+          nullable: true
+          description: |
+            First ~120 characters of the answer, for visual identification in
+            the table. NULL when `retain_answer` was false — there is nothing
+            to preview.
+        created_at: { type: string, format: date-time }
+
+    DetectorCapabilities:
+      type: object
+      required:
+        [model_version, requires_question_text, max_answer_chars,
+         min_answer_chars, strictness_levels, supports_explanation,
+         supports_spans]
+      description: |
+        What the currently served detector requires and provides. Server-owned,
+        read-only, changes on deploy.
+
+        Every field here is something the SPA would otherwise have to hardcode
+        against an assumption that E2 has not yet settled. Hardcoded assumptions
+        become breaking revisions; declared capabilities become config.
+      properties:
+        model_version:
+          type: string
+          example: roberta-base-detector-v0
+        requires_question_text:
+          type: boolean
+          description: |
+            When true, `question_text` is mandatory on `POST /api/checks` and
+            must be present as a column in batch uploads; omitting it is
+            `400 question_text_required`.
+
+            When false, the field is accepted and stored but not scored.
+
+            **The schema does not change either way.** This flag is the entire
+            mechanism — see the `question_text` description on
+            `CheckCreateRequest`.
+        min_answer_chars:
+          type: integer
+          example: 10
+          description: Hard validation floor. Below this is a 400, not an abstention.
+        max_answer_chars:
+          type: integer
+          example: 10000
+        max_tokens_scored:
+          type: integer
+          nullable: true
+          example: 256
+          description: |
+            Detector context window. Input beyond this is truncated and reported
+            via `CheckResult.truncated`. Lets the SPA warn *before* submission
+            rather than explain after.
+        strictness_levels:
+          type: array
+          description: |
+            Available strictness levels and the FPR each is calibrated to.
+            Driving the slider from this rather than a hardcoded list means E2's
+            calibration results can change the operating points without a
+            frontend release — and means the UI can show the instructor what
+            "strict" actually costs.
+          items:
+            type: object
+            required: [level]
+            properties:
+              level: { $ref: '#/components/schemas/Strictness' }
+              target_fpr:
+                type: number
+                format: float
+                nullable: true
+                description: NULL before E2 calibration exists.
+        calibration_version:
+          type: string
+          nullable: true
+        supports_confidence:
+          type: boolean
+          description: |
+            False until temperature scaling lands. When false, the SPA hides
+            confidence display entirely rather than rendering a null.
+        supports_explanation:
+          type: boolean
+          description: Tier 3. False until the explanation spike promotes the feature.
+        supports_spans:
+          type: boolean
+          description: Tier 3 / E5.
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code. Safe to branch on.
+          enum:
+            - invalid_request
+            - unauthenticated      # 401 — no valid session (auth, gateway)
+            - session_expired      # 401 — session existed, clock fired (auth)
+            - not_provisioned      # authenticated at Entra, no user record (users)
+            - deactivated          # authenticated at Entra, user record exists
+                                    # but soft-deleted (users)
+            - forbidden            # 403 — valid session, insufficient role (users)
+            - not_found
+            - conflict              # 409 — duplicate email, or invalid state
+                                     # transition e.g. restoring a non-deleted user (users)
+            - state_mismatch
+            - upstream_idp_error
+            - payload_too_large     # 413 — answer_text over 10,000 chars (checks)
+            - question_text_required # 400 — served detector scores on
+                                     # (question, answer) pairs and question_text
+                                     # was omitted. See GET /api/detector. (checks)
+            - detector_unavailable  # 503 — detector service down (checks)
+            - detector_timeout      # 504 — detector exceeded 10s budget (checks)
+            - internal_error
+        message:
+          type: string
+          description: |
+            Human-readable. Never interpolates unsanitised upstream input
+            (notably Entra's `error_description`).
+        request_id:
+          type: string
+          description: Correlates with CloudWatch logs and the audit trail.
+
+  responses:
+    BadRequest:
+      description: Malformed or invalid request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    Unauthorized:
+      description: |
+        No session, or the session is expired or revoked. Emitted by the
+        **gateway authorizer**, before application code runs.
+
+        API Gateway renders these from its own gateway-response templates, not
+        from FastAPI. That template MUST be configured to emit the `Error`
+        schema — otherwise the SPA receives two structurally different 401
+        bodies depending on which layer rejected the request, and the frontend
+        ends up parsing both defensively. Fix in Terraform.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    Forbidden:
+      description: |
+        Valid session, but the user's role does not permit this operation.
+        Emitted by the **users module**, inside application code — never by the
+        gateway. See DECISION LOG [0.3.0].
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    NotFound:
+      description: |
+        Resource does not exist, or is not visible to this actor.
+
+        The conflation is deliberate for object-scoped resources (checks):
+        returning `403` for "exists but belongs to another instructor" turns
+        the endpoint into an oracle for whether a colleague has already checked
+        a given submission. Function-level denials still return `403` — the
+        caller's role is not secret; other people's records are.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+# =============================================================================
+# DECISION LOG
+# =============================================================================
+#
+# [0.5.1] `question_text` requiredness is a RUNTIME capability, not a schema
+#   property.
+#
+#   Whether the detector scores on (question, answer) or on answer alone is
+#   unknown and unknowable until fine-tuning is underway. Three ways to handle
+#   an unknown of this shape:
+#
+#     (a) Guess now, revise later. Cost: a breaking contract revision, a
+#         frontend release, and — worst — a change to the CSV format that
+#         instructors have already been shown. External-facing formats are the
+#         expensive thing to change, not JSON schemas.
+#     (b) Make it required now, relax later. Relaxing is non-breaking, so this
+#         is the safe direction. But it forces instructors to type a question
+#         for every single-answer check even if it never affects the result —
+#         paying a permanent UX cost to hedge a decision that may go the other
+#         way.
+#     (c) Keep the schema permanently permissive; express the requirement as a
+#         server-declared flag the client reads at bootstrap. Chosen.
+#
+#   (c) costs one endpoint and one conditional in the SPA. In exchange the
+#   answer becomes a config value: flipping it is a redeploy, not a revision.
+#   GET /api/detector was going to be needed regardless — the SPA already has
+#   to know max length, the strictness levels, and which Tier 3 modules to
+#   render — so the marginal cost of carrying this flag on it is close to zero.
+#
+#   Generalises: anything about the served model that E2 might change belongs
+#   on GET /api/detector, not in the schema. Hardcoded assumptions become
+#   breaking revisions; declared capabilities become config.
+#
+#   `DetectorInfo.used_question_text` records what actually happened per check,
+#   because results produced under different input compositions are not
+#   comparable and the model_version alone does not distinguish them.
+#
+#   PREFERRED RESOLUTION: fine-tune with question dropout, so the model
+#   tolerates both. That makes requires_question_text permanently false and
+#   deletes the conditional from the SPA, the batch validator, and the CSV
+#   format. One training-time decision beats a runtime branch carried forever.
+#   Raised with the ML team; not yet answered.
+#
+# [0.5.0] Strictness is an enum; the client never sends a threshold.
+#
+#   Rejected the proposed `threshold: 0.50` float on three grounds:
+#     1. Score scales are model-specific. A threshold stored client-side or in
+#        a user preference silently changes meaning after every model swap —
+#        and swapping the served model is an explicit project goal (E2).
+#     2. The headline evaluation metric is TPR at a FIXED FPR, calibrated on
+#        the Mohler validation split. A client-supplied threshold discards that
+#        calibration, so the FPR reported in the evaluation report would no
+#        longer describe the deployed system. The report and the product would
+#        be making different claims.
+#     3. Zero-shot detectors do not emit probabilities at all (Binoculars emits
+#        a cross-perplexity ratio, inverted). A UI slider bound to a raw number
+#        has no stable meaning across detector families.
+#
+#   Consequence: adapters normalise to [0,1] monotonic in AI-likelihood, and
+#   the strictness -> threshold table is a server-side calibration artefact
+#   versioned alongside the model (`DetectorInfo.calibration_version`).
+#
+# [0.5.0] `instructor_id` is never accepted from the client.
+#
+#   The proposed request body carried a client-supplied instructor identifier.
+#   Attribution comes from the authorizer context. Any other arrangement lets
+#   one instructor attribute a check to another, in a system whose output is
+#   used to justify misconduct proceedings.
+#
+#   `additionalProperties: false` on CheckCreateRequest makes this a 400 rather
+#   than a silent ignore. Contrast with the audit/history `actor_id` FILTER,
+#   which is silently overridden — that override exists to avoid an existence
+#   oracle. No such concern applies to a create body, and failing loudly
+#   catches the client bug at integration time instead of in production.
+#
+#   The proposed value was also a hash (`hash_8f7d6a5`). Pseudonymisation at a
+#   layer where the server holds the mapping is not a privacy control; it only
+#   makes joins harder. Internal `users.id` UUID throughout.
+#
+# [0.5.0] `label` is a machine enum, and `uncertain` is one of its values.
+#
+#   Display copy in an API response ("Likely AI-generated") forces the SPA to
+#   string-match, makes a copy change a breaking API change, and blocks i18n.
+#
+#   More importantly the proposed shape had no third state. The proposal
+#   commits to an abstention band, and E3's reliability map exists precisely to
+#   identify where the detector stops being trustworthy. A binary label cannot
+#   express "the tool declines to call this one", so the product would be
+#   forced to state a verdict in exactly the cases the research says it should
+#   not. `verdict` + `abstain_reason` carries that.
+#
+# [0.5.0] `/history` folded into `GET /api/checks`.
+#
+#   The v0 endpoint list carried `/checks` and `/history` as separate modules.
+#   History is a filtered, instructor-scoped, paginated list of checks — the
+#   same resource under a second name, which would mean two schemas, two
+#   scoping implementations, and two places for the object-level authorization
+#   to be got wrong. Batch results are the same list filtered by `batch_id`.
+#
+# [0.5.0] Single checks are synchronous — conditionally.
+#
+#   Correct for a fine-tuned encoder classifier. NOT correct if a zero-shot
+#   detector (Fast-DetectGPT, Binoculars) wins E2, since both need full LLM
+#   forward passes. Recorded here so that outcome triggers a deliberate
+#   migration to the existing 202+polling pattern rather than a surprise at
+#   integration. `CheckResult` is unaffected by that migration by design —
+#   only the delivery mechanism changes.
+#
+# [0.5.0] GPTZero is evaluation-only, never in the serving path.
+#
+#   It is a commercial third-party API. Calling it at request time transmits
+#   student answers to an overseas processor on every check — a PDPA exposure
+#   with no compensating benefit, since it is a benchmark reference and not a
+#   deployment candidate. Recorded because "just wire it up temporarily for the
+#   PoC" is the obvious shortcut and it is the wrong one.
+#
+# [0.5.0] DEFERRED: idempotency keys on POST /api/checks.
+#
+#   A double-click currently produces two rows and two model invocations. Real
+#   but low-cost: inference is cheap, duplicates are visible in history, and
+#   the frontend can disable the button. Revisit only if batch retry semantics
+#   force it. Noted so it is a decision, not an oversight.
+#
+# [0.4.0] Deletion is a timestamp, not a status enum.
+#
+#   Considered a `status: pending | active | deactivated` field on `users`.
+#   Rejected in favour of the existing `deleted_at` + `first_login_at NULL`
+#   combination already in the [0.3.0] data model — introducing a parallel
+#   status field would duplicate information already derivable from two
+#   columns that exist for other reasons, and gives two sources of truth that
+#   could drift (e.g. status='active' but first_login_at somehow NULL).
+#   `deleted_at IS NOT NULL` is deactivated; `first_login_at IS NULL` is
+#   pending; neither is pending/active.
+#
+# [0.4.0] DELETE /api/users/{id} revokes ALL sessions, immediately, via an
+#   internal call.
+#
+#   sessions.revoke_all_for_user(user_id) is a cross-module call, not a REST
+#   endpoint — mirrors resolve_or_reject's existing precedent of the two
+#   modules calling each other in-process rather than over HTTP. Immediate
+#   effect depends on result_ttl_seconds=0 on the gateway authorizer (already
+#   required by [0.3.0] for the same reason).
+#
+# [0.4.0] OPEN — delegation authority for instructor -> teaching_assistant
+#   provisioning.
+#
+#   POST /api/users encodes the full delegation chain from [0.3.0]'s
+#   provisioning model, including instructor's authority to provision
+#   teaching_assistant accounts. But teaching_assistant is scoped as an E5
+#   extension in the proposal, with no application surface for TAs yet. This
+#   was implemented as designed in [0.3.0] rather than narrowed unilaterally,
+#   but needs explicit confirmation: is delegated provisioning meant to be
+#   live now (ahead of any TA-facing feature), or should POST /api/users be
+#   root_admin-only until E5 actually starts, with the delegation table
+#   re-enabled at that point?
+#
+# [0.3.0] Authorization is enforced in-service, NOT at the API Gateway.
+#
+#   Authentication is enforced at the edge; authorization is not. The split is
+#   by granularity: the dividing question is whether a decision requires data
+#   the gateway does not have.
+#
+#     - Session validity depends only on the credential presented. Context-free
+#       -> edge is the correct layer, and it keeps unauthenticated traffic away
+#       from application code.
+#     - Object-level visibility (instructors see only their own audit entries;
+#       an instructor-supplied `actor_id` filter is silently overridden) cannot
+#       be evaluated without domain data. The gateway has no idea which rows
+#       belong to whom.
+#
+#   Because object-level authorization must live in the service regardless,
+#   adding role checks at the gateway would SPLIT authorization rather than
+#   centralise it. Costs of that split:
+#
+#     1. Adding a role (teaching_assistant is planned) requires lockstep edits
+#        to Terraform and application code.
+#     2. A FastAPI route deployed without a corresponding gateway policy
+#        attachment is silently unprotected. Nothing fails; no test catches it,
+#        because the test suite does not read Terraform state. The equivalent
+#        application-level defect — a missing require_role dependency — IS
+#        caught by route-enumeration tests at review time.
+#     3. Two enforcement points means two places to get it wrong.
+#
+#   Maps to OWASP API Security Top 10: API1 (Broken Object Level
+#   Authorization) is not addressable at the gateway; API5 (Broken Function
+#   Level Authorization) is, but only by accepting the split above.
+#
+#   Gateway-level authorization IS correct for scope-based endpoint
+#   authorization across many polyglot services with policy-as-code
+#   infrastructure (OPA, Cedar) and a platform team. That is not this system.
+#
+#   Authorization remains centralised — in ONE users-module primitive
+#   (`require_role`), one place to change. Centralisation in code, which is
+#   what delivers consistency, rather than centralisation in topology, which
+#   only helps when the decision needs no domain context.
+#
+# [0.3.0] Invite-first provisioning; no default role.
+#   Authentication against Entra is necessary but not sufficient. Rejected:
+#   `role NOT NULL DEFAULT 'instructor'`, which would grant instructor access
+#   to every account in the SMU tenant that discovers the URL — unacceptable
+#   for a tool that adjudicates academic integrity.
+#
+# [0.3.0] Tenant-scoped authority, not /common.
+#   Provisioning matches on email at first login. Under `/common`, a personal
+#   Microsoft account with a colliding address could claim a provisioned slot
+#   before the intended user's first login. Tenant-scoping closes this;
+#   validating `tid` at step 4 is the defence in depth.
+#
+# [0.2.0] REMOVED: GET /api/auth/frontchannel-logout
+#
+#   Entra fires front-channel logout when a user signs out of another
+#   application in the tenant. Specified in v0.1.0 as best-effort single
+#   sign-out. Cut, for four reasons:
+#
+#     1. The threat of concern is account disable. Entra is reported not to
+#        reliably invoke front-channel logout on account disable or on
+#        administrative "revoke sessions" — it fires on user-initiated
+#        sign-out. It does not address the threat it was included for.
+#     2. That threat is already bounded by the 4-hour absolute cap and
+#        administrative revocation.
+#     3. It costs a permanently unauthenticated endpoint. The request arrives
+#        cross-site from Entra's origin, so a SameSite=Strict cookie is not
+#        attached and the endpoint cannot sit behind the gateway authorizer.
+#        A permanent increase in attack surface for a partial mitigation of an
+#        already-bounded risk is a bad trade.
+#     4. Hidden-iframe delivery degrades under third-party cookie blocking.
+#
+#   `sessions.entra_sid` is RETAINED — it costs nothing, enables correlation
+#   with Entra sign-in logs during an investigation, and makes reinstating the
+#   endpoint a ~20-line change if the sponsor asks for SSO behaviour.
+#
+# [0.2.0] REMOVED: `role` from the authorizer context. See [0.3.0] above.
+#
+# =============================================================================
+# DATA MODEL REFERENCE (not part of the API surface)
+# =============================================================================
+# Kept here so the contract and schema stay in step during review.
+# `role` and `provisioned_by` are OWNED BY THE USERS MODULE. The auth module
+# reads `users` and never writes or evaluates those columns.
+#
+#   CREATE TABLE users (
+#     id              UUID PRIMARY KEY,
+#     email           CITEXT NOT NULL UNIQUE,  -- provisioning key; case-insensitive
+#     role            TEXT NOT NULL,           -- assigned at provisioning. No default.
+#     provisioned_by  UUID REFERENCES users(id),  -- NULL only for seeded root_admin
+#
+#     -- NULL until first login; bound permanently on first successful callback
+#     external_id     TEXT,                    -- Entra `oid`. Immutable once set.
+#     tenant_id       TEXT,                    -- Entra `tid`.
+#     display_name    TEXT,
+#     logout_hint     TEXT,                    -- Entra `login_hint` claim.
+#                                              -- Opaque; NOT a credential,
+#                                              -- NOT users.id, NOT the UPN.
+#     first_login_at  TIMESTAMPTZ,
+#
+#     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+#     deleted_at      TIMESTAMPTZ,             -- soft-delete
+#     UNIQUE (tenant_id, external_id)
+#   );
+#
+#   CREATE TABLE sessions (
+#     id               UUID PRIMARY KEY,    -- CSPRNG. This is the cookie value.
+#     user_id          UUID NOT NULL REFERENCES users(id),
+#     entra_sid        TEXT NOT NULL,       -- `sid` claim. Audit correlation.
+#     ip               INET,
+#     user_agent       TEXT,
+#     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+#     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+#     absolute_expiry  TIMESTAMPTZ NOT NULL,   -- created_at + 4h. Never extended.
+#     revoked_at       TIMESTAMPTZ
+#   );
+#   CREATE INDEX ON sessions (user_id) WHERE revoked_at IS NULL;
+#
+#   CREATE TABLE checks (
+#     id                  UUID PRIMARY KEY,
+#     actor_id            UUID NOT NULL REFERENCES users(id),  -- from authorizer
+#     batch_id            UUID REFERENCES batches(id),         -- NULL = single
+#     external_ref        TEXT,                -- instructor's correlation key
+#
+#     answer_text         TEXT,                -- NULL if retain_answer = false
+#                                              -- or purged by retention job
+#     question_text       TEXT,
+#     answer_char_len     INT NOT NULL,        -- retained after text purge;
+#                                              -- needed for E3 length analysis
+#     retain_answer       BOOLEAN NOT NULL,
+#
+#     verdict             TEXT NOT NULL,       -- ai_generated|human_written|uncertain
+#     raw_score           REAL NOT NULL,       -- normalised [0,1], monotonic in P(AI)
+#     confidence          REAL,                -- calibrated; NULL until E2
+#     abstain_reason      TEXT,
+#     truncated           BOOLEAN,
+#
+#     model_version       TEXT NOT NULL,
+#     calibration_version TEXT,
+#     strictness          TEXT NOT NULL,
+#     threshold_applied   REAL,
+#
+#     latency_ms          INT,
+#     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+#   );
+#   CREATE INDEX ON checks (actor_id, created_at DESC);
+#   CREATE INDEX ON checks (batch_id) WHERE batch_id IS NOT NULL;
+#
+#   -- No soft-delete column. Checks are immutable facts, purged (text only)
+#   -- by the retention job; the row survives for audit, same principle as
+#   -- soft-deleted sessions and users.
+#   --
+#   -- answer_char_len is stored separately and deliberately: purging
+#   -- answer_text must not destroy the length data that E3's reliability-vs-
+#   -- answer-length analysis depends on.
+#
+# Seed migration creates exactly one root_admin, keyed on a hardcoded Entra
+# `oid`, with provisioned_by = NULL.
+#
+# No table stores an ID token, access token, or refresh token.
+# =============================================================================
