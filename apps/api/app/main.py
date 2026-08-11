@@ -2,17 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from sqlalchemy import text
-from config import API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL
+from config import API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL, configure_logging
 from db import engine
+from middleware import RequestIdMiddleware
 import uvicorn
 import sys
 import logging
 
-logging.basicConfig(
-    level=LOG_LEVEL.upper(),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    stream=sys.stdout,
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +31,7 @@ app = FastAPI(
     description="API services for Prompt Patrol",
     lifespan=lifespan
 )
+app.add_middleware(RequestIdMiddleware)
 
 # Health check endpoint
 @app.get("/health")
