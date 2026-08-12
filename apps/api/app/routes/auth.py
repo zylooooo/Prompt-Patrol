@@ -1,7 +1,7 @@
 from urllib.parse import quote
 
 from authlib.integrations.base_client.errors import OAuthError
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +45,13 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Role comes from our own users table, never from Entra claims/groups.
     user = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account not provisioned")
+        # They authenticated fine with Entra, they're just not allowlisted in
+        # our users table. Send them back to the SPA with an error the login
+        # page can show, rather than a bare JSON 403 on Entra's redirect.
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=not_provisioned",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     raw_token = await create_session(db, user.id)
     response = RedirectResponse(url=FRONTEND_URL, status_code=status.HTTP_303_SEE_OTHER)

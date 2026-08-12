@@ -1,4 +1,10 @@
+import { useSearchParams } from "react-router-dom";
 import { LOGIN_HINT_KEY } from "../hooks/useAuth";
+
+const ERROR_MESSAGES: Record<string, string> = {
+  not_provisioned:
+    "Your Microsoft account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
+};
 
 export function Login() {
   // Prefills from a prior login since useAuth caches the email on success,
@@ -6,6 +12,9 @@ export function Login() {
   // plain GET form means the browser builds the querystring itself, so we
   // don't need any JS to hit /api/auth/login.
   const cachedHint = localStorage.getItem(LOGIN_HINT_KEY) ?? "";
+  const [searchParams] = useSearchParams();
+  const error = searchParams.get("error");
+  const errorMessage = error ? (ERROR_MESSAGES[error] ?? "Sign-in failed. Please try again.") : null;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
@@ -17,6 +26,11 @@ export function Login() {
       </div>
       <div className="bg-white rounded-xl shadow-sm p-9 w-[400px]">
         <h2 className="text-xl font-semibold text-slate-900 mb-6">Sign in</h2>
+        {errorMessage && (
+          <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
         <form method="get" action="/api/auth/login" className="space-y-4">
           <div>
             <label htmlFor="login_hint" className="block text-sm font-medium text-slate-700 mb-1">
