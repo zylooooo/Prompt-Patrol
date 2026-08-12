@@ -2,9 +2,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from sqlalchemy import text
-from config import API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL, configure_logging
+from starlette.middleware.sessions import SessionMiddleware
+from auth.middleware import SessionAuthMiddleware
+from config import API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL, SESSION_SECRET, configure_logging
 from db import engine
 from middleware import RequestIdMiddleware
+from routes.auth import router as auth_router
 import uvicorn
 import sys
 import logging
@@ -31,7 +34,23 @@ app = FastAPI(
     description="API services for Prompt Patrol",
     lifespan=lifespan
 )
+# This is Starlette's own signed-cookie session ("ppauthflow"), it only
+# carries the OAuth state + PKCE verifier across the Entra redirect. It's not
+# the same thing as SESSION_COOKIE_NAME, which is our own post-login session.
+# Starlette runs middleware in reverse registration order, so
+# SessionAuthMiddleware below actually executes after this one and can rely
+# on request.session already being set up.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="ppauthflow",
+    same_site="lax",
+    https_only=ENVIRONMENT != "dev",
+    max_age=600,
+)
+app.add_middleware(SessionAuthMiddleware)
 app.add_middleware(RequestIdMiddleware)
+app.include_router(auth_router)
 
 # Health check endpoint
 @app.get("/health")

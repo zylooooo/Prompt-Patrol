@@ -40,6 +40,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+  
+  # Frontend
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: prompt-patrol-frontend
+    restart: unless-stopped
+    ports:
+      - 5173:80
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - prompt-patrol-network
 
 networks:
   prompt-patrol-network:

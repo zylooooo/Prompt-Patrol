@@ -23,6 +23,13 @@ def _require_env(name: str) -> str:
 API_HOST: str = _require_env("API_HOST")
 API_PORT: int = int(_require_env("API_PORT"))
 DB_URL: str = _require_env("DB_URL")
+ENTRA_TENANT_ID: str = _require_env("ENTRA_TENANT_ID")
+ENTRA_CLIENT_ID: str = _require_env("ENTRA_CLIENT_ID")
+ENTRA_CLIENT_SECRET: str = _require_env("ENTRA_CLIENT_SECRET")
+ENTRA_REDIRECT_URI: str = _require_env("ENTRA_REDIRECT_URI")
+SESSION_SECRET: str = _require_env("SESSION_SECRET")
+
+FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", 'info')
 
@@ -34,9 +41,7 @@ if ENVIRONMENT not in VALID_ENVIRONMENTS:
     )
 
 
-# Holds the current request's id so any log record emitted while handling
-# that request can be tagged with it, without threading a request object
-# through every function call.
+# Hold the current request id in a context to tag to every log emitted for a request.
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default="-"
 )
