@@ -10,9 +10,9 @@ from .base import Base
 
 class UserSession(Base):
     """
-    Session data model to keep track of user sessions in the databse.
-    The sessions is associated with a ueser and will be used to keep track of authentication of users.
-    After a user authenticates with Entra ID, a session will be created and managed in this table.
+    Session data model to keep track of user sessions in the database.
+    The session is associated with a user and is used to track authentication.
+    After a user authenticates with Entra ID, a session is created and managed in this table.
     """
     __tablename__ = "sessions"
 
