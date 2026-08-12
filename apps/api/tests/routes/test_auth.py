@@ -46,7 +46,9 @@ async def test_callback_rejects_unprovisioned_user(client, db_session):
     with patch("routes.auth.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:5173/login?error=not_provisioned"
+    assert "__Host-session" not in response.cookies
     result = await db_session.execute(select(UserSession))
     assert result.scalars().all() == []
 

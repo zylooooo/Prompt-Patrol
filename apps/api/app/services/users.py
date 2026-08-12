@@ -1,4 +1,6 @@
 import uuid
+import logging
+
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
@@ -7,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import User
 from models.session import UserSession
 
+logger = logging.getLogger(__name__)
 
 async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | None:
     """Called from the callback route after Entra hands back claims.
@@ -47,3 +50,30 @@ async def soft_delete_user(db: AsyncSession, user_id: uuid.UUID) -> None:
         .values(deleted_at=now)
     )
     await db.commit()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """
+    Fetches a user by their ID. Returns None if the user doesn't exist or has been soft-deleted.
+
+    Args:
+        db (AsyncSession): The database session.
+        user_id (uuid.UUID): The ID of the user to fetch.
+    
+    Returns:
+        User | None: The user object if found and not soft-deleted, otherwise None.
+    """
+    logger.debug("Fetching user by ID: %s", user_id)
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id, User.deleted_at.is_(None)
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        logger.debug("No user found with ID: %s or user is soft-deleted.", user_id)
+        return None
+
+    logger.info("User fetched successfully")
+    return user
