@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import {
+  authKeys,
+  devLogin,
+  getDevAuthInfo,
+  type DevAuthInfo,
+} from "../api/auth";
+import { useState } from "react";
+import { ApiError } from "../api/client";
 import Button from "../components/ui/Button";
 import { LOGIN_HINT_KEY } from "../hooks/useAuth";
-
-type DevUser = { email: string; role: string };
-type DevAuthInfo = { entra_configured: boolean; users: DevUser[] };
-type DevAuthState =
-  | { status: "loading" }
-  | { status: "off" }
-  | { status: "on"; info: DevAuthInfo };
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 const DEV_BUILD = import.meta.env.DEV;
 
@@ -20,54 +21,34 @@ const INPUT_CLASS =
 const LABEL_CLASS =
   "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
 
-function useDevAuth(): DevAuthState {
-  const [state, setState] = useState<DevAuthState>(
-    DEV_BUILD ? { status: "loading" } : { status: "off" },
-  );
+function useDevAuth() {
+  return useQuery({
+    queryKey: authKeys.devAuth(),
+    queryFn: ({ signal }) => getDevAuthInfo(signal),
+    enabled: DEV_BUILD,
+  });
+}
 
-  useEffect(() => {
-    if (!DEV_BUILD) return;
-    fetch("/api/auth/dev/users", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((info: DevAuthInfo | null) =>
-        setState(info ? { status: "on", info } : { status: "off" }),
-      )
-      .catch(() => setState({ status: "off" }));
-  }, []);
-
-  return state;
+function devLoginErrorMessage(error: unknown, email: string): string {
+  if (error instanceof ApiError) {
+    return error.status === 403
+      ? `${email} isn't provisioned. Add them with scripts/provision_user.py.`
+      : `Dev login failed (${error.status}).`;
+  }
+  return "Could not reach the API.";
 }
 
 function DevLoginPanel({ info }: { info: DevAuthInfo }) {
   const [email, setEmail] = useState(info.users[0]?.email ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  async function signIn() {
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await fetch("/api/auth/dev/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) {
-        setError(
-          res.status === 403
-            ? `${email} isn't provisioned. Add them with scripts/provision_user.py.`
-            : `Dev login failed (${res.status}).`,
-        );
-        return;
-      }
-      window.location.assign("/");
-    } catch {
-      setError("Could not reach the API.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const signIn = useMutation({
+    mutationFn: devLogin,
+    onSuccess: () => window.location.assign("/"),
+  });
+
+  const error = signIn.isError
+    ? devLoginErrorMessage(signIn.error, email)
+    : null;
 
   return (
     <div className="mt-6 space-y-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3">
@@ -99,10 +80,10 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
             variant="secondary"
             size="md"
             fullWidth
-            onClick={() => void signIn()}
-            disabled={busy || !email}
+            onClick={() => signIn.mutate(email)}
+            disabled={signIn.isPending || !email}
           >
-            {busy ? "Signing in…" : "Sign in as this user"}
+            {signIn.isPending ? "Signing in…" : "Sign in as this user"}
           </Button>
         </>
       )}
@@ -135,9 +116,9 @@ function LoginHero() {
 
 export function Login() {
   const cachedHint = localStorage.getItem(LOGIN_HINT_KEY) ?? "";
-  const devAuth = useDevAuth();
+  const devAuthInfo = useDevAuth().data ?? null;
   const entraUnavailable =
-    devAuth.status === "on" && !devAuth.info.entra_configured;
+    devAuthInfo !== null && !devAuthInfo.entra_configured;
   const [entraError, setEntraError] = useState<string | null>(null);
 
   return (
@@ -192,8 +173,8 @@ export function Login() {
             )}
           </form>
 
-          {DEV_BUILD && devAuth.status === "on" && (
-            <DevLoginPanel info={devAuth.info} />
+          {DEV_BUILD && devAuthInfo !== null && (
+            <DevLoginPanel info={devAuthInfo} />
           )}
         </div>
       </div>

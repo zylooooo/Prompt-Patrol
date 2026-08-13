@@ -61,8 +61,6 @@ export default {
         "focus-ring": themeColor("focus-ring"),
       },
       borderColor: {
-        // Plain `border` (no colour suffix) picks up the themed border so call
-        // sites can write `border` and stay theme-aware.
         DEFAULT: "rgb(var(--border) / 1)",
       },
       fontFamily: {

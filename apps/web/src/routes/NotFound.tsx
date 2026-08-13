@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 export function NotFound() {
   const navigate = useNavigate();
-  const { user, loading } = useAuth();
+  const { user, isPending } = useAuth();
 
   const destination = user
     ? { to: "/", label: "Back to the triage queue" }
@@ -31,10 +31,10 @@ export function NotFound() {
           <div className="flex flex-col items-center gap-3 md:flex-row md:items-center">
             <Button
               size="md"
-              disabled={loading}
+              disabled={isPending}
               onClick={() => void navigate(destination.to, { replace: true })}
             >
-              {loading ? "Checking your session…" : destination.label}
+              {isPending ? "Checking your session…" : destination.label}
             </Button>
             <button
               type="button"
