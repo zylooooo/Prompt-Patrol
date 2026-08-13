@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Button from "../components/ui/Button";
 import { LOGIN_HINT_KEY } from "../hooks/useAuth";
 
 type DevUser = { email: string; role: string };
@@ -9,6 +10,15 @@ type DevAuthState =
   | { status: "on"; info: DevAuthInfo };
 
 const DEV_BUILD = import.meta.env.DEV;
+
+const HERO_IMAGE_URL =
+  "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?q=75&w=2000&auto=format&fit=crop";
+
+const INPUT_CLASS =
+  "w-full rounded-lg border border-transparent bg-surface-muted px-3.5 py-3 text-sm text-foreground placeholder:text-disabled-foreground transition-all outline-none focus:outline-none focus:ring-2 focus:ring-focus-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+
+const LABEL_CLASS =
+  "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
 
 function useDevAuth(): DevAuthState {
   const [state, setState] = useState<DevAuthState>(
@@ -60,49 +70,65 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
   }
 
   return (
-    <div className="mt-6 border-t border-dashed border-amber-300 pt-6">
-      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-        Local development only
-      </p>
-      <p className="text-xs text-slate-500 mt-1">
-        Signs in without verifying identity. Only provisioned accounts work, and
-        roles still come from the database.
+    <div className="mt-6 space-y-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Development Only (No Authentication)
       </p>
 
       {info.users.length === 0 ? (
-        <p className="mt-3 text-xs text-slate-600">
+        <p className="text-xs text-muted-foreground">
           No accounts provisioned yet. Run{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5">
+          <code className="rounded bg-surface-muted px-1 py-0.5">
             python -m scripts.provision_user add you@smu.edu.sg root_admin
           </code>{" "}
           in the API container first.
         </p>
       ) : (
-        <div className="mt-3 space-y-3">
-          <select
+        <>
+          <input
+            type="email"
             aria-label="Account to sign in as"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            {info.users.map((u) => (
-              <option key={u.email} value={u.email}>
-                {u.email} — {u.role}
-              </option>
-            ))}
-          </select>
-          <button
+            placeholder="you@smu.edu.sg"
+            autoComplete="email"
+            className={INPUT_CLASS}
+          />
+          <Button
             type="button"
+            variant="secondary"
+            size="md"
+            fullWidth
             onClick={() => void signIn()}
             disabled={busy || !email}
-            className="block w-full rounded-lg border border-amber-400 bg-amber-50 py-2.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
           >
             {busy ? "Signing in…" : "Sign in as this user"}
-          </button>
-        </div>
+          </Button>
+        </>
       )}
 
-      {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
+      {error && (
+        <div
+          role="alert"
+          className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoginHero() {
+  return (
+    <div
+      className="relative hidden bg-cover bg-center lg:flex lg:w-2/3 xl:w-3/4"
+      style={{ backgroundImage: `url("${HERO_IMAGE_URL}")` }}
+    >
+      <div className="absolute inset-0 bg-foreground/55" />
+      <div className="relative z-10 flex max-w-2xl flex-col justify-end p-12 text-disabled-foreground">
+        <h1 className="text-5xl font-bold tracking-normal">Prompt Patrol</h1>
+      </div>
     </div>
   );
 }
@@ -110,25 +136,37 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
 export function Login() {
   const cachedHint = localStorage.getItem(LOGIN_HINT_KEY) ?? "";
   const devAuth = useDevAuth();
-  const showEntra = devAuth.status !== "on" || devAuth.info.entra_configured;
+  const entraUnavailable =
+    devAuth.status === "on" && !devAuth.info.entra_configured;
+  const [entraError, setEntraError] = useState<string | null>(null);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-slate-900">Prompt Patrol</h1>
-        <p className="text-xs tracking-wide text-slate-500 mt-1">
-          AI-ANSWER TRIAGE FOR INSTRUCTORS
-        </p>
-      </div>
-      <div className="bg-white rounded-xl shadow-sm p-9 w-[400px]">
-        <h2 className="text-xl font-semibold text-slate-900 mb-6">Sign in</h2>
-        {showEntra && (
-          <form method="get" action="/api/auth/login" className="space-y-4">
+    <div className="flex min-h-screen bg-background">
+      <LoginHero />
+
+      <div className="flex w-full items-center justify-center px-6 py-10 lg:w-1/3 lg:px-8 xl:w-1/4">
+        <div className="w-full max-w-sm">
+          <header className="mb-8">
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-accent">
+              AI-Answer Triage for Instructors
+            </p>
+            <h2 className="text-3xl font-bold leading-tight tracking-tight text-foreground">
+              Sign in to Prompt Patrol
+            </h2>
+          </header>
+
+          <form
+            method="get"
+            action="/api/auth/login"
+            className="space-y-5"
+            onSubmit={(event) => {
+              if (!entraUnavailable) return;
+              event.preventDefault();
+              setEntraError("Microsoft sign-in is unavailable.");
+            }}
+          >
             <div>
-              <label
-                htmlFor="login_hint"
-                className="block text-sm font-medium text-slate-700 mb-1"
-              >
+              <label htmlFor="login_hint" className={LABEL_CLASS}>
                 Email
               </label>
               <input
@@ -137,20 +175,27 @@ export function Login() {
                 type="email"
                 defaultValue={cachedHint}
                 placeholder="you@smu.edu.sg"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                autoComplete="email"
+                className={INPUT_CLASS}
               />
             </div>
-            <button
-              type="submit"
-              className="block w-full text-center rounded-lg bg-slate-900 text-white font-medium py-3 hover:bg-slate-800"
-            >
+            <Button type="submit" size="md" fullWidth>
               Sign in with Microsoft
-            </button>
+            </Button>
+            {entraError && (
+              <div
+                role="alert"
+                className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
+              >
+                {entraError}
+              </div>
+            )}
           </form>
-        )}
-        {DEV_BUILD && devAuth.status === "on" && (
-          <DevLoginPanel info={devAuth.info} />
-        )}
+
+          {DEV_BUILD && devAuth.status === "on" && (
+            <DevLoginPanel info={devAuth.info} />
+          )}
+        </div>
       </div>
     </div>
   );

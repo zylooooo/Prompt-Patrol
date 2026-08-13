@@ -1,3 +1,69 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --background: 255 255 255; /* #FFFFFF */
+  --surface: 250 251 252; /* #FAFBFC — soft off-white surface */
+  --surface-muted: 241 242 244; /* #F1F2F4 — cool-leaning neutral grey */
+  --surface-modal: 232 234 232; /* #E8EAE8 — grey modal with subtle sage undertone */
+  --modal-muted: 244 245 244; /* #F4F5F4 — lighter grey muted modal surface */
+  --surface-strong: 229 231 234; /* #E5E7EA — cool chrome hover step */
+  --border: 212 214 218; /* #D4D6DA — cool-neutral line */
+
+  --foreground: 42 39 36; /* #2A2724 */
+  --muted-foreground: 95 89 82; /* #5F5952 */
+  --disabled-foreground: 154 148 139; /* #9A948B */
+
+  --primary: 95 122 102; /* #5F7A66 — deep sage CTA */
+  --primary-hover: 79 103 85; /* #4F6755 */
+  --primary-soft: 230 239 231; /* #E6EFE7 */
+  --primary-border: 185 205 189; /* #B9CDBD */
+  --primary-foreground: 255 255 255; /* #FFFFFF */
+
+  --secondary: 166 138 100; /* #A68A64 — warm clay */
+  --secondary-hover: 143 117 84; /* #8F7554 */
+  --secondary-soft: 240 232 220; /* #F0E8DC */
+  --secondary-border: 216 197 166; /* #D8C5A6 */
+  --secondary-foreground: 255 255 255; /* #FFFFFF */
+
+  --accent: 132 169 140; /* #84A98C — lighter sage */
+  --accent-hover: 110 146 118; /* #6E9276 */
+  --accent-soft: 230 239 231; /* #E6EFE7 */
+  --accent-border: 185 205 189; /* #B9CDBD */
+  --accent-foreground: 42 39 36; /* #2A2724 */
+
+  --danger: 201 76 76; /* #C94C4C */
+  --danger-hover: 168 63 63; /* #A83F3F */
+  --danger-soft: 248 230 227; /* #F8E6E3 */
+  --danger-border: 231 163 160; /* #E7A3A0 */
+  --danger-foreground: 255 255 255; /* #FFFFFF */
+
+  --table-header: 241 242 244; /* #F1F2F4 — match surface-muted */
+  --table-row-hover: 247 248 250; /* #F7F8FA */
+  --table-selected: 230 239 231; /* #E6EFE7 — primary-soft sage */
+  --table-border: 212 214 218; /* #D4D6DA — match border */
+
+  --badge-bg: 230 239 231; /* #E6EFE7 */
+  --badge-text: 63 93 70; /* #3F5D46 */
+  --badge-border: 185 205 189; /* #B9CDBD */
+
+  --input-bg: 255 255 255; /* #FFFFFF */
+  --input-border: 212 214 218; /* #D4D6DA — match border */
+  --input-border-focus: 95 122 102; /* #5F7A66 */
+  --input-placeholder: 138 131 121; /* #8A8379 */
+  --input-disabled-bg: 241 242 244; /* #F1F2F4 — match surface-muted */
+
+  --focus-ring: 132 169 140; /* #84A98C */
+}
+
+@layer base {
+  html {
+    font-family: theme("fontFamily.sans");
+  }
+
+  body {
+    background-color: rgb(var(--background));
+    color: rgb(var(--foreground));
+  }
+}
