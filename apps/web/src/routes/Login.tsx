@@ -93,7 +93,7 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
           </select>
           <button
             type="button"
-            onClick={signIn}
+            onClick={() => void signIn()}
             disabled={busy || !email}
             className="block w-full rounded-lg border border-amber-400 bg-amber-50 py-2.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
           >

@@ -1,32 +1,49 @@
-# React + TypeScript + Vite
+# Prompt Patrol — web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + TypeScript + Vite frontend. See the [repo README](../../README.md) for
+running the full stack; this file covers the frontend toolchain only.
 
-Currently, two official plugins are available:
+## Scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Script              | What it does                                          |
+| ------------------- | ----------------------------------------------------- |
+| `npm run dev`       | Vite dev server on <http://localhost:5173>, `/api` proxied to `http://localhost:8000` |
+| `npm run build`     | Typecheck, then production bundle                      |
+| `npm run lint`      | ESLint                                                 |
+| `npm run lint:fix`  | ESLint with autofix                                    |
+| `npm run typecheck` | `tsc -b` on its own, without building                  |
 
-## React Compiler
+## Node version
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Node `^20.19.0 || ^22.13.0 || >=24` (see `engines` in `package.json`, and
+`.nvmrc` for the version this project is developed against — `nvm use` picks it
+up). Both ESLint 10 and Vite 8's bundler call `util.styleText`, which older 20.x
+releases don't have: on Node 20.11 `npm run lint` crashes in the output
+formatter instead of reporting errors, and `npm run build` fails outright. CI
+runs Node 25.
 
-## Expanding the Oxlint configuration
+`nvm use` only lasts for the current shell. If new terminals keep landing on an
+old version, your default alias is stale — fix it with `nvm alias default 22`.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Linting
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+ESLint flat config in `eslint.config.js`, with `typescript-eslint`'s
+**type-checked** preset. The rules run against the real typechecker via
+`projectService`, so they catch things an AST-only linter can't — unawaited
+promises, `async` handlers passed where a `void` return is expected, unnecessary
+conditions on non-nullable values.
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Three config groups:
+
+- `src/**/*.{ts,tsx}` — type-aware, browser globals, plus `react-hooks` and
+  `react-refresh` (the latter keeps Vite's HMR boundaries valid).
+- `vite.config.ts` — type-aware, Node globals; covered by `tsconfig.node.json`.
+- `**/*.config.js` — plain JS, not type-aware. These aren't in any tsconfig, and
+  pulling them in via `allowDefaultProject` isn't worth it for static config.
+
+`tsconfig.app.json` and `tsconfig.node.json` both set `"strict": true`. Several
+type-aware rules (`no-unnecessary-condition` in particular) are much weaker
+without `strictNullChecks`, so keep it on.
+
+This replaced Oxlint, which was faster but had no type-aware rules wired up.
+Don't run both — one linter, one config.

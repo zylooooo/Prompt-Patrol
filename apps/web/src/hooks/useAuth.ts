@@ -13,10 +13,9 @@ export function useAuth() {
       .then((res) => (res.ok ? res.json() : null))
       .then((u: User | null) => {
         setUser(u);
-        // Not a credential, just a UX convenience so Entra can pre-fill the
-        // email field on the next login (see login_hint on /api/auth/login).
         if (u?.email) localStorage.setItem(LOGIN_HINT_KEY, u.email);
       })
+      .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 
