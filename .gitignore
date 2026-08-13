@@ -24,6 +24,12 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# The Python packaging patterns above are unanchored, so `lib/` matches any
+# directory of that name at any depth — including the frontend's `src/lib`,
+# whose contents were being silently dropped from commits. Re-include the web
+# app's source tree; Python build output never lands there.
+!apps/web/src/lib/
 MANIFEST
 
 # PyInstaller
@@ -221,6 +227,9 @@ __marimo__/
 .claude/*
 docs/superpowers/*
 .firecrawl/*
+
+# AI context documentation — local only, never shared
+docs/ai-context/
 
 # graphify
 graphify-out/
