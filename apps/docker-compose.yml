@@ -28,7 +28,12 @@ services:
     env_file:
       - ./api/.env
     ports:
-      - 8000:8000 # Leave ports open for development, close them later
+      # Loopback only. Nothing needs this on other interfaces - the frontend
+      # container reaches the API over the compose network and the Vite dev
+      # proxy reaches it via localhost - while DEV_AUTH_ENABLED would
+      # otherwise let anyone on the same network sign in as a provisioned
+      # user. Drop the 127.0.0.1 prefix only for deliberate LAN testing.
+      - 127.0.0.1:8000:8000
     networks:
       - prompt-patrol-network
     depends_on:
