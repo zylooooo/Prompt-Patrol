@@ -22,13 +22,15 @@ file rather than restating it:
 | Environment | How it gets the version                                                                                              |
 | ----------- | -------------------------------------------------------------------------------------------------------------------- |
 | Local shell | `nvm use` reads `.nvmrc` directly                                                                                    |
-| CI          | `setup-node`'s `node-version-file: apps/web/.nvmrc`                                                                  |
+| CI          | `setup-node`'s `node-version-file: .nvmrc`                                                                           |
 | Docker      | CI passes `--build-arg NODE_VERSION="$(cat .nvmrc)"`; the `ARG` default is only a fallback for a bare `docker build` |
 
-Only two things still name a version independently, and both are checked rather
-than trusted: the `ARG NODE_VERSION` default in the `Dockerfile`, and
-`@types/node` in `package.json` (its major should track the runtime, so Node APIs
-are typed as the version actually running). Change `.nvmrc` and those two follow.
+Three things still name a version independently, because none of them can read a
+file: the `ARG NODE_VERSION` default in the `Dockerfile`, `engines` in
+`package.json`, and `@types/node` (its major should track the runtime, so Node
+APIs are typed as the version actually running). The `Check Node version
+declarations agree` step in CI asserts all three still match `.nvmrc`, so drift
+fails the build instead of surfacing later as an unrelated-looking error.
 
 Keep `.nvmrc` a **numeric** version (`24`, or `24.19.0` to pin a patch). nvm also
 accepts aliases like `lts/*`, but Docker image tags don't, so CI validates the
@@ -36,11 +38,13 @@ file and fails with a pointed error rather than building against an unintended
 tag. A bare major is the usual choice — it picks up patch releases, including
 security fixes, without another edit here.
 
-Run `nvm use` from this directory or below — nvm searches _upwards_ for `.nvmrc`,
-and there is deliberately none at the repo root, since a second copy is exactly
-the drift this arrangement removes. It only lasts for the current shell, so if
-new terminals keep landing on an old version your default alias is stale — fix
-it with `nvm alias default 24`.
+`.nvmrc` lives at the **repo root**, not here. nvm searches _upwards_, so
+`nvm use` resolves to it from this directory or anywhere else in the tree, and
+one file covers every working directory — a per-app copy would be the second
+declaration this arrangement exists to avoid. It only lasts for the current
+shell, so if new terminals keep landing on an old version your default alias is
+stale — fix it with `nvm alias default 24`, or add the `chpwd` hook from nvm's
+README to switch automatically on `cd`.
 
 Forgetting `nvm use` is not silent. `.npmrc` sets `engine-strict=true`, which
 promotes the `engines` range from an `EBADENGINE` warning into a hard failure, so
