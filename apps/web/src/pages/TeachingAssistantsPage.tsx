@@ -23,6 +23,7 @@ import Button from "../components/ui/Button";
 import RowAction from "../components/RowAction";
 import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
+import Page, { PageFill } from "../components/ui/Page";
 import { displayName, isActive, type AppUser } from "../api/types";
 
 const FIELD =
@@ -210,14 +211,14 @@ export default function TeachingAssistantsPage() {
     : undefined;
 
   return (
-    <>
+    <Page>
       <PageHeader
         title="Teaching assistants"
         subtitle="Accounts you supervise. They can screen answers for your courses."
         showModelStatus={false}
       />
 
-      <section className="mt-8 rounded-xl border border-border bg-surface p-7">
+      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
         <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
           Add teaching assistant
         </p>
@@ -295,8 +296,9 @@ export default function TeachingAssistantsPage() {
           </Button>
         </section>
       ) : (
-        <div className="mt-6">
+        <PageFill className="mt-6">
           <DataTable<AppUser>
+            fillHeight
             columns={columns}
             rows={list}
             getRowId={(ta) => ta.id}
@@ -315,12 +317,12 @@ export default function TeachingAssistantsPage() {
             }
           />
           {rowError && (
-            <p className="mt-3 text-xs text-danger" role="alert">
+            <p className="mt-3 shrink-0 text-xs text-danger" role="alert">
               {erroredAssistant ? `${displayName(erroredAssistant)}: ` : ""}
               {rowError.message}
             </p>
           )}
-        </div>
+        </PageFill>
       )}
 
       {existing && (
@@ -402,6 +404,6 @@ export default function TeachingAssistantsPage() {
           </p>
         </Modal>
       )}
-    </>
+    </Page>
   );
 }

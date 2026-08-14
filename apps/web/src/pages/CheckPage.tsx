@@ -4,6 +4,7 @@ import BatchTab from "../components/BatchTab";
 import PageHeader from "../components/PageHeader";
 import { hasScreeningAccess } from "../api/checks";
 import { usePageTitle } from "../hooks/usePageTitle";
+import Page, { PageScroll } from "../components/ui/Page";
 import SingleCheckTab from "../components/SingleCheckTab";
 import Tabs, { type TabOption } from "../components/ui/Tabs";
 
@@ -22,7 +23,7 @@ export default function CheckPage() {
   const unassigned = !user || !hasScreeningAccess(user);
 
   return (
-    <>
+    <Page>
       <PageHeader
         title="Check answers"
         subtitle="Screen short answers for signs of AI generation."
@@ -30,7 +31,7 @@ export default function CheckPage() {
       />
 
       {unassigned ? (
-        <section className="mt-8 rounded-xl border border-border bg-surface p-12 text-center">
+        <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-12 text-center">
           <p className="text-lg font-medium text-foreground">
             You are not assigned to an instructor yet
           </p>
@@ -42,7 +43,7 @@ export default function CheckPage() {
         </section>
       ) : (
         <>
-          <div className="mt-7">
+          <div className="mt-7 shrink-0">
             <Tabs
               tabs={CHECK_TABS}
               value={tab}
@@ -50,16 +51,16 @@ export default function CheckPage() {
               ariaLabel="Check mode"
             />
           </div>
-          <div
+          <PageScroll
             className="mt-6"
             role="tabpanel"
             id={`panel-${tab}`}
             aria-labelledby={`tab-${tab}`}
           >
             {tab === "single" ? <SingleCheckTab /> : <BatchTab />}
-          </div>
+          </PageScroll>
         </>
       )}
-    </>
+    </Page>
   );
 }

@@ -80,9 +80,9 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
         aria-label="Open navigation"
         aria-expanded={isDrawerOpen}
         aria-controls={SIDEBAR_ID}
-        className={`fixed top-3 left-3 z-50 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-md transition-colors hover:bg-primary-hover focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/40 md:hidden ${
-          isDrawerOpen ? "hidden" : ""
-        }`}
+        className={`${
+          isDrawerOpen ? "hidden" : "inline-flex"
+        } fixed top-3 left-3 z-50 h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-md transition-colors hover:bg-primary-hover focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/40 md:hidden`}
       >
         <Menu className="h-5 w-5" aria-hidden="true" />
       </button>

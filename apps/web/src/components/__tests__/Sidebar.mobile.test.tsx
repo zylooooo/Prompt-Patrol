@@ -72,6 +72,23 @@ describe("Sidebar drawer — opening", () => {
     expect(document.activeElement).toBe(closer());
   });
 
+  it("emits exactly one display utility on the opener", async () => {
+    // Regression, caught in a real browser and invisible to jsdom: the opener
+    // used to carry `inline-flex ... hidden` together while open, and Tailwind
+    // resolves that by stylesheet order — `.inline-flex` wins, so the hamburger
+    // stayed on screen over the drawer. jsdom applies no CSS, so the only
+    // checkable contract here is that the two never coexist.
+    renderDrawer();
+    const display = () =>
+      opener()
+        .className.split(/\s+/)
+        .filter((c) => c === "hidden" || c === "inline-flex");
+
+    expect(display()).toEqual(["inline-flex"]);
+    await userEvent.click(opener());
+    expect(display()).toEqual(["hidden"]);
+  });
+
   it("slides in rather than mounting", async () => {
     renderDrawer();
     expect(aside().className).toContain("-translate-x-full");

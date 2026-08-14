@@ -119,6 +119,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
           getRowId={(row) => row.checkId}
           selectedId={expanded}
           onSelect={toggle}
+          bodyMaxHeightClass="max-h-[28rem]"
           footer={`Showing all ${run.rows.length} · flagged first`}
         />
       </div>

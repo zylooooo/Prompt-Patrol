@@ -21,6 +21,7 @@ import { useToast } from "../hooks/useToast";
 import RowAction from "../components/RowAction";
 import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
+import Page, { PageFill } from "../components/ui/Page";
 import TokenMultiSelect from "../components/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
@@ -282,14 +283,14 @@ export default function UsersPage() {
     : undefined;
 
   return (
-    <>
+    <Page>
       <PageHeader
         title="Users"
         subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
         showModelStatus={false}
       />
 
-      <section className="mt-8 rounded-xl border border-border bg-surface p-7">
+      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
         <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
           Add account
         </p>
@@ -378,7 +379,7 @@ export default function UsersPage() {
         )}
       </section>
 
-      <div className="mt-6">
+      <div className="mt-6 shrink-0">
         <SegmentedToggle
           options={FILTERS}
           value={filter}
@@ -387,8 +388,9 @@ export default function UsersPage() {
         />
       </div>
 
-      <div className="mt-5">
+      <PageFill className="mt-5">
         <DataTable<AppUser>
+          fillHeight
           columns={columns}
           rows={visible}
           getRowId={(u) => u.id}
@@ -401,12 +403,12 @@ export default function UsersPage() {
           }
         />
         {rowError && (
-          <p className="mt-3 text-xs text-danger" role="alert">
+          <p className="mt-3 shrink-0 text-xs text-danger" role="alert">
             {erroredUser ? `${displayName(erroredUser)}: ` : ""}
             {rowError.message}
           </p>
         )}
-      </div>
+      </PageFill>
 
       {relationship && (
         <RelationshipDialog
@@ -424,6 +426,6 @@ export default function UsersPage() {
           onClose={() => setDeactivating(null)}
         />
       )}
-    </>
+    </Page>
   );
 }

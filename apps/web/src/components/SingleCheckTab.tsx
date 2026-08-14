@@ -68,9 +68,9 @@ export default function SingleCheckTab() {
               onSubmit();
             }
           }}
-          rows={7}
+          rows={10}
           placeholder="Paste the student answer to screen."
-          className={`mt-3 resize-y px-4 py-3 leading-relaxed ${FIELD_CLASS}`}
+          className={`mt-3 resize-none px-4 py-3 leading-relaxed ${FIELD_CLASS}`}
         />
 
         <div className="mt-5">

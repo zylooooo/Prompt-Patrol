@@ -10,7 +10,7 @@ export default function PageHeader({
   showModelStatus = true,
 }: PageHeaderProps) {
   return (
-    <header className="flex items-start justify-between gap-6">
+    <header className="flex shrink-0 items-start justify-between gap-6">
       <div>
         <h1 className="text-[26px] font-bold text-foreground">{title}</h1>
         {subtitle && (

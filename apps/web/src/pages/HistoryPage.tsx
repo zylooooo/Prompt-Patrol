@@ -12,6 +12,7 @@ import PageHeader from "../components/PageHeader";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Pagination from "../components/ui/Pagination";
+import Page, { PageFill } from "../components/ui/Page";
 import SearchInput from "../components/ui/SearchInput";
 import { fmtDateShort, truncate } from "../lib/format";
 import { RowActionLink } from "../components/RowAction";
@@ -163,7 +164,7 @@ export default function HistoryPage() {
   ];
 
   return (
-    <>
+    <Page>
       <PageHeader
         title="History"
         subtitle="Every check is stored with its score, verdict, and model version."
@@ -171,7 +172,7 @@ export default function HistoryPage() {
 
       {isPending ? (
         <section
-          className="mt-8 flex flex-col gap-3 rounded-xl border border-border bg-surface p-7"
+          className="mt-8 flex shrink-0 flex-col gap-3 rounded-xl border border-border bg-surface p-7"
           aria-busy="true"
           aria-label="Loading history"
         >
@@ -183,7 +184,7 @@ export default function HistoryPage() {
           ))}
         </section>
       ) : !hasAny ? (
-        <section className="mt-8 rounded-xl border border-border bg-surface p-12 text-center">
+        <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-12 text-center">
           <p className="text-lg font-medium text-foreground">No checks yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Checked answers will appear here. Run your first check from the
@@ -192,7 +193,7 @@ export default function HistoryPage() {
         </section>
       ) : (
         <>
-          <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
+          <div className="mt-7 flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <SearchInput
                 value={query}
@@ -218,8 +219,9 @@ export default function HistoryPage() {
             />
           </div>
 
-          <div className="mt-5">
+          <PageFill className="mt-5">
             <DataTable<HistoryEntry>
+              fillHeight
               columns={columns}
               rows={visible}
               getRowId={entryId}
@@ -240,9 +242,9 @@ export default function HistoryPage() {
                 />
               }
             />
-          </div>
+          </PageFill>
         </>
       )}
-    </>
+    </Page>
   );
 }

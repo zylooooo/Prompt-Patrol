@@ -18,7 +18,7 @@ export default function AppShell() {
   }, [location.pathname]);
 
   return (
-    <div className="flex min-h-dvh bg-background">
+    <div className="relative flex h-dvh overflow-hidden bg-background">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-60 focus:rounded-md focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary"
@@ -32,7 +32,7 @@ export default function AppShell() {
         id="main-content"
         ref={mainRef}
         tabIndex={-1}
-        className="min-w-0 flex-1 px-6 pt-16 pb-10 outline-none md:px-11 md:py-11"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pt-16 pb-6 outline-none md:px-11 md:py-9"
       >
         <Outlet />
       </main>
