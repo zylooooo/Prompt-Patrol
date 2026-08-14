@@ -37,6 +37,13 @@
   --color-danger-border: #fca5a5;
   --color-danger-foreground: #ffffff;
 
+  --color-flag: #924a0a; /* flagged as AI - kept off danger's red on purpose */
+  --color-flag-soft: #fdeede;
+  --color-human: #1a7038;
+  --color-human-soft: #e4f4ea;
+  --color-unsure: #545a78; /* indigo-grey, matches muted-foreground */
+  --color-unsure-soft: #e9ebf3;
+
   --color-table-header: #eef0f8; /* match surface-muted */
   --color-table-row-hover: #f6f7fc;
   --color-table-selected: #e4e4fa; /* primary-soft */
@@ -105,5 +112,16 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+}
+
+/* Unlayered on purpose: `!important` here outranks the utilities that would
+   otherwise run --animate-fadeInUp and --animate-fadeIn. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }
