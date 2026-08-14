@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 @theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
   --color-background: #f9fafc; /* faint indigo-tinted off-white */
   --color-surface: #ffffff;
   --color-surface-muted: #eef0f8; /* faint indigo grey */
@@ -36,6 +40,11 @@
   --color-danger-soft: #fee2e2;
   --color-danger-border: #fca5a5;
   --color-danger-foreground: #ffffff;
+
+  /* Only the dev-login panel uses these today. Values match the amber-50 /
+     amber-300 it previously hardcoded, so this is a token-only change. */
+  --color-warning-soft: #fffbeb;
+  --color-warning-border: #fcd34d;
 
   --color-flag: #924a0a; /* flagged as AI - kept off danger's red on purpose */
   --color-flag-soft: #fdeede;

@@ -51,7 +51,7 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
     : null;
 
   return (
-    <div className="mt-6 space-y-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3">
+    <div className="mt-6 space-y-3 rounded-lg border border-dashed border-warning-border bg-warning-soft p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Development Only (No Authentication)
       </p>
