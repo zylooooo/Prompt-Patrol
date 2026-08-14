@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.1 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.5.3 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -14,6 +14,27 @@ openapi: 3.0.3
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
 # CHANGELOG
+#   0.5.3  In-app identity resolution redesigned around FastAPI `Depends()`
+#          instead of `BaseHTTPMiddleware`: `get_current_user_id` ->
+#          `get_current_user` -> `require_role`, sharing one request-scoped
+#          DB session with the route handler (fixes a detached-instance risk
+#          from the old middleware opening its own separate session).
+#          `require_role` now applied at the router level for protected
+#          routers, not per-endpoint, to keep "protected by default" without
+#          middleware. Added `x-gateway-configuration.context_propagation`:
+#          once the API Gateway authorizer exists, `get_current_user_id` is
+#          the one function that swaps to trusting a gateway-injected
+#          `X-PP-User-Id` header instead of re-parsing the session cookie,
+#          avoiding a redundant per-request session-validation query against
+#          Postgres on top of the authorizer's own. See DECISION LOG [0.5.3].
+#   0.5.2  GET /api/users/{id} object-level visibility model replaces the
+#          role-only `root_admin OR self` gate: instructors can see other
+#          instructors and TAs (not root_admin); TAs can see any instructor
+#          and only TAs sharing their own provisioner (not root_admin, not
+#          another instructor's TAs). Dropped the `403` response — the
+#          endpoint has no function-level role gate, so every denial is
+#          object-level and returns `404` per the existing `NotFound`
+#          existence-hiding convention. See DECISION LOG [0.5.2].
 #   0.5.1  Added GET /api/detector (capabilities). `question_text` requiredness
 #          moved out of the schema and onto a server-declared runtime flag
 #          (`requires_question_text`), so the ML team's pending decision no
@@ -116,6 +137,20 @@ info:
     *Authenticated-yet-unauthorized* traffic does, and receives a `403` from
     the users module. This is correct — "forbidden" is an application-domain
     judgement. See DECISION LOG [0.3.0] for the full rationale.
+
+    ### In-app identity resolution: dependency injection, not middleware
+
+    Inside the FastAPI app, identity resolution (`get_current_user_id` ->
+    `get_current_user` -> `require_role`) is a **`Depends()` chain**, not
+    ASGI middleware. `get_current_user` shares the same request-scoped
+    `AsyncSession` as the route handler (both resolve from `get_db`), and is
+    cached per-request by FastAPI so it never re-queries even if depended on
+    twice. `get_current_user_id` is the one seam that differs by
+    environment — see `x-gateway-configuration.context_propagation` below.
+    Protected routers apply `require_role` at the router level
+    (`APIRouter(dependencies=[...])`), not per-endpoint, so a new route is
+    protected by default rather than only if someone remembers to declare
+    it. See DECISION LOG [0.5.3].
 
     ### Session lifetime
     | Rule              | Value  | Behaviour                                |
@@ -257,6 +292,32 @@ x-gateway-configuration:
       - Permission evaluation
       - Profile hydration
       - Any route-to-role mapping
+  context_propagation:
+    note: |
+      How ECS learns the identity the authorizer already resolved, and how
+      the app avoids re-doing the authorizer's own DB work. See DECISION LOG
+      [0.5.3].
+    mechanism: |
+      Integration request parameter mapping copies the authorizer context
+      onto a header for the VPC Link -> ECS hop, e.g.:
+        integration.request.header.X-PP-User-Id = context.authorizer.user_id
+      This header is trustworthy ONLY because of the `network` SG rule below
+      — ECS has no other ingress path, so nothing but the gateway can set it.
+    app_behaviour: |
+      `get_current_user_id` (the innermost link in the `Depends()` chain
+      described in `info.description`) is environment-aware:
+        - Local dev (no gateway in front): parses `__Host-session` itself,
+          hashes it, queries the session table directly. No authorizer
+          exists locally, so the app must do this work itself.
+        - Behind the gateway (staging/prod): trusts `X-PP-User-Id` and skips
+          the cookie parse and session-table lookup entirely — the
+          authorizer already proved the session is valid; redoing that
+          query in-app would be a second, redundant DB round trip per
+          request for no additional guarantee.
+      Either way, `get_current_user` still runs exactly one query — loading
+      the `User` row for role/`provisioned_by` — because that hydration is
+      explicitly out of the authorizer's scope, not because the app doesn't
+      trust the gateway's identity claim.
   network:
     note: |
       Gateway enforcement holds ONLY if ECS is unreachable by any other path.
@@ -832,13 +893,24 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "users module — require_role('root_admin') OR id == caller's user_id"
+      x-authorization: "users module — object-level, see DECISION LOG [0.5.2]"
       description: |
-        `root_admin` may fetch any user. Any other caller may fetch only
-        their own record. Functionally redundant with `GET /api/users/me`
-        for the self case — kept anyway so an admin-UI table and a
-        single-user drill-down can hit the same shape via the same route
-        pattern.
+        Object-scoped, not role-gated — every provisioned caller may hit
+        this route, visibility of the *target* is what varies:
+          - `root_admin` may view anyone, including other `root_admin` rows.
+          - Anyone may view their own record.
+          - `instructor` may view other `instructor` and `teaching_assistant`
+            rows, but not `root_admin` rows.
+          - `teaching_assistant` may view any `instructor` row, and any
+            `teaching_assistant` row sharing the same `provisioned_by`
+            (i.e. created by the same instructor), but not `root_admin` rows
+            and not TAs provisioned by a different instructor.
+        Out-of-scope targets return `404`, same as a nonexistent id — see
+        the `NotFound` schema. There is no `403` path for this endpoint: it
+        has no function-level role gate, so every denial is object-level.
+        Functionally redundant with `GET /api/users/me` for the self case —
+        kept anyway so an admin-UI table and a single-user drill-down can
+        hit the same shape via the same route pattern.
       parameters:
         - name: id
           in: path
@@ -852,8 +924,6 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1920,6 +1990,82 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.5.3] In-app session resolution moves from middleware to Depends().
+#
+#   PROBLEM. `SessionAuthMiddleware` (a `BaseHTTPMiddleware` subclass) opened
+#   its own `async_session()`, separate from the per-request session `get_db`
+#   hands to route handlers, and closed it before `call_next(request)` ran.
+#   The `User` object cached on `request.state.user` was therefore already
+#   *detached* (SQLAlchemy's term for an object whose session has closed) by
+#   the time any route handler saw it — touching an unloaded/lazy attribute
+#   on it later raises `DetachedInstanceError`. Confirmed as a real seam, not
+#   theoretical: `tests/routes/test_auth.py`'s `test_me_with_valid_session_*`
+#   test has to `patch("auth.middleware.async_session", ...)` to point the
+#   middleware's independent session at the test's session — the tests were
+#   already compensating for the two sessions being unrelated.
+#
+#   Separately, the middleware ran unconditionally on every request —
+#   `/health`, `/docs`, `/openapi.json`, 404s — paying a Postgres round trip
+#   for a session lookup regardless of whether the route needed identity.
+#
+#   DECISION. Replace the middleware with a `Depends()` chain:
+#   `get_current_user_id` (extracts identity — cookie locally, gateway
+#   header once [0.5.3]'s gateway integration ships) -> `get_current_user`
+#   (the only function that queries Postgres, on the SAME session
+#   `get_db` gives the route handler) -> `require_role` (unchanged
+#   role-rank logic, now reading its input from `Depends()` instead of
+#   `request.state`). This fixes the detached-object risk by construction —
+#   the `User` row and the route handler now share one session — and makes
+#   the session lookup opt-in per route instead of unconditional.
+#
+#   To avoid trading a correctness bug for a security regression (losing
+#   middleware's "every route is protected unless proven otherwise"
+#   property), `require_role` is attached at the `APIRouter` level
+#   (`dependencies=[Depends(require_role(min_role))]`) for every router
+#   except `auth`'s intentionally-public `/login` and `/callback` routes,
+#   rather than left as an opt-in per-endpoint dependency.
+#
+#   FORWARD-LOOKING. This is also the shape that lets the app stay correct
+#   once `x-gateway-configuration`'s authorizer is real: `get_current_user_id`
+#   is the only function whose implementation differs behind the gateway
+#   (trust `X-PP-User-Id`, skip re-parsing the cookie) vs. local dev (no
+#   gateway exists locally, so it still does the cookie lookup itself).
+#   `get_current_user`, `require_role`, and every route stay identical either
+#   way. See `x-gateway-configuration.context_propagation`.
+#
+#   ALTERNATIVE CONSIDERED: keep `BaseHTTPMiddleware` and have it borrow the
+#   request's `get_db`-scoped session instead of opening its own. Rejected —
+#   ASGI middleware runs outside FastAPI's dependency-injection system, so
+#   there's no supported way for it to receive the same per-request session
+#   `Depends(get_db)` produces without hand-rolling that plumbing. It also
+#   wouldn't address the unconditional-per-request-cost issue.
+#
+# [0.5.2] GET /api/users/{id}: object-level visibility, not a `403` role gate.
+#
+#   The endpoint originally documented both `403` and `404`, inherited from
+#   copy-pasting the response set used by the role-gated endpoints
+#   (PATCH .../role, DELETE, POST /api/users). But this endpoint has no
+#   function-level role gate — every provisioned user is allowed to *call*
+#   it, since self-access is always permitted. So a denial here is never
+#   "your role can't do this," it's always "this particular target isn't
+#   visible to you" — exactly the object-level case the `NotFound` schema's
+#   existence-hiding conflation exists for (see components/responses/NotFound).
+#   Kept `403` reserved for endpoints with a real function-level gate
+#   (root_admin-only writes); removed it here since no code path produces it.
+#
+#   Visibility rule (read-only; write/patch scoping is unchanged and still
+#   root_admin-only pending explicit extension):
+#     - root_admin            -> sees everyone, including other root_admins.
+#     - any role               -> always sees their own record.
+#     - instructor             -> sees other instructors and TAs, not root_admin.
+#     - teaching_assistant     -> sees any instructor, and only TAs sharing
+#                                  their own `provisioned_by` (siblings under
+#                                  the same instructor); not root_admin, not
+#                                  another instructor's TAs.
+#   root_admin rows are invisible to non-admins across the board — treated
+#   the same as any other out-of-scope target (404), not specially exposed
+#   as "public" metadata.
 # =============================================================================
 #
 # [0.5.1] `question_text` requiredness is a RUNTIME capability, not a schema
