@@ -4,11 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "check:node": "node scripts/check-node.mjs",
+    "predev": "npm run check:node",
     "dev": "vite",
+    "prebuild": "npm run check:node",
     "build": "tsc -b && vite build",
+    "prelint": "npm run check:node",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "pretypecheck": "npm run check:node",
     "typecheck": "tsc -b",
+    "prepreview": "npm run check:node",
     "preview": "vite preview"
   },
   "engines": {
