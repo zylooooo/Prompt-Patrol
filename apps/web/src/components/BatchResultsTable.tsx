@@ -1,14 +1,15 @@
+import DataTable, {
+  TABLE_ICON_COLUMN_WIDTH,
+  type DataTableColumn,
+} from "./ui/DataTable";
 import Button from "./ui/Button";
 import RowAction from "./RowAction";
 import VerdictChip from "./VerdictChip";
 import SignalsList from "./SignalsList";
 import { truncate } from "../lib/format";
-import type { BatchRun } from "../api/types";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import type { BatchRow, BatchRun } from "../api/types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
-
-const HEAD_CELL =
-  "py-2.5 pr-4 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
 
 function CountChip({
   dotClass,
@@ -36,6 +37,64 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
     downloadCsv(`${base}-results.csv`, serializeResultsCsv(run));
   }
 
+  const toggle = (checkId: string) =>
+    setExpanded((current) => (current === checkId ? null : checkId));
+
+  const columns: DataTableColumn<BatchRow>[] = [
+    {
+      id: "externalRef",
+      header: "Reference",
+      width: "minmax(0,0.9fr)",
+      cell: (row) => (
+        <span className="truncate font-mono text-[13px] text-foreground">
+          {row.externalRef}
+        </span>
+      ),
+    },
+    {
+      id: "answer",
+      header: "Answer",
+      width: "minmax(0,2.4fr)",
+      cell: (row) => (
+        <span className="truncate text-sm text-muted-foreground">
+          {truncate(row.answerText ?? "")}
+        </span>
+      ),
+    },
+    {
+      id: "score",
+      header: "Score",
+      width: "minmax(0,0.5fr)",
+      hideWhenCompact: true,
+      cell: (row) => (
+        <span className="font-mono text-[13px] text-foreground">
+          {row.rawScore.toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      id: "verdict",
+      header: "Verdict",
+      width: "minmax(0,0.8fr)",
+      cell: (row) => <VerdictChip verdict={row.verdict} />,
+    },
+    {
+      id: "actions",
+      header: "",
+      width: TABLE_ICON_COLUMN_WIDTH,
+      align: "right",
+      cell: (row) => (
+        <span onClick={(e) => e.stopPropagation()}>
+          <RowAction onClick={() => toggle(row.checkId)}>
+            {expanded === row.checkId ? "Hide" : "View"}
+          </RowAction>
+        </span>
+      ),
+    },
+  ];
+
+  const expandedRow = run.rows.find((row) => row.checkId === expanded);
+
   return (
     <section className="rounded-xl border border-border bg-surface p-7">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -53,75 +112,37 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
         </div>
       </div>
 
-      <div className="mt-5 overflow-x-auto">
-        <table className="w-full min-w-[880px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-border">
-              <th className={HEAD_CELL}>Reference</th>
-              <th className={HEAD_CELL}>Answer</th>
-              <th className={HEAD_CELL}>Score</th>
-              <th className={HEAD_CELL}>Verdict</th>
-              <th className="py-2.5" />
-            </tr>
-          </thead>
-          <tbody>
-            {run.rows.map((row) => (
-              <Fragment key={row.checkId}>
-                <tr className="border-b border-border last:border-b-0">
-                  <td className="py-3.5 pr-4 font-mono text-[13px] whitespace-nowrap text-foreground">
-                    {row.externalRef}
-                  </td>
-                  <td className="max-w-[420px] py-3.5 pr-4 text-sm text-muted-foreground">
-                    {truncate(row.answerText ?? "")}
-                  </td>
-                  <td className="py-3.5 pr-4 font-mono text-[13px] text-foreground">
-                    {row.rawScore.toFixed(2)}
-                  </td>
-                  <td className="py-3.5 pr-4">
-                    <VerdictChip verdict={row.verdict} />
-                  </td>
-                  <td className="py-3.5 text-right">
-                    <RowAction
-                      onClick={() =>
-                        setExpanded(
-                          expanded === row.checkId ? null : row.checkId,
-                        )
-                      }
-                    >
-                      {expanded === row.checkId ? "Hide" : "View"}
-                    </RowAction>
-                  </td>
-                </tr>
-                {expanded === row.checkId && (
-                  <tr className="border-b border-border last:border-b-0">
-                    <td colSpan={5} className="bg-surface-muted px-4 py-4">
-                      <p className="text-sm leading-relaxed text-foreground">
-                        {row.answerText}
-                      </p>
-                      {row.questionText && (
-                        <p className="mt-2 text-xs text-disabled-foreground">
-                          question: {row.questionText}
-                        </p>
-                      )}
-                      <div className="mt-4">
-                        <SignalsList
-                          abstainReason={row.abstainReason}
-                          explanation={row.explanation}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+      <div className="mt-5">
+        <DataTable<BatchRow>
+          columns={columns}
+          rows={run.rows}
+          getRowId={(row) => row.checkId}
+          selectedId={expanded}
+          onSelect={toggle}
+          footer={`Showing all ${run.rows.length} · flagged first`}
+        />
       </div>
 
-      <div className="mt-5 flex items-center justify-between border-t border-border pt-4">
-        <p className="text-[13px] text-disabled-foreground">
-          Showing all {run.rows.length} · flagged first
-        </p>
+      {expandedRow && (
+        <div className="mt-4 rounded-xl bg-surface-muted px-5 py-4">
+          <p className="text-sm leading-relaxed text-foreground">
+            {expandedRow.answerText}
+          </p>
+          {expandedRow.questionText && (
+            <p className="mt-2 text-xs text-disabled-foreground">
+              question: {expandedRow.questionText}
+            </p>
+          )}
+          <div className="mt-4">
+            <SignalsList
+              abstainReason={expandedRow.abstainReason}
+              explanation={expandedRow.explanation}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 flex items-center justify-end">
         <Button variant="secondary" size="lg" onClick={onDownload}>
           Download results (CSV)
         </Button>

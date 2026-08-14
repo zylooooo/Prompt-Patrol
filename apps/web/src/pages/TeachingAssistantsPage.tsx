@@ -1,3 +1,7 @@
+import DataTable, {
+  TABLE_ICON_COLUMN_WIDTH,
+  type DataTableColumn,
+} from "../components/ui/DataTable";
 import {
   findUserByEmail,
   linkedAt,
@@ -20,9 +24,6 @@ import RowAction from "../components/RowAction";
 import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { displayName, isActive, type AppUser } from "../api/types";
-
-const HEAD_CELL =
-  "py-3 pr-4 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
@@ -129,6 +130,85 @@ export default function TeachingAssistantsPage() {
 
   const list = assistants ?? [];
 
+  const columns: DataTableColumn<AppUser>[] = [
+    {
+      id: "name",
+      header: "Name",
+      width: "minmax(0,1.2fr)",
+      cell: (ta) => (
+        <span className="truncate text-sm font-medium text-foreground">
+          {displayName(ta)}
+        </span>
+      ),
+    },
+    {
+      id: "email",
+      header: "Email",
+      width: "minmax(0,1.5fr)",
+      cell: (ta) => (
+        <span className="truncate font-mono text-xs text-muted-foreground">
+          {ta.email}
+        </span>
+      ),
+    },
+    {
+      id: "alsoWith",
+      header: "Also supervised by",
+      width: "minmax(0,1.3fr)",
+      hideWhenCompact: true,
+      cell: (ta) => (
+        <span className="truncate text-[13px] text-muted-foreground">
+          {alsoWith(ta)}
+        </span>
+      ),
+    },
+    {
+      id: "addedOn",
+      header: "Added",
+      width: "minmax(0,0.9fr)",
+      hideWhenCompact: true,
+      cell: (ta) => (
+        <span className="truncate text-[13px] text-muted-foreground">
+          {addedOn(ta)}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "minmax(0,0.8fr)",
+      cell: (ta) => (
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+            isActive(ta)
+              ? "bg-human-soft text-human"
+              : "bg-unsure-soft text-unsure"
+          }`}
+        >
+          {isActive(ta) ? "Active" : "Deactivated"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      width: TABLE_ICON_COLUMN_WIDTH,
+      align: "right",
+      cell: (ta) => (
+        <RowAction
+          onClick={() => setConfirmRemove(ta)}
+          disabled={pending === ta.id}
+        >
+          Remove
+        </RowAction>
+      ),
+    },
+  ];
+
+  const erroredAssistant = rowError
+    ? list.find((ta) => ta.id === rowError.id)
+    : undefined;
+
   return (
     <>
       <PageHeader
@@ -194,20 +274,7 @@ export default function TeachingAssistantsPage() {
         )}
       </section>
 
-      {isPending ? (
-        <section
-          className="mt-6 flex flex-col gap-3 rounded-xl border border-border bg-surface p-7"
-          aria-busy="true"
-          aria-label="Loading teaching assistants"
-        >
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-10 animate-pulse rounded-md bg-surface-muted"
-            />
-          ))}
-        </section>
-      ) : isError ? (
+      {isError ? (
         <section
           className="mt-6 rounded-xl border border-border bg-surface p-12 text-center"
           role="alert"
@@ -227,83 +294,33 @@ export default function TeachingAssistantsPage() {
             Try again
           </Button>
         </section>
-      ) : list.length === 0 ? (
-        <section className="mt-6 rounded-xl border border-border bg-surface p-12 text-center">
-          <p className="text-lg font-medium text-foreground">
-            No teaching assistants yet
-          </p>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Add one above. They will be able to screen answers for your courses.
-          </p>
-        </section>
       ) : (
-        <section className="mt-6 rounded-xl border border-border bg-surface px-7 py-2">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-border">
-                  {[
-                    "Name",
-                    "Email",
-                    "Also supervised by",
-                    "Added",
-                    "Status",
-                    "",
-                  ].map((h) => (
-                    <th key={h} className={HEAD_CELL}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((ta) => (
-                  <tr
-                    key={ta.id}
-                    className="border-b border-border last:border-b-0"
-                  >
-                    <td className="py-4 pr-4 text-sm font-medium text-foreground">
-                      {displayName(ta)}
-                    </td>
-                    <td className="py-4 pr-4 font-mono text-xs text-muted-foreground">
-                      {ta.email}
-                    </td>
-                    <td className="py-4 pr-4 text-[13px] text-muted-foreground">
-                      {alsoWith(ta)}
-                    </td>
-                    <td className="py-4 pr-4 text-[13px] whitespace-nowrap text-muted-foreground">
-                      {addedOn(ta)}
-                    </td>
-                    <td className="py-4 pr-4">
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                          isActive(ta)
-                            ? "bg-human-soft text-human"
-                            : "bg-unsure-soft text-unsure"
-                        }`}
-                      >
-                        {isActive(ta) ? "Active" : "Deactivated"}
-                      </span>
-                    </td>
-                    <td className="py-4 text-right whitespace-nowrap">
-                      <RowAction
-                        onClick={() => setConfirmRemove(ta)}
-                        disabled={pending === ta.id}
-                      >
-                        Remove
-                      </RowAction>
-                      {rowError?.id === ta.id && (
-                        <p className="mt-1 text-xs text-danger" role="alert">
-                          {rowError.message}
-                        </p>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <div className="mt-6">
+          <DataTable<AppUser>
+            columns={columns}
+            rows={list}
+            getRowId={(ta) => ta.id}
+            isLoading={isPending}
+            loadingLabel="Loading teaching assistants…"
+            emptyState={
+              <div className="p-12 text-center">
+                <p className="text-lg font-medium text-foreground">
+                  No teaching assistants yet
+                </p>
+                <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                  Add one above. They will be able to screen answers for your
+                  courses.
+                </p>
+              </div>
+            }
+          />
+          {rowError && (
+            <p className="mt-3 text-xs text-danger" role="alert">
+              {erroredAssistant ? `${displayName(erroredAssistant)}: ` : ""}
+              {rowError.message}
+            </p>
+          )}
+        </div>
       )}
 
       {existing && (

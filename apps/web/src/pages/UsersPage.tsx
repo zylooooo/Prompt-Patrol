@@ -20,6 +20,7 @@ import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import TokenMultiSelect from "../components/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
+import DataTable, { type DataTableColumn } from "../components/ui/DataTable";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
 type Filter = "all" | "instructors" | "assistants" | "unassigned";
@@ -30,9 +31,6 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "assistants", label: "Teaching assistants" },
   { id: "unassigned", label: "Unassigned" },
 ];
-
-const HEAD_CELL =
-  "py-3 pr-4 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
@@ -162,6 +160,121 @@ export default function UsersPage() {
 
   const canSubmit = email.trim() !== "" && role !== "";
 
+  const columns: DataTableColumn<AppUser>[] = [
+    {
+      id: "name",
+      header: "Name",
+      width: "minmax(0,1.2fr)",
+      cell: (u) => (
+        <span className="truncate text-sm font-medium text-foreground">
+          {displayName(u)}
+        </span>
+      ),
+    },
+    {
+      id: "email",
+      header: "Email",
+      width: "minmax(0,1.5fr)",
+      cell: (u) => (
+        <span className="truncate font-mono text-xs text-muted-foreground">
+          {u.email}
+        </span>
+      ),
+    },
+    {
+      id: "role",
+      header: "Role",
+      width: "minmax(0,1fr)",
+      hideWhenCompact: true,
+      cell: (u) => (
+        <span className="truncate text-[13px] text-muted-foreground">
+          {roleLabel(u)}
+        </span>
+      ),
+    },
+    {
+      id: "supervisors",
+      header: "Supervisors",
+      width: "minmax(0,1.2fr)",
+      hideWhenCompact: true,
+      cell: (u) => (
+        <span
+          className={`truncate text-[13px] ${
+            supervisorText(u) === "Unassigned"
+              ? "font-medium text-disabled-foreground"
+              : "text-muted-foreground"
+          }`}
+        >
+          {supervisorText(u)}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "minmax(0,0.8fr)",
+      cell: (u) => (
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+            isActive(u)
+              ? "bg-human-soft text-human"
+              : "bg-unsure-soft text-unsure"
+          }`}
+        >
+          {isActive(u) ? "Active" : "Deactivated"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      width: "minmax(0,1.8fr)",
+      align: "right",
+      cell: (u) => {
+        const isSelf = actor?.email.toLowerCase() === u.email.toLowerCase();
+        const busy = pending === u.id;
+        if (isSelf) {
+          return (
+            <span className="pr-2.5 text-[13px] text-disabled-foreground">
+              Your account
+            </span>
+          );
+        }
+        return (
+          <span className="flex items-center justify-end gap-1">
+            {u.role === "teaching_assistant" && (
+              <RowAction
+                onClick={() =>
+                  setRelationship({ subject: u, direction: "supervisors" })
+                }
+                disabled={busy}
+              >
+                Supervisors
+              </RowAction>
+            )}
+            {u.role === "instructor" && (
+              <RowAction
+                onClick={() =>
+                  setRelationship({ subject: u, direction: "assistants" })
+                }
+                disabled={busy}
+              >
+                Teaching assistants
+              </RowAction>
+            )}
+            <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
+              {isActive(u) ? "Deactivate" : "Reactivate"}
+            </RowAction>
+          </span>
+        );
+      },
+    },
+  ];
+
+  const erroredUser = rowError
+    ? (users ?? []).find((u) => u.id === rowError.id)
+    : undefined;
+
   return (
     <>
       <PageHeader
@@ -278,138 +391,26 @@ export default function UsersPage() {
         ))}
       </div>
 
-      <section className="mt-5 rounded-xl border border-border bg-surface px-7 py-2">
-        {isPending ? (
-          <div
-            className="flex flex-col gap-3 py-5"
-            aria-busy="true"
-            aria-label="Loading users"
-          >
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="h-10 animate-pulse rounded-md bg-surface-muted"
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[880px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-border">
-                  {["Name", "Email", "Role", "Supervisors", "Status", ""].map(
-                    (h) => (
-                      <th key={h} className={HEAD_CELL}>
-                        {h}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((u) => {
-                  const isSelf =
-                    actor?.email.toLowerCase() === u.email.toLowerCase();
-                  const busy = pending === u.id;
-                  return (
-                    <tr
-                      key={u.id}
-                      className="border-b border-border last:border-b-0"
-                    >
-                      <td className="py-4 pr-4 text-sm font-medium text-foreground">
-                        {displayName(u)}
-                      </td>
-                      <td className="py-4 pr-4 font-mono text-xs text-muted-foreground">
-                        {u.email}
-                      </td>
-                      <td className="py-4 pr-4 text-[13px] text-muted-foreground">
-                        {roleLabel(u)}
-                      </td>
-                      <td
-                        className={`py-4 pr-4 text-[13px] ${
-                          supervisorText(u) === "Unassigned"
-                            ? "font-medium text-disabled-foreground"
-                            : "text-muted-foreground"
-                        }`}
-                      >
-                        {supervisorText(u)}
-                      </td>
-                      <td className="py-4 pr-4">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                            isActive(u)
-                              ? "bg-human-soft text-human"
-                              : "bg-unsure-soft text-unsure"
-                          }`}
-                        >
-                          {isActive(u) ? "Active" : "Deactivated"}
-                        </span>
-                      </td>
-                      <td className="py-4 text-right whitespace-nowrap">
-                        {isSelf ? (
-                          <span className="pr-2.5 text-[13px] text-disabled-foreground">
-                            Your account
-                          </span>
-                        ) : (
-                          <>
-                            {u.role === "teaching_assistant" && (
-                              <RowAction
-                                onClick={() =>
-                                  setRelationship({
-                                    subject: u,
-                                    direction: "supervisors",
-                                  })
-                                }
-                                disabled={busy}
-                              >
-                                Supervisors
-                              </RowAction>
-                            )}
-                            {u.role === "instructor" && (
-                              <RowAction
-                                onClick={() =>
-                                  setRelationship({
-                                    subject: u,
-                                    direction: "assistants",
-                                  })
-                                }
-                                disabled={busy}
-                              >
-                                Teaching assistants
-                              </RowAction>
-                            )}
-                            <RowAction
-                              onClick={() => onStatusClick(u)}
-                              disabled={busy}
-                            >
-                              {isActive(u) ? "Deactivate" : "Reactivate"}
-                            </RowAction>
-                          </>
-                        )}
-                        {rowError?.id === u.id && (
-                          <p className="mt-1 text-xs text-danger" role="alert">
-                            {rowError.message}
-                          </p>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visible.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="py-10 text-center text-sm text-disabled-foreground"
-                    >
-                      No accounts match this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+      <div className="mt-5">
+        <DataTable<AppUser>
+          columns={columns}
+          rows={visible}
+          getRowId={(u) => u.id}
+          isLoading={isPending}
+          loadingLabel="Loading accounts…"
+          emptyState={
+            <p className="px-3 py-10 text-center text-sm text-disabled-foreground">
+              No accounts match this filter.
+            </p>
+          }
+        />
+        {rowError && (
+          <p className="mt-3 text-xs text-danger" role="alert">
+            {erroredUser ? `${displayName(erroredUser)}: ` : ""}
+            {rowError.message}
+          </p>
         )}
-      </section>
+      </div>
 
       {relationship && (
         <RelationshipDialog

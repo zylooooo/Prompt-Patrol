@@ -1,8 +1,14 @@
+import DataTable, {
+  TABLE_ICON_COLUMN_WIDTH,
+  type DataTableColumn,
+} from "../components/ui/DataTable";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useHistory } from "../hooks/useChecks";
 import PageHeader from "../components/PageHeader";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
+import Pagination from "../components/ui/Pagination";
 import { fmtDateShort, truncate } from "../lib/format";
 import { RowActionLink } from "../components/RowAction";
 import { entryId, type HistoryEntry, type Verdict } from "../api/types";
@@ -17,14 +23,8 @@ const FILTER_TABS: { id: Filter; label: string }[] = [
   { id: "human_written", label: "Human" },
 ];
 
-const HEAD_CELL =
-  "py-3 pr-4 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
-
 const CONTROL =
   "h-9 rounded-md border border-input-border bg-surface text-sm transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
-
-const PAGER_BUTTON =
-  "h-9 rounded-md border border-border px-4 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
 
 function matchesFilter(entry: HistoryEntry, filter: Filter): boolean {
   if (filter === "all") return true;
@@ -49,6 +49,7 @@ function matchesDays(entry: HistoryEntry, days: number): boolean {
 
 export default function HistoryPage() {
   usePageTitle("History");
+  const navigate = useNavigate();
   const { data, isPending } = useHistory();
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -76,6 +77,83 @@ export default function HistoryPage() {
   }
 
   const hasAny = (data ?? []).length > 0;
+
+  const columns: DataTableColumn<HistoryEntry>[] = [
+    {
+      id: "createdAt",
+      header: "Checked at",
+      width: "minmax(0,1fr)",
+      cell: (entry) => (
+        <span className="truncate text-sm text-foreground">
+          {fmtDateShort(entry.createdAt)}
+        </span>
+      ),
+    },
+    {
+      id: "kind",
+      header: "Type",
+      width: "minmax(0,0.5fr)",
+      hideWhenCompact: true,
+      cell: (entry) => (
+        <span className="truncate text-sm text-muted-foreground">
+          {entry.kind === "single" ? "Single" : "Batch"}
+        </span>
+      ),
+    },
+    {
+      id: "answer",
+      header: "Answer",
+      width: "minmax(0,2fr)",
+      cell: (entry) => (
+        <span className="truncate text-sm text-muted-foreground">
+          {entry.kind === "single"
+            ? truncate(entry.answerText ?? "Answer not retained", 60)
+            : `${entry.fileName} · ${entry.rows.length} answers`}
+        </span>
+      ),
+    },
+    {
+      id: "score",
+      header: "Score",
+      width: "minmax(0,0.5fr)",
+      hideWhenCompact: true,
+      cell: (entry) => (
+        <span className="font-mono text-[13px] text-foreground">
+          {entry.kind === "single" ? entry.rawScore.toFixed(2) : "·"}
+        </span>
+      ),
+    },
+    {
+      id: "verdict",
+      header: "Verdict",
+      width: "minmax(0,0.8fr)",
+      cell: (entry) =>
+        entry.kind === "single" ? (
+          <VerdictChip verdict={entry.verdict} />
+        ) : (
+          <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+            <span
+              aria-hidden
+              className="h-[7px] w-[7px] rounded-full bg-flag"
+            />
+            {entry.counts.ai_generated} flagged
+          </span>
+        ),
+    },
+    {
+      id: "actions",
+      header: "",
+      width: TABLE_ICON_COLUMN_WIDTH,
+      align: "right",
+      cell: (entry) => (
+        <span onClick={(e) => e.stopPropagation()}>
+          <RowActionLink to={`/history/${entryId(entry)}`}>
+            {entry.kind === "single" ? "View" : "Open"}
+          </RowActionLink>
+        </span>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -144,103 +222,29 @@ export default function HistoryPage() {
             </select>
           </div>
 
-          <section className="mt-5 rounded-xl border border-border bg-surface px-7 py-2">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className={HEAD_CELL}>Checked at</th>
-                    <th className={HEAD_CELL}>Type</th>
-                    <th className={HEAD_CELL}>Answer</th>
-                    <th className={HEAD_CELL}>Score</th>
-                    <th className={HEAD_CELL}>Verdict</th>
-                    <th className="py-3" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((entry) => (
-                    <tr
-                      key={entryId(entry)}
-                      className="border-b border-border last:border-b-0"
-                    >
-                      <td className="py-4 pr-4 text-sm whitespace-nowrap text-foreground">
-                        {fmtDateShort(entry.createdAt)}
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-muted-foreground">
-                        {entry.kind === "single" ? "Single" : "Batch"}
-                      </td>
-                      <td className="max-w-[380px] py-4 pr-4 text-sm text-muted-foreground">
-                        {entry.kind === "single"
-                          ? truncate(
-                              entry.answerText ?? "Answer not retained",
-                              60,
-                            )
-                          : `${entry.fileName} · ${entry.rows.length} answers`}
-                      </td>
-                      <td className="py-4 pr-4 font-mono text-[13px] text-foreground">
-                        {entry.kind === "single"
-                          ? entry.rawScore.toFixed(2)
-                          : "·"}
-                      </td>
-                      <td className="py-4 pr-4">
-                        {entry.kind === "single" ? (
-                          <VerdictChip verdict={entry.verdict} />
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
-                            <span
-                              aria-hidden
-                              className="h-[7px] w-[7px] rounded-full bg-flag"
-                            />
-                            {entry.counts.ai_generated} flagged
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-4 text-right">
-                        <RowActionLink to={`/history/${entryId(entry)}`}>
-                          {entry.kind === "single" ? "View" : "Open"}
-                        </RowActionLink>
-                      </td>
-                    </tr>
-                  ))}
-                  {visible.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="py-10 text-center text-sm text-disabled-foreground"
-                      >
-                        No checks match the current filters.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-border py-3.5">
-              <p className="text-[13px] text-disabled-foreground">
-                Page {current + 1} of {pageCount} · {entries.length} checks
-                stored
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPage(current - 1)}
-                  disabled={current === 0}
-                  className={PAGER_BUTTON}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage(current + 1)}
-                  disabled={current >= pageCount - 1}
-                  className={PAGER_BUTTON}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </section>
+          <div className="mt-5">
+            <DataTable<HistoryEntry>
+              columns={columns}
+              rows={visible}
+              getRowId={entryId}
+              onSelect={(id) => void navigate(`/history/${id}`)}
+              emptyState={
+                <p className="px-3 py-10 text-center text-sm text-disabled-foreground">
+                  No checks match the current filters.
+                </p>
+              }
+              footer={
+                <Pagination
+                  page={current + 1}
+                  totalPages={pageCount}
+                  total={entries.length}
+                  pageSize={PAGE_SIZE}
+                  itemNoun="checks"
+                  onPageChange={(next) => setPage(next - 1)}
+                />
+              }
+            />
+          </div>
         </>
       )}
     </>
