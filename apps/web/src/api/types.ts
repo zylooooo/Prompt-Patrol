@@ -168,3 +168,34 @@ export interface SupervisionLink {
   taId: string;
   createdAt: string;
 }
+
+export interface CheckInput {
+  answerText: string;
+  questionText?: string;
+  externalRef?: string;
+  strictness?: Strictness;
+  retainAnswer?: boolean;
+}
+
+export type LookupResult =
+  | { kind: "free" }
+  | { kind: "linkable"; user: AppUser }
+  | { kind: "not-eligible" };
+
+export interface CreateAccountInput {
+  email: string;
+  role: UserRole;
+  name?: string;
+  supervisorIds?: string[];
+}
+
+export type DeactivationPlan =
+  | { mode: "reassign"; toId: string }
+  | { mode: "deactivate" }
+  | { mode: "leave" };
+
+export interface DeactivationOutcome {
+  reassigned: number;
+  deactivated: number;
+  leftUnassigned: number;
+}
