@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import ENVIRONMENT
 from db import get_db
 from models import User, UserRoleEnum
-from services import get_user_by_id, authenticate_session
+from services.sessions import authenticate_session
+from services.users_service import get_user_by_id
 
 SESSION_COOKIE_NAME = "__Host-session"
 GATEWAY_USER_ID_HEADER = "X-PP-User-Id"

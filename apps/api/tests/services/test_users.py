@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from models import UserRoleEnum, User
-from services.users import can_view_user, resolve_or_bind_user, soft_delete_user
+from services.users_service import can_view_user, resolve_or_bind_user, soft_delete_user
 
 
 def _user(role, provisioned_by=None):
