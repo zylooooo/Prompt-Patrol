@@ -14,14 +14,16 @@ dist/
 downloads/
 eggs/
 .eggs/
+# Anchored to the repo root on purpose: unanchored, `lib/` matches a directory
+# of that name at any depth — including `apps/web/src/lib` and
+# `frontend/src/lib`, whose contents were being silently dropped from commits.
+# Python build output only ever lands at the root, so anchoring loses nothing.
 /lib/
 /lib64/
 parts/
 sdist/
 var/
 wheels/
-# Anchored to the repo root on purpose: an unanchored lib/ also matches
-# frontend/src/lib, which would silently drop the whole frontend logic layer.
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -223,6 +225,12 @@ __marimo__/
 .claude/*
 docs/superpowers/*
 .firecrawl/*
+
+# AI context documentation — local only, never shared
+docs/ai-context/
+
+# graphify
+graphify-out/
 
 # Node and frontend build output
 node_modules

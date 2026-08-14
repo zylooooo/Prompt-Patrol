@@ -2,77 +2,28 @@
 
 SMU CS480 Capstone Project building an web application based triage tool for university instructors to detect AI-generated short answers.
 
-A flag is a prompt for human review, never a verdict.
-
-## Layout
-
-| Path | What it holds |
-| --- | --- |
-| `frontend/` | React 19 + TypeScript + Vite + Tailwind client |
-| `apps/api/` | FastAPI service, Alembic migrations, Docker setup |
-| `apps/web/` | Minimal frontend used to wire up the auth flow end to end |
-| `docs/openapi.yaml` | The API contract shared by both sides |
-
 ## Local dev
 
-1. `cd apps && docker compose up -d --build` starts Postgres and the API.
-2. `docker exec prompt-patrol-api alembic upgrade head` creates the `users` and `sessions` tables (runs inside the container, so it uses the container's `DB_URL`, no host/`localhost` hostname mismatch to worry about).
-3. `docker exec prompt-patrol-api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"` allowlists you; there is no self-service signup. Must be run as `-m scripts.provision_user`, not `python scripts/provision_user.py`, since the latter fails with `ModuleNotFoundError: No module named 'db'` because Python puts the script's own folder on `sys.path` instead of the app root.
-4. Start a frontend (below).
-
-## Frontend
-
-```
-cd frontend
-npm install
-npm run dev
-```
-
-Then open http://localhost:5173.
-
-| Command | What it does |
-| --- | --- |
-| `npm run dev` | Vite dev server on port 5173, proxies `/api` to localhost:8000 |
-| `npm run build` | Type check, then production build |
-| `npm run lint` | ESLint |
-
-Vite is pinned to v6 on purpose: v7 and later need Node 20.19+, and the team runs
-mixed Node versions. Need to agree on version.
+1. `cd apps && docker compose up -d --build` — starts Postgres + the API.
+2. `docker exec prompt-patrol-api alembic upgrade head` — creates the `users`/`sessions` tables (runs inside the container, so it uses the container's `DB_URL` — no host/`localhost` hostname mismatch to worry about).
+3. `docker exec prompt-patrol-api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"` — allowlist yourself; there's no self-service signup. Must be run as `-m scripts.provision_user`, not `python scripts/provision_user.py` — the latter fails with `ModuleNotFoundError: No module named 'db'` since Python puts the script's own folder on `sys.path` instead of the app root.
+4. `cd apps/web && nvm use && npm install && npm run dev` — starts the frontend on <http://localhost:5173>. `nvm use` picks up `apps/web/.nvmrc`; run it from `apps/web` (or below), since nvm searches upwards and there's no `.nvmrc` at the repo root. Without a matching Node, `npm install` stops with an `EBADENGINE` error rather than failing later mid-build — see [the frontend README](apps/web/README.md#node-version).
 
 ### Signing in
 
-There are no passwords. Sign-in goes through Microsoft Entra: the login page
-sends the browser to `/api/auth/login`, Microsoft comes back through
-`/api/auth/callback`, and the session lives in an HttpOnly cookie. That means
-the API has to be running and your email provisioned (step 3 above) before
-sign-in works. Accounts are invite-first, so there is no self-registration and
-nothing to hand a new user except "sign in".
+Two paths. Pick one in `apps/api/.env`; the API refuses to start with neither.
 
-The seed roster in `src/lib/store.ts` (Dr. Don Ta, Alex Lim and friends) still
-populates the Users and Teaching assistants screens, but the account you sign
-in with must be provisioned on the backend.
+**Microsoft Entra ID** — fill in `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_REDIRECT_URI` and `SESSION_SECRET`. All four `ENTRA_*` are required together; a partial fill is a startup error rather than a half-working OAuth client.
 
-### What is real and what is standing in
+**Local dev login** — for working without an Entra app registration. Leave all four `ENTRA_*` blank and set `DEV_AUTH_ENABLED=true`. The login page then offers a picker of provisioned accounts and signs you in as one, no Microsoft round trip.
 
-Auth is real: Entra sign-in, server-side sessions, a 30 minute idle timeout and
-a 4 hour cap.
+This skips *authentication* only. It does not skip *authorization*: step 3 above is still required, the account must still exist and not be soft-deleted, and the role still comes from the `users` row — nothing in the request can create a user or pick a role. Sessions it issues are ordinary sessions with the same cookie hardening and TTLs.
 
-Everything else is still a stub. `src/lib/api.ts` mirrors the planned endpoints
-and also enforces the permission rules, so swapping in real HTTP calls is
-mechanical. Hiding a control in the UI is never the enforcement point.
-`src/lib/detector.ts` is a deterministic heuristic standing in for the model,
-so the same answer always scores the same and demos are repeatable.
+It is confined to a developer's machine by four independent gates:
 
-Stub data persists in localStorage. Clearing site data resets to the seed.
+- `DEV_AUTH_ENABLED` is refused unless `ENVIRONMENT=dev` — the app raises at startup rather than quietly ignoring the flag, so a stray value in a real environment stops a deploy instead of going unnoticed.
+- `/api/auth/dev/*` is only mounted when the flag is set; in staging/prod those paths don't exist, and `routes/dev_auth.py` is never even imported.
+- The router re-checks the flag per request, so mounting it by mistake still yields 404s.
+- The login page's dev panel is behind `import.meta.env.DEV`, so `npm run build` strips it from the production bundle entirely.
 
-## Roles
-
-Every account has exactly one role: administrator, instructor or teaching
-assistant. Roles are ranked, so an administrator passes every instructor check.
-Teaching assistants relate to instructors many to many, and their access comes
-from those links: a teaching assistant with no supervisor can sign in but has
-nothing to screen. The backend currently records only who provisioned each
-account, so shared supervision is a frontend model until that is settled.
-
-Nothing is ever hard deleted. Deactivation is administrator only and is the
-strongest action available; instructors only ever unlink.
+`docker-compose.yml` also publishes the API on `127.0.0.1:8000` rather than every interface, so the dev login isn't reachable from your LAN. Use Chrome or Firefox — the session cookie is `Secure` + `__Host-`-prefixed even locally, and Safari won't store it over plain HTTP.
