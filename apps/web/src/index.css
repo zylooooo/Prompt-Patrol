@@ -3,58 +3,58 @@
 @tailwind utilities;
 
 :root {
-  --background: 255 255 255; /* #FFFFFF */
-  --surface: 250 251 252; /* #FAFBFC — soft off-white surface */
-  --surface-muted: 241 242 244; /* #F1F2F4 — cool-leaning neutral grey */
-  --surface-modal: 232 234 232; /* #E8EAE8 — grey modal with subtle sage undertone */
-  --modal-muted: 244 245 244; /* #F4F5F4 — lighter grey muted modal surface */
-  --surface-strong: 229 231 234; /* #E5E7EA — cool chrome hover step */
-  --border: 212 214 218; /* #D4D6DA — cool-neutral line */
+  --background: 249 250 252; /* #F9FAFC — faint indigo-tinted off-white */
+  --surface: 255 255 255; /* #FFFFFF */
+  --surface-muted: 238 240 248; /* #EEF0F8 — faint indigo grey */
+  --surface-modal: 228 231 242; /* #E4E7F2 — modal panel with indigo undertone */
+  --modal-muted: 245 246 251; /* #F5F6FB — lighter muted modal surface */
+  --surface-strong: 222 226 240; /* #DEE2F0 — chrome hover step */
+  --border: 217 221 236; /* #D9DDEC — soft indigo line */
 
-  --foreground: 42 39 36; /* #2A2724 */
-  --muted-foreground: 95 89 82; /* #5F5952 */
-  --disabled-foreground: 154 148 139; /* #9A948B */
+  --foreground: 30 32 48; /* #1E2030 — dark indigo ink */
+  --muted-foreground: 88 93 117; /* #585D75 */
+  --disabled-foreground: 156 160 180; /* #9CA0B4 */
 
-  --primary: 95 122 102; /* #5F7A66 — deep sage CTA */
-  --primary-hover: 79 103 85; /* #4F6755 */
-  --primary-soft: 230 239 231; /* #E6EFE7 */
-  --primary-border: 185 205 189; /* #B9CDBD */
+  --primary: 67 56 202; /* #4338CA — deep indigo CTA */
+  --primary-hover: 55 48 163; /* #3730A3 */
+  --primary-soft: 228 228 250; /* #E4E4FA */
+  --primary-border: 179 178 240; /* #B3B2F0 */
   --primary-foreground: 255 255 255; /* #FFFFFF */
 
-  --secondary: 166 138 100; /* #A68A64 — warm clay */
-  --secondary-hover: 143 117 84; /* #8F7554 */
-  --secondary-soft: 240 232 220; /* #F0E8DC */
-  --secondary-border: 216 197 166; /* #D8C5A6 */
+  --secondary: 90 96 128; /* #5A6080 — slate */
+  --secondary-hover: 71 76 105; /* #474C69 */
+  --secondary-soft: 232 234 243; /* #E8EAF3 */
+  --secondary-border: 200 204 222; /* #C8CCDE */
   --secondary-foreground: 255 255 255; /* #FFFFFF */
 
-  --accent: 132 169 140; /* #84A98C — lighter sage */
-  --accent-hover: 110 146 118; /* #6E9276 */
-  --accent-soft: 230 239 231; /* #E6EFE7 */
-  --accent-border: 185 205 189; /* #B9CDBD */
-  --accent-foreground: 42 39 36; /* #2A2724 */
+  --accent: 99 102 241; /* #6366F1 — indigo link/accent */
+  --accent-hover: 79 70 229; /* #4F46E5 */
+  --accent-soft: 235 236 254; /* #EBECFE */
+  --accent-border: 189 191 246; /* #BDBFF6 */
+  --accent-foreground: 30 32 48; /* #1E2030 */
 
-  --danger: 201 76 76; /* #C94C4C */
-  --danger-hover: 168 63 63; /* #A83F3F */
-  --danger-soft: 248 230 227; /* #F8E6E3 */
-  --danger-border: 231 163 160; /* #E7A3A0 */
+  --danger: 185 28 28; /* #B91C1C */
+  --danger-hover: 153 27 27; /* #991B1B */
+  --danger-soft: 254 226 226; /* #FEE2E2 */
+  --danger-border: 252 165 165; /* #FCA5A5 */
   --danger-foreground: 255 255 255; /* #FFFFFF */
 
-  --table-header: 241 242 244; /* #F1F2F4 — match surface-muted */
-  --table-row-hover: 247 248 250; /* #F7F8FA */
-  --table-selected: 230 239 231; /* #E6EFE7 — primary-soft sage */
-  --table-border: 212 214 218; /* #D4D6DA — match border */
+  --table-header: 238 240 248; /* #EEF0F8 — match surface-muted */
+  --table-row-hover: 246 247 252; /* #F6F7FC */
+  --table-selected: 228 228 250; /* #E4E4FA — primary-soft */
+  --table-border: 217 221 236; /* #D9DDEC — match border */
 
-  --badge-bg: 230 239 231; /* #E6EFE7 */
-  --badge-text: 63 93 70; /* #3F5D46 */
-  --badge-border: 185 205 189; /* #B9CDBD */
+  --badge-bg: 228 228 250; /* #E4E4FA */
+  --badge-text: 55 48 163; /* #3730A3 */
+  --badge-border: 179 178 240; /* #B3B2F0 */
 
   --input-bg: 255 255 255; /* #FFFFFF */
-  --input-border: 212 214 218; /* #D4D6DA — match border */
-  --input-border-focus: 95 122 102; /* #5F7A66 */
-  --input-placeholder: 138 131 121; /* #8A8379 */
-  --input-disabled-bg: 241 242 244; /* #F1F2F4 — match surface-muted */
+  --input-border: 217 221 236; /* #D9DDEC — match border */
+  --input-border-focus: 67 56 202; /* #4338CA */
+  --input-placeholder: 122 127 150; /* #7A7F96 */
+  --input-disabled-bg: 238 240 248; /* #EEF0F8 — match surface-muted */
 
-  --focus-ring: 132 169 140; /* #84A98C */
+  --focus-ring: 99 102 241; /* #6366F1 */
 }
 
 @layer base {

@@ -10,7 +10,7 @@ function Dashboard() {
       <form method="post" action="/api/auth/logout" className="mt-4">
         <button
           type="submit"
-          className="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm hover:bg-slate-800"
+          className="rounded-lg bg-secondary text-secondary-foreground px-4 py-2 text-sm hover:bg-secondary-hover"
         >
           Sign Out
         </button>
