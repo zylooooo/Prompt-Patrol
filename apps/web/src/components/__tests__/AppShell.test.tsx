@@ -1,9 +1,9 @@
 import AppShell from "../AppShell";
+import { Route } from "react-router-dom";
+import { renderRoute } from "../../test/render";
+import { cleanup, screen } from "@testing-library/react";
 import { installDomStubs } from "../../test/dom-stubs";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 /**
  * The shell's job is to be exactly one viewport tall and never scroll. jsdom
@@ -11,23 +11,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
  * the regression actually happens.
  */
 
-const client = () =>
-  new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-  });
-
 const renderShell = () =>
-  render(
-    <QueryClientProvider client={client()}>
-      <MemoryRouter initialEntries={["/check"]}>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="/check" element={<p>page body</p>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  renderRoute(<AppShell />, {
+    route: "/check",
+    children: <Route path="/check" element={<p>page body</p>} />,
+  });
 
 beforeEach(() => installDomStubs({ matches: true }));
 afterEach(cleanup);

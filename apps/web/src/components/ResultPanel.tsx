@@ -5,7 +5,7 @@ import SignalsList from "./SignalsList";
 import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
-import { STRICTNESS_TEXT, type SingleCheck } from "../api/types";
+import { STRICTNESS_TEXT, type SingleCheck } from "../types";
 
 interface ResultPanelProps {
   status: "idle" | "pending" | "error" | "success";

@@ -3,7 +3,7 @@ import Button from "../components/ui/Button";
 import { useNavigate } from "react-router-dom";
 import TextButton from "../components/ui/TextButton";
 
-export function NotFound() {
+export default function NotFoundPage() {
   const navigate = useNavigate();
   const { user, isPending } = useAuth();
 

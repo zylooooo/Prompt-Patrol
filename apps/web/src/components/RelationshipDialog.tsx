@@ -1,10 +1,10 @@
-import Modal from "./Modal";
+import Modal from "./ui/Modal";
 import Button from "./ui/Button";
-import RowAction from "./RowAction";
 import Dropdown from "./ui/Dropdown";
+import RowAction from "./ui/RowAction";
 import { useMemo, useState } from "react";
 import { useToast } from "../hooks/useToast";
-import { displayName, isActive, type AppUser } from "../api/types";
+import { displayName, isActive, type AppUser } from "../types";
 import { assistantsOf, linkedAt, supervisorsOf } from "../api/users";
 import { useLinkSupervision, useUnlinkSupervision } from "../hooks/useUsers";
 

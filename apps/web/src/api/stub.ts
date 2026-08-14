@@ -44,7 +44,7 @@ import {
   type DeactivationOutcome,
   type DeactivationPlan,
   type LookupResult,
-} from "./types";
+} from "../types";
 import type { User } from "./auth";
 import { ApiError } from "./client";
 

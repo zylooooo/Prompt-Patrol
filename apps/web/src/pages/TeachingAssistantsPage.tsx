@@ -1,5 +1,5 @@
 import DataTable, {
-  TABLE_ICON_COLUMN_WIDTH,
+  TABLE_ACTION_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
@@ -15,16 +15,16 @@ import {
   useUnlinkSupervision,
 } from "../hooks/useUsers";
 import { useState } from "react";
-import Modal from "../components/Modal";
+import Modal from "../components/ui/Modal";
 import { useAuth } from "../hooks/useAuth";
 import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
-import RowAction from "../components/RowAction";
-import PageHeader from "../components/PageHeader";
+import RowAction from "../components/ui/RowAction";
+import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
-import { displayName, isActive, type AppUser } from "../api/types";
+import { displayName, isActive, type AppUser } from "../types";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
@@ -193,7 +193,7 @@ export default function TeachingAssistantsPage() {
     {
       id: "actions",
       header: "",
-      width: TABLE_ICON_COLUMN_WIDTH,
+      width: TABLE_ACTION_COLUMN_WIDTH,
       align: "right",
       cell: (ta) => (
         <RowAction
@@ -215,7 +215,6 @@ export default function TeachingAssistantsPage() {
       <PageHeader
         title="Teaching assistants"
         subtitle="Accounts you supervise. They can screen answers for your courses."
-        showModelStatus={false}
       />
 
       <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">

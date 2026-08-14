@@ -1,9 +1,9 @@
-import { Login } from "./routes/Login";
+import LoginPage from "./pages/LoginPage";
 import CheckPage from "./pages/CheckPage";
 import UsersPage from "./pages/UsersPage";
-import { NotFound } from "./routes/NotFound";
 import AppShell from "./components/AppShell";
 import HistoryPage from "./pages/HistoryPage";
+import NotFoundPage from "./pages/NotFoundPage";
 import HistoryDetailPage from "./pages/HistoryDetailPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import TeachingAssistantsPage from "./pages/TeachingAssistantsPage";
@@ -13,7 +13,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route
           element={
             <ProtectedRoute>
@@ -42,7 +42,7 @@ export default function App() {
             }
           />
         </Route>
-        <Route path="*" element={<NotFound />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   );

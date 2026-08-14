@@ -13,7 +13,7 @@ import {
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
-import type { CreateAccountInput, DeactivationPlan } from "../api/types";
+import type { CreateAccountInput, DeactivationPlan } from "../types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function useActor(): User | null {

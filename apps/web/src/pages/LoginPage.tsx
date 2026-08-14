@@ -114,7 +114,7 @@ function LoginHero() {
   );
 }
 
-export function Login() {
+export default function LoginPage() {
   const cachedHint = localStorage.getItem(LOGIN_HINT_KEY) ?? "";
   const devAuthInfo = useDevAuth().data ?? null;
   const entraUnavailable =

@@ -6,7 +6,7 @@ import {
   VERDICT_TEXT,
   type BatchRowInput,
   type BatchRun,
-} from "../api/types";
+} from "../types";
 
 export const MAX_ROWS = 500;
 
@@ -122,9 +122,7 @@ export function parseAnswersCsv(text: string): ParsedCsv {
   }
 
   const body = records.slice(1);
-  // Without this the caller gets `{ rows: [], errors: [] }`, which `BatchTab`
-  // renders as nothing at all — no file chip, no alert. A header-only export is
-  // a common enough mistake that silence reads as the app being broken.
+
   if (body.length === 0) {
     return { rows: [], errors: ["The file has a header row but no answers."] };
   }

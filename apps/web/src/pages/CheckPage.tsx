@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import BatchTab from "../components/BatchTab";
-import PageHeader from "../components/PageHeader";
 import { hasScreeningAccess } from "../api/checks";
+import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageScroll } from "../components/ui/Page";
 import SingleCheckTab from "../components/SingleCheckTab";
 import Tabs, { type TabOption } from "../components/ui/Tabs";
+import ModelStatusBadge from "../components/ModelStatusBadge";
 
 type TabId = "single" | "batch";
 
@@ -27,7 +28,7 @@ export default function CheckPage() {
       <PageHeader
         title="Check answers"
         subtitle="Screen short answers for signs of AI generation."
-        showModelStatus={!unassigned}
+        actions={unassigned ? undefined : <ModelStatusBadge />}
       />
 
       {unassigned ? (

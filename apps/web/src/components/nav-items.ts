@@ -1,4 +1,4 @@
-import type { UserRole } from "../api/types";
+import type { UserRole } from "../types";
 
 export interface NavItem {
   to: string;

@@ -1,7 +1,7 @@
 import { Menu, X } from "lucide-react";
 import type { User } from "../api/auth";
+import { atLeastRole, ROLE_TEXT } from "../types";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
-import { atLeastRole, ROLE_TEXT } from "../api/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { NavLink, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";

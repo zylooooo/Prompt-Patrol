@@ -3,7 +3,7 @@ import {
   CUE_TEXT,
   type AbstainReason,
   type Explanation,
-} from "../api/types";
+} from "../types";
 
 interface SignalsListProps {
   abstainReason: AbstainReason;

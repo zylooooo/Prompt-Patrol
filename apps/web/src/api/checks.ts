@@ -5,7 +5,7 @@ import type {
   HistoryEntry,
   SingleCheck,
   Strictness,
-} from "./types";
+} from "../types";
 import * as stub from "./stub";
 import type { User } from "./auth";
 

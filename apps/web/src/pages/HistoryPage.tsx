@@ -1,5 +1,5 @@
 import DataTable, {
-  TABLE_ICON_COLUMN_WIDTH,
+  TABLE_ACTION_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import SegmentedToggle, {
@@ -8,15 +8,16 @@ import SegmentedToggle, {
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useHistory } from "../hooks/useChecks";
-import PageHeader from "../components/PageHeader";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
+import PageHeader from "../components/ui/PageHeader";
 import Pagination from "../components/ui/Pagination";
 import Page, { PageFill } from "../components/ui/Page";
 import SearchInput from "../components/ui/SearchInput";
 import { fmtDateShort, truncate } from "../lib/format";
-import { RowActionLink } from "../components/RowAction";
-import { entryId, type HistoryEntry, type Verdict } from "../api/types";
+import { RowActionLink } from "../components/ui/RowAction";
+import ModelStatusBadge from "../components/ModelStatusBadge";
+import { entryId, type HistoryEntry, type Verdict } from "../types";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 
 type Filter = "all" | Verdict;
@@ -134,7 +135,7 @@ export default function HistoryPage() {
     {
       id: "verdict",
       header: "Verdict",
-      width: "minmax(0,0.8fr)",
+      width: "minmax(0,1.1fr)",
       cell: (entry) =>
         entry.kind === "single" ? (
           <VerdictChip verdict={entry.verdict} />
@@ -151,7 +152,7 @@ export default function HistoryPage() {
     {
       id: "actions",
       header: "",
-      width: TABLE_ICON_COLUMN_WIDTH,
+      width: TABLE_ACTION_COLUMN_WIDTH,
       align: "right",
       cell: (entry) => (
         <span onClick={(e) => e.stopPropagation()}>
@@ -168,6 +169,7 @@ export default function HistoryPage() {
       <PageHeader
         title="History"
         subtitle="Every check is stored with its score, verdict, and model version."
+        actions={<ModelStatusBadge />}
       />
 
       {isPending ? (

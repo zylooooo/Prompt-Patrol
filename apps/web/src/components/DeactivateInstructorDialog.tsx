@@ -3,8 +3,8 @@ import {
   isActive,
   type AppUser,
   type DeactivationPlan,
-} from "../api/types";
-import Modal from "./Modal";
+} from "../types";
+import Modal from "./ui/Modal";
 import Button from "./ui/Button";
 import Dropdown from "./ui/Dropdown";
 import { useToast } from "../hooks/useToast";

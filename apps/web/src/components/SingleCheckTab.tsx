@@ -5,7 +5,7 @@ import { wordCount } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import StrictnessField from "./StrictnessField";
 import { useCheckAnswer } from "../hooks/useChecks";
-import { ANSWER_MIN_CHARS, type Strictness } from "../api/types";
+import { ANSWER_MIN_CHARS, type Strictness } from "../types";
 
 const FIELD_CLASS =
   "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";

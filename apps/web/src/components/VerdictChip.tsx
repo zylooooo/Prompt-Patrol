@@ -1,4 +1,4 @@
-import { VERDICT_TEXT, type Verdict } from "../api/types";
+import { VERDICT_TEXT, type Verdict } from "../types";
 
 const STYLES: Record<Verdict, { chip: string; dot: string }> = {
   ai_generated: { chip: "bg-flag-soft text-flag", dot: "bg-flag" },

@@ -8,7 +8,7 @@ import {
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
-import type { BatchRowInput, CheckInput, Strictness } from "../api/types";
+import type { BatchRowInput, CheckInput, Strictness } from "../types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function useActor(): User | null {

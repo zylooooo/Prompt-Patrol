@@ -2,9 +2,10 @@ import Sidebar from "../Sidebar";
 import type { User } from "../../api/auth";
 import userEvent from "@testing-library/user-event";
 import { installDomStubs } from "../../test/dom-stubs";
-import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, Route, Routes } from "react-router-dom";
+import { renderWithProviders } from "../../test/render";
+import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
 
 /**
  * Drawer behaviour below `md`. Separate file because `useMediaQuery` caches its
@@ -18,13 +19,14 @@ beforeEach(() => installDomStubs({ matches: false }));
 afterEach(cleanup);
 
 const renderDrawer = (path = "/check") =>
-  render(
-    <MemoryRouter initialEntries={[path]}>
+  renderWithProviders(
+    <>
       <Sidebar user={USER} />
       <Routes>
         <Route path="*" element={<Link to="/history">go elsewhere</Link>} />
       </Routes>
-    </MemoryRouter>,
+    </>,
+    { route: path },
   );
 
 const opener = () => screen.getByRole("button", { name: "Open navigation" });

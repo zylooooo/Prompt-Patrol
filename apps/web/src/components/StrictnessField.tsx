@@ -1,8 +1,4 @@
-import {
-  STRICTNESS_HINT,
-  STRICTNESS_TEXT,
-  type Strictness,
-} from "../api/types";
+import { STRICTNESS_HINT, STRICTNESS_TEXT, type Strictness } from "../types";
 import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "./ui/SegmentedToggle";
@@ -23,7 +19,7 @@ export default function StrictnessField({
   return (
     <fieldset>
       <legend className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-        Flagging strictness
+        Flagging Strictness
       </legend>
 
       <div className="mt-3">

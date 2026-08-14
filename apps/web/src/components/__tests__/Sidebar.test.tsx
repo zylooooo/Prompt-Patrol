@@ -3,9 +3,9 @@ import { NAV_ITEMS } from "../nav-items";
 import type { User } from "../../api/auth";
 import userEvent from "@testing-library/user-event";
 import { installDomStubs } from "../../test/dom-stubs";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { renderWithProviders } from "../../test/render";
+import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
 
 /**
  * Desktop behaviour. `installDomStubs({ matches: true })` makes the
@@ -23,13 +23,7 @@ beforeEach(() => installDomStubs({ matches: true }));
 afterEach(cleanup);
 
 const renderAt = (user: User | null, path = "/check") =>
-  render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="*" element={<Sidebar user={user} />} />
-      </Routes>
-    </MemoryRouter>,
-  );
+  renderWithProviders(<Sidebar user={user} />, { route: path });
 
 const navLinks = () =>
   within(screen.getByRole("navigation", { name: "Primary" })).queryAllByRole(
@@ -72,13 +66,12 @@ describe("Sidebar — role-gated navigation", () => {
   });
 
   it("honours an injected item list", () => {
-    render(
-      <MemoryRouter initialEntries={["/x"]}>
-        <Sidebar
-          user={asUser("teaching_assistant")}
-          items={[{ to: "/x", label: "Injected" }]}
-        />
-      </MemoryRouter>,
+    renderWithProviders(
+      <Sidebar
+        user={asUser("teaching_assistant")}
+        items={[{ to: "/x", label: "Injected" }]}
+      />,
+      { route: "/x" },
     );
     expect(navLinks().map((a) => a.textContent)).toEqual(["Injected"]);
   });

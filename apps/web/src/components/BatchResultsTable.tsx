@@ -1,14 +1,14 @@
 import DataTable, {
-  TABLE_ICON_COLUMN_WIDTH,
+  TABLE_ACTION_COLUMN_WIDTH,
   type DataTableColumn,
 } from "./ui/DataTable";
 import Button from "./ui/Button";
-import RowAction from "./RowAction";
+import RowAction from "./ui/RowAction";
 import VerdictChip from "./VerdictChip";
 import SignalsList from "./SignalsList";
 import { truncate } from "../lib/format";
 import { useState, type ReactNode } from "react";
-import type { BatchRow, BatchRun } from "../api/types";
+import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 
 function CountChip({
@@ -81,7 +81,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
     {
       id: "actions",
       header: "",
-      width: TABLE_ICON_COLUMN_WIDTH,
+      width: TABLE_ACTION_COLUMN_WIDTH,
       align: "right",
       cell: (row) => (
         <span onClick={(e) => e.stopPropagation()}>

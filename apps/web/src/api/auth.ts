@@ -1,4 +1,4 @@
-import type { UserRole } from "./types";
+import type { UserRole } from "../types";
 import { ApiError, apiRequest } from "./client";
 
 export interface User {

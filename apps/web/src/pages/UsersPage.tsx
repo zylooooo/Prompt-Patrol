@@ -4,7 +4,7 @@ import {
   roleLabel,
   type AppUser,
   type UserRole,
-} from "../api/types";
+} from "../types";
 import {
   useCreateAccount,
   useSetUserActive,
@@ -18,11 +18,11 @@ import { useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
 import { useToast } from "../hooks/useToast";
-import RowAction from "../components/RowAction";
-import PageHeader from "../components/PageHeader";
+import RowAction from "../components/ui/RowAction";
+import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
-import TokenMultiSelect from "../components/TokenMultiSelect";
+import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DataTable, { type DataTableColumn } from "../components/ui/DataTable";
@@ -287,7 +287,6 @@ export default function UsersPage() {
       <PageHeader
         title="Users"
         subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
-        showModelStatus={false}
       />
 
       <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">

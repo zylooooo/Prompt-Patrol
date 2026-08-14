@@ -1,4 +1,4 @@
-import type { Verdict } from "../api/types";
+import type { Verdict } from "../types";
 
 const SEGMENTS = 20;
 

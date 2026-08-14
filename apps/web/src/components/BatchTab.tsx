@@ -6,7 +6,7 @@ import { useRunBatch } from "../hooks/useChecks";
 import { useEffect, useRef, useState } from "react";
 import BatchResultsTable from "./BatchResultsTable";
 import { MAX_ROWS, parseAnswersCsv } from "../lib/csv";
-import type { BatchRowInput, Strictness } from "../api/types";
+import type { BatchRowInput, Strictness } from "../types";
 
 interface LoadedFile {
   name: string;

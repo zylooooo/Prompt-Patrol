@@ -4,7 +4,7 @@ import {
   EXTERNAL_REF_MAX_CHARS,
   QUESTION_MAX_CHARS,
   type BatchRun,
-} from "../../api/types";
+} from "../../types";
 import { describe, expect, it } from "vitest";
 import { MAX_ROWS, parseAnswersCsv, serializeResultsCsv } from "../csv";
 
