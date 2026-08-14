@@ -14,8 +14,12 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root on purpose: unanchored, `lib/` matches a directory
+# of that name at any depth — including `apps/web/src/lib` and
+# `frontend/src/lib`, whose contents were being silently dropped from commits.
+# Python build output only ever lands at the root, so anchoring loses nothing.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -24,12 +28,6 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# The Python packaging patterns above are unanchored, so `lib/` matches any
-# directory of that name at any depth — including the frontend's `src/lib`,
-# whose contents were being silently dropped from commits. Re-include the web
-# app's source tree; Python build output never lands there.
-!apps/web/src/lib/
 MANIFEST
 
 # PyInstaller
@@ -201,9 +199,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
 .vscode/
 # Temporary file for partial code execution
@@ -233,3 +231,22 @@ docs/ai-context/
 
 # graphify
 graphify-out/
+
+# Node and frontend build output
+node_modules
+dist-ssr
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editors and OS
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
