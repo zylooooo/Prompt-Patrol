@@ -1,13 +1,14 @@
+import type { UserRole } from "./types";
 import { ApiError, apiRequest } from "./client";
 
 export interface User {
   email: string;
-  role: string;
+  role: UserRole;
 }
 
 export interface DevUser {
   email: string;
-  role: string;
+  role: UserRole;
 }
 
 export interface DevAuthInfo {
