@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from middleware import RequestIdMiddleware
 from routes.auth import router as auth_router
+from routes.checks import router as checks_router
 from contextlib import asynccontextmanager
 from auth.middleware import SessionAuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -53,6 +54,7 @@ app.add_middleware(
 app.add_middleware(SessionAuthMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
+app.include_router(checks_router)
 
 if DEV_AUTH_ENABLED:
     from routes.dev_auth import router as dev_auth_router
