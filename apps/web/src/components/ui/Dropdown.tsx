@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import SearchInput from "./SearchInput";
@@ -26,6 +27,7 @@ interface DropdownProps<T> {
   onChange: (next: T | null) => void;
   options: DropdownOption<T>[];
   placeholder: string;
+  size?: DropdownSize;
   resetLabel?: string;
   triggerLeading?: ReactNode;
   ariaLabel?: string;
@@ -64,13 +66,23 @@ interface DropdownProps<T> {
 }
 
 const TRIGGER_BASE =
-  "inline-flex h-9 items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
+  "inline-flex items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
+
+const TRIGGER_SIZE = {
+  md: "h-9",
+  lg: "h-11",
+} as const satisfies Record<string, string>;
+
+export type DropdownSize = keyof typeof TRIGGER_SIZE;
+
+const TYPEAHEAD_RESET_MS = 700;
 
 export default function Dropdown<T>({
   value,
   onChange,
   options,
   placeholder,
+  size = "md",
   resetLabel,
   triggerLeading,
   ariaLabel,
@@ -123,7 +135,9 @@ export default function Dropdown<T>({
         setIsOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsOpen(false);
+      if (e.key !== "Escape") return;
+      setIsOpen(false);
+      triggerRef.current?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -146,9 +160,105 @@ export default function Dropdown<T>({
     };
   }, [isOpen, portal]);
 
+  const optionElements = useCallback(
+    () =>
+      Array.from(
+        popoverRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="option"]:not([disabled])',
+        ) ?? [],
+      ),
+    [],
+  );
+
+  const focusOptionAt = useCallback(
+    (index: number) => {
+      const options = optionElements();
+      if (options.length === 0) return;
+      options[
+        ((index % options.length) + options.length) % options.length
+      ]?.focus();
+    },
+    [optionElements],
+  );
+
+  const moveFocus = useCallback(
+    (delta: number) => {
+      const options = optionElements();
+      if (options.length === 0) return;
+      const current = options.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      focusOptionAt(
+        current === -1 ? (delta > 0 ? 0 : options.length - 1) : current + delta,
+      );
+    },
+    [optionElements, focusOptionAt],
+  );
+
+  const focusOnOpenRef = useRef<"first" | "last" | null>(null);
+  const typeahead = useRef({ buffer: "", at: 0 });
+
   useLayoutEffect(() => {
-    if (isOpen && searchPlaceholder) searchInputRef.current?.focus();
-  }, [isOpen, searchPlaceholder]);
+    if (!isOpen) {
+      focusOnOpenRef.current = null;
+      return;
+    }
+    if (searchPlaceholder) {
+      searchInputRef.current?.focus();
+      return;
+    }
+    const pending = focusOnOpenRef.current;
+    focusOnOpenRef.current = null;
+    if (pending) focusOptionAt(pending === "last" ? -1 : 0);
+  }, [isOpen, searchPlaceholder, focusOptionAt]);
+
+  const onTriggerKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    if (isOpen) {
+      moveFocus(e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    focusOnOpenRef.current = e.key === "ArrowDown" ? "first" : "last";
+    setQuery("");
+    setIsOpen(true);
+  };
+
+  const onPopoverKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus(e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      focusOptionAt(e.key === "Home" ? 0 : -1);
+      return;
+    }
+
+    if (
+      searchPlaceholder ||
+      e.key.length !== 1 ||
+      e.altKey ||
+      e.ctrlKey ||
+      e.metaKey
+    )
+      return;
+    const now = Date.now();
+    const state = typeahead.current;
+    state.buffer =
+      now - state.at > TYPEAHEAD_RESET_MS
+        ? e.key.toLowerCase()
+        : state.buffer + e.key.toLowerCase();
+    state.at = now;
+    const match = optionElements().find((el) =>
+      (el.textContent ?? "").trim().toLowerCase().startsWith(state.buffer),
+    );
+    if (match) {
+      e.preventDefault();
+      match.focus();
+    }
+  };
 
   useLayoutEffect(() => {
     if (!portal || !isOpen) return;
@@ -269,6 +379,7 @@ export default function Dropdown<T>({
     }
     onChange(next);
     setIsOpen(false);
+    triggerRef.current?.focus();
   };
 
   const triggerStateClass = isDisabled
@@ -279,7 +390,9 @@ export default function Dropdown<T>({
 
   const triggerClass = triggerClassName
     ? `${triggerClassName} ${className ?? ""}`.trim()
-    : `${TRIGGER_BASE} ${triggerStateClass} ${className ?? ""}`.trim();
+    : `${TRIGGER_BASE} ${TRIGGER_SIZE[size]} ${triggerStateClass} ${
+        className ?? ""
+      }`.trim();
 
   const title = disabled
     ? (disabledReason ?? undefined)
@@ -321,6 +434,7 @@ export default function Dropdown<T>({
           setQuery("");
           setIsOpen((o) => !o);
         }}
+        onKeyDown={onTriggerKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label={ariaLabel ?? placeholder}
@@ -388,6 +502,7 @@ export default function Dropdown<T>({
               transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
               role="listbox"
               aria-label={ariaLabel ?? placeholder}
+              onKeyDown={onPopoverKeyDown}
               style={popoverStyle}
               className={popoverClass}
             >

@@ -1,16 +1,16 @@
 import {
-  useCreateAccount,
-  useSetUserActive,
-  useSupervision,
-  useUsers,
-} from "../hooks/useUsers";
-import {
   displayName,
   isActive,
   roleLabel,
   type AppUser,
   type UserRole,
 } from "../api/types";
+import {
+  useCreateAccount,
+  useSetUserActive,
+  useSupervision,
+  useUsers,
+} from "../hooks/useUsers";
 import { useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
@@ -18,8 +18,10 @@ import { useToast } from "../hooks/useToast";
 import RowAction from "../components/RowAction";
 import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
+import FilterPills from "../components/ui/FilterPills";
 import TokenMultiSelect from "../components/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
+import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DataTable, { type DataTableColumn } from "../components/ui/DataTable";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
@@ -35,8 +37,10 @@ const FILTERS: { id: Filter; label: string }[] = [
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
 
-const SELECT =
-  "h-11 rounded-md border border-input-border bg-surface px-3 text-sm transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
+const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
+  { value: "instructor", label: "Instructor" },
+  { value: "teaching_assistant", label: "Teaching assistant" },
+];
 
 export default function UsersPage() {
   usePageTitle("Users");
@@ -313,23 +317,22 @@ export default function UsersPage() {
               className={`w-56 ${FIELD}`}
             />
           </label>
-          <label className="flex flex-col gap-2">
+
+          <div className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">Role</span>
-            <select
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value as UserRole | "");
+            <Dropdown<UserRole>
+              value={role === "" ? null : role}
+              onChange={(next) => {
+                setRole(next ?? "");
                 setSupervisors([]);
               }}
-              className={`w-44 ${SELECT} ${
-                role ? "text-foreground" : "text-input-placeholder"
-              }`}
-            >
-              <option value="">choose a role</option>
-              <option value="instructor">Instructor</option>
-              <option value="teaching_assistant">Teaching assistant</option>
-            </select>
-          </label>
+              options={ROLE_OPTIONS}
+              placeholder="choose a role"
+              ariaLabel="Role"
+              size="lg"
+              triggerLeading={false}
+            />
+          </div>
 
           {role === "teaching_assistant" && (
             <div className="flex flex-col gap-2">
@@ -373,23 +376,13 @@ export default function UsersPage() {
         )}
       </section>
 
-      <div className="mt-6 flex flex-wrap items-center gap-2">
-        {FILTERS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => setFilter(option.id)}
-            aria-pressed={filter === option.id}
-            className={`h-9 rounded-md border px-3.5 text-sm transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 ${
-              filter === option.id
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-surface text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <FilterPills
+        options={FILTERS}
+        value={filter}
+        onChange={setFilter}
+        ariaLabel="Filter accounts"
+        className="mt-6"
+      />
 
       <div className="mt-5">
         <DataTable<AppUser>

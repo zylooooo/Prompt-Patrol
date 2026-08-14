@@ -1,6 +1,7 @@
 import Modal from "./Modal";
 import Button from "./ui/Button";
 import RowAction from "./RowAction";
+import Dropdown from "./ui/Dropdown";
 import { useMemo, useState } from "react";
 import { useToast } from "../hooks/useToast";
 import { displayName, isActive, type AppUser } from "../api/types";
@@ -15,9 +16,6 @@ interface RelationshipDialogProps {
   allUsers: AppUser[];
   onClose: () => void;
 }
-
-const SELECT_CLASS =
-  "h-11 rounded-md border border-input-border bg-surface px-3 text-sm transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
 
 function sinceText(iso: string | undefined): string {
   if (!iso) return "Just now";
@@ -199,27 +197,34 @@ export default function RelationshipDialog({
         {isSupervisors ? "Add an instructor" : "Add a teaching assistant"}
       </p>
       <div className="mt-2.5 flex items-center gap-3">
-        <select
-          aria-label={
+        <Dropdown<string>
+          value={toAdd || null}
+          onChange={(next) => setToAdd(next ?? "")}
+          options={available.map((candidate) => ({
+            value: candidate.id,
+            label: displayName(candidate),
+          }))}
+          placeholder={
+            isSupervisors
+              ? "choose an instructor"
+              : "choose a teaching assistant"
+          }
+          ariaLabel={
             isSupervisors
               ? "Choose an instructor"
               : "Choose a teaching assistant"
           }
-          value={toAdd}
-          onChange={(e) => setToAdd(e.target.value)}
-          className={`flex-1 ${SELECT_CLASS} ${toAdd ? "text-foreground" : "text-input-placeholder"}`}
-        >
-          <option value="">
-            {isSupervisors
-              ? "choose an instructor"
-              : "choose a teaching assistant"}
-          </option>
-          {available.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {displayName(candidate)}
-            </option>
-          ))}
-        </select>
+          emptyLabel={
+            isSupervisors
+              ? "No instructors left to add"
+              : "No teaching assistants left to add"
+          }
+          size="lg"
+          triggerLeading={false}
+          className="flex-1"
+          measureTriggerLabels={false}
+          popoverClassName="w-full"
+        />
         <Button
           variant="secondary"
           size="lg"

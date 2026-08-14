@@ -2,8 +2,9 @@ import ScoreGauge from "./ScoreGauge";
 import type { ReactNode } from "react";
 import VerdictChip from "./VerdictChip";
 import SignalsList from "./SignalsList";
-import { Link } from "react-router-dom";
+import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
+import LoadingState from "./ui/LoadingState";
 import { STRICTNESS_TEXT, type SingleCheck } from "../api/types";
 
 interface ResultPanelProps {
@@ -49,13 +50,7 @@ export default function ResultPanel({
       )}
 
       {status === "pending" && (
-        <div className="mt-6 flex items-center gap-3 text-sm text-muted-foreground">
-          <span
-            aria-hidden
-            className="h-4 w-4 animate-spin rounded-full border-2 border-primary-soft border-t-primary"
-          />
-          Checking answer…
-        </div>
+        <LoadingState size="inline" label="Checking answer…" className="mt-4" />
       )}
 
       {status === "error" && (
@@ -97,12 +92,9 @@ export default function ResultPanel({
             <MetaRow name="Checked">{fmtDateTime(result.createdAt)}</MetaRow>
             {showSavedLink && (
               <MetaRow name="Saved">
-                <Link
-                  to={`/history/${result.checkId}`}
-                  className="rounded-sm text-primary underline-offset-2 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
-                >
+                <TextLink to={`/history/${result.checkId}`}>
                   to history · view entry
-                </Link>
+                </TextLink>
               </MetaRow>
             )}
           </div>

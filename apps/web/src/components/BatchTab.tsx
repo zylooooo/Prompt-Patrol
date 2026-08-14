@@ -1,4 +1,5 @@
 import Button from "./ui/Button";
+import TextButton from "./ui/TextButton";
 import { useToast } from "../hooks/useToast";
 import { useRunBatch } from "../hooks/useChecks";
 import StrictnessSlider from "./StrictnessSlider";
@@ -97,13 +98,12 @@ export default function BatchTab() {
         >
           <p className="text-sm text-foreground">
             Drop a CSV here, or{" "}
-            <button
-              type="button"
+            <TextButton
               onClick={() => inputRef.current?.click()}
-              className="rounded-sm font-medium text-primary underline-offset-2 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
+              className="font-medium"
             >
               browse
-            </button>
+            </TextButton>
           </p>
           <p className="font-mono text-xs text-disabled-foreground">
             external_ref, answer_text, question_text (optional) · up to{" "}
@@ -149,13 +149,13 @@ export default function BatchTab() {
               <span className="text-[13px] text-disabled-foreground">
                 · {file.rows.length} rows · parsed
               </span>
-              <button
-                type="button"
+              <TextButton
                 onClick={onReset}
-                className="ml-2 rounded-sm text-[13px] text-muted-foreground underline-offset-2 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
+                tone="muted"
+                className="ml-2 text-[13px]"
               >
                 Remove
-              </button>
+              </TextButton>
             </div>
             <Button
               size="lg"

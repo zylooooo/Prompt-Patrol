@@ -9,9 +9,12 @@ import PageHeader from "../components/PageHeader";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Pagination from "../components/ui/Pagination";
+import SearchInput from "../components/ui/SearchInput";
+import FilterPills from "../components/ui/FilterPills";
 import { fmtDateShort, truncate } from "../lib/format";
 import { RowActionLink } from "../components/RowAction";
 import { entryId, type HistoryEntry, type Verdict } from "../api/types";
+import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 
 type Filter = "all" | Verdict;
 const PAGE_SIZE = 8;
@@ -23,8 +26,10 @@ const FILTER_TABS: { id: Filter; label: string }[] = [
   { id: "human_written", label: "Human" },
 ];
 
-const CONTROL =
-  "h-9 rounded-md border border-input-border bg-surface text-sm transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
+const DAY_RANGES: DropdownOption<number>[] = [
+  { value: 7, label: "Last 7 days" },
+  { value: 30, label: "Last 30 days" },
+];
 
 function matchesFilter(entry: HistoryEntry, filter: Filter): boolean {
   if (filter === "all") return true;
@@ -187,39 +192,28 @@ export default function HistoryPage() {
         <>
           <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <input
+              <SearchInput
                 value={query}
-                onChange={(e) => setAndResetPage(setQuery)(e.target.value)}
+                onChange={setAndResetPage(setQuery)}
                 placeholder="Search answers…"
-                aria-label="Search answers"
-                className={`w-64 px-3.5 text-foreground placeholder:text-input-placeholder ${CONTROL}`}
+                ariaLabel="Search answers"
+                wrapperClassName="w-64"
               />
-              {FILTER_TABS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setAndResetPage(setFilter)(option.id)}
-                  aria-pressed={filter === option.id}
-                  className={`h-9 rounded-md border px-3.5 text-sm transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 ${
-                    filter === option.id
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-surface text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
+              <FilterPills
+                options={FILTER_TABS}
+                value={filter}
+                onChange={setAndResetPage(setFilter)}
+                ariaLabel="Filter by verdict"
+              />
             </div>
-            <select
-              value={days}
-              onChange={(e) => setAndResetPage(setDays)(Number(e.target.value))}
-              aria-label="Time range"
-              className={`px-3 text-muted-foreground ${CONTROL}`}
-            >
-              <option value={0}>All time</option>
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-            </select>
+            <Dropdown<number>
+              value={days === 0 ? null : days}
+              onChange={(next) => setAndResetPage(setDays)(next ?? 0)}
+              options={DAY_RANGES}
+              placeholder="All time"
+              resetLabel="All time"
+              ariaLabel="Time range"
+            />
           </div>
 
           <div className="mt-5">

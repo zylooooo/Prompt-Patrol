@@ -6,6 +6,7 @@ import {
 } from "../api/types";
 import Modal from "./Modal";
 import Button from "./ui/Button";
+import Dropdown from "./ui/Dropdown";
 import { useToast } from "../hooks/useToast";
 import { assistantsOf, strandedBy } from "../api/users";
 import { useMemo, useState, type ReactNode } from "react";
@@ -165,22 +166,24 @@ export default function DeactivateInstructorDialog({
               "reassign",
               "Reassign them to another instructor",
               undefined,
-              <select
-                aria-label="Instructor to reassign to"
-                value={toId}
-                onChange={(e) => setToId(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                className={`mt-3 h-11 w-full rounded-md border border-input-border bg-surface px-3 text-sm transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30 ${
-                  toId ? "text-foreground" : "text-input-placeholder"
-                }`}
-              >
-                <option value="">choose an instructor</option>
-                {otherInstructors.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {displayName(candidate)}
-                  </option>
-                ))}
-              </select>,
+              <span className="mt-3 block" onClick={(e) => e.stopPropagation()}>
+                <Dropdown<string>
+                  value={toId || null}
+                  onChange={(next) => setToId(next ?? "")}
+                  options={otherInstructors.map((candidate) => ({
+                    value: candidate.id,
+                    label: displayName(candidate),
+                  }))}
+                  placeholder="choose an instructor"
+                  ariaLabel="Instructor to reassign to"
+                  emptyLabel="No other active instructors"
+                  size="lg"
+                  triggerLeading={false}
+                  className="w-full"
+                  measureTriggerLabels={false}
+                  popoverClassName="w-full"
+                />
+              </span>,
             )}
             {option(
               "deactivate",

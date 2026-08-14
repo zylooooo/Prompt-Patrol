@@ -1,7 +1,9 @@
 import { fmtDateTime } from "../lib/format";
+import { useParams } from "react-router-dom";
 import { useEntry } from "../hooks/useChecks";
-import { Link, useParams } from "react-router-dom";
 import ResultPanel from "../components/ResultPanel";
+import { TextLink } from "../components/ui/TextButton";
+import LoadingState from "../components/ui/LoadingState";
 import BatchResultsTable from "../components/BatchResultsTable";
 
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -16,16 +18,11 @@ export default function HistoryDetailPage() {
 
   return (
     <>
-      <Link
-        to="/history"
-        className="rounded-sm text-sm text-primary underline-offset-2 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
-      >
+      <TextLink to="/history" className="text-sm">
         ← History
-      </Link>
+      </TextLink>
 
-      {isPending && (
-        <p className="mt-6 text-sm text-disabled-foreground">Loading entry…</p>
-      )}
+      {isPending && <LoadingState size="card" label="Loading entry…" />}
 
       {!isPending && !entry && (
         <section className="mt-6 rounded-xl border border-border bg-surface p-12 text-center">

@@ -1,6 +1,7 @@
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
 import { useNavigate } from "react-router-dom";
+import TextButton from "../components/ui/TextButton";
 
 export function NotFound() {
   const navigate = useNavigate();
@@ -36,13 +37,13 @@ export function NotFound() {
             >
               {isPending ? "Checking your session…" : destination.label}
             </Button>
-            <button
-              type="button"
+            <TextButton
               onClick={() => void navigate(-1)}
-              className="text-sm text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              tone="muted"
+              className="text-sm"
             >
               or take a step back
-            </button>
+            </TextButton>
           </div>
         </div>
       </section>
