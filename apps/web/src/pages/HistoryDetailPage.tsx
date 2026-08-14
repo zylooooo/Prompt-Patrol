@@ -1,8 +1,9 @@
-import { Link, useParams } from "react-router-dom";
-import BatchResultsTable from "../components/BatchResultsTable";
-import ResultPanel from "../components/ResultPanel";
-import { useEntry } from "../hooks/useChecks";
 import { fmtDateTime } from "../lib/format";
+import { useEntry } from "../hooks/useChecks";
+import { Link, useParams } from "react-router-dom";
+import ResultPanel from "../components/ResultPanel";
+import BatchResultsTable from "../components/BatchResultsTable";
+
 import { usePageTitle } from "../hooks/usePageTitle";
 
 const SECTION_LABEL =
@@ -40,7 +41,8 @@ export default function HistoryDetailPage() {
           <section className="rounded-xl border border-border bg-surface p-7">
             <p className={SECTION_LABEL}>Student answer</p>
             <p className="mt-3 text-sm leading-relaxed text-foreground">
-              {entry.answerText ?? "The answer was not retained for this check."}
+              {entry.answerText ??
+                "The answer was not retained for this check."}
             </p>
             {entry.questionText && (
               <>

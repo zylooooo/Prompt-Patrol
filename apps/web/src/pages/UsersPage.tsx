@@ -1,19 +1,9 @@
-import { useMemo, useState } from "react";
-import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
-import PageHeader from "../components/PageHeader";
-import RelationshipDialog from "../components/RelationshipDialog";
-import RowAction from "../components/RowAction";
-import Button from "../components/ui/Button";
-import TokenMultiSelect from "../components/TokenMultiSelect";
-import { useAuth } from "../hooks/useAuth";
 import {
   useCreateAccount,
   useSetUserActive,
   useSupervision,
   useUsers,
 } from "../hooks/useUsers";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { useToast } from "../hooks/useToast";
 import {
   displayName,
   isActive,
@@ -21,6 +11,16 @@ import {
   type AppUser,
   type UserRole,
 } from "../api/types";
+import { useMemo, useState } from "react";
+import { useAuth } from "../hooks/useAuth";
+import Button from "../components/ui/Button";
+import { useToast } from "../hooks/useToast";
+import RowAction from "../components/RowAction";
+import PageHeader from "../components/PageHeader";
+import { usePageTitle } from "../hooks/usePageTitle";
+import TokenMultiSelect from "../components/TokenMultiSelect";
+import RelationshipDialog from "../components/RelationshipDialog";
+import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
 type Filter = "all" | "instructors" | "assistants" | "unassigned";
 
@@ -71,8 +71,6 @@ export default function UsersPage() {
     [users],
   );
 
-  // derived from the query data so the table reacts when links change. Keyed by
-  // the teaching assistant's id, which is what every read below must use.
   const supervisorNames = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const link of links ?? []) {
@@ -140,7 +138,9 @@ export default function UsersPage() {
     setPending(target.id);
     try {
       await setActive.mutateAsync({ id: target.id, active: !isActive(target) });
-      showToast(isActive(target) ? "Account deactivated" : "Account reactivated");
+      showToast(
+        isActive(target) ? "Account deactivated" : "Account reactivated",
+      );
     } catch (err) {
       setRowError({
         id: target.id,
@@ -152,9 +152,6 @@ export default function UsersPage() {
     }
   }
 
-  // deactivating an instructor may strand the people they supervise, so it goes
-  // through the decision dialog. Reactivating, and anything on a teaching
-  // assistant, has no such consequence and applies directly
   function onStatusClick(target: AppUser) {
     if (isActive(target) && target.role === "instructor") {
       setDeactivating(target);
@@ -221,7 +218,6 @@ export default function UsersPage() {
             </select>
           </label>
 
-          {/* the supervisor field exists only for the role that can have one */}
           {role === "teaching_assistant" && (
             <div className="flex flex-col gap-2">
               <span className="text-xs text-muted-foreground">
@@ -297,8 +293,6 @@ export default function UsersPage() {
             ))}
           </div>
         ) : (
-          // narrow windows scroll the table inside the card rather than
-          // spilling out of it
           <div className="overflow-x-auto">
             <table className="w-full min-w-[880px] border-collapse text-left">
               <thead>

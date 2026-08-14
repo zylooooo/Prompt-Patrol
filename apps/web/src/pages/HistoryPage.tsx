@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { RowActionLink } from "../components/RowAction";
+import { useHistory } from "../hooks/useChecks";
 import PageHeader from "../components/PageHeader";
 import VerdictChip from "../components/VerdictChip";
-import { useHistory } from "../hooks/useChecks";
-import { fmtDateShort, truncate } from "../lib/format";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { fmtDateShort, truncate } from "../lib/format";
+import { RowActionLink } from "../components/RowAction";
 import { entryId, type HistoryEntry, type Verdict } from "../api/types";
 
 type Filter = "all" | Verdict;
@@ -145,7 +145,6 @@ export default function HistoryPage() {
           </div>
 
           <section className="mt-5 rounded-xl border border-border bg-surface px-7 py-2">
-            {/* only the table scrolls, so pagination stays put on a narrow window */}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[860px] border-collapse text-left">
                 <thead>
@@ -172,11 +171,16 @@ export default function HistoryPage() {
                       </td>
                       <td className="max-w-[380px] py-4 pr-4 text-sm text-muted-foreground">
                         {entry.kind === "single"
-                          ? truncate(entry.answerText ?? "Answer not retained", 60)
+                          ? truncate(
+                              entry.answerText ?? "Answer not retained",
+                              60,
+                            )
                           : `${entry.fileName} · ${entry.rows.length} answers`}
                       </td>
                       <td className="py-4 pr-4 font-mono text-[13px] text-foreground">
-                        {entry.kind === "single" ? entry.rawScore.toFixed(2) : "·"}
+                        {entry.kind === "single"
+                          ? entry.rawScore.toFixed(2)
+                          : "·"}
                       </td>
                       <td className="py-4 pr-4">
                         {entry.kind === "single" ? (

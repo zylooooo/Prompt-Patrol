@@ -1,24 +1,24 @@
-import { useState } from "react";
-import Modal from "../components/Modal";
-import Button from "../components/ui/Button";
-import PageHeader from "../components/PageHeader";
-import RowAction from "../components/RowAction";
 import {
   findUserByEmail,
   linkedAt,
   lookupForLinking,
   supervisorsOf,
 } from "../api/users";
-import { useAuth } from "../hooks/useAuth";
 import {
   useCreateAccount,
   useLinkSupervision,
   useMyAssistants,
   useUnlinkSupervision,
 } from "../hooks/useUsers";
+import { useState } from "react";
+import Modal from "../components/Modal";
+import { useAuth } from "../hooks/useAuth";
 import { fmtDateOnly } from "../lib/format";
-import { usePageTitle } from "../hooks/usePageTitle";
 import { useToast } from "../hooks/useToast";
+import Button from "../components/ui/Button";
+import RowAction from "../components/RowAction";
+import PageHeader from "../components/PageHeader";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { displayName, isActive, type AppUser } from "../api/types";
 
 const HEAD_CELL =
@@ -35,9 +35,6 @@ export default function TeachingAssistantsPage() {
   const createAccount = useCreateAccount();
   const link = useLinkSupervision();
   const unlink = useUnlinkSupervision();
-
-  // the session carries email and role only, so the full account comes from
-  // the roster. Once GET /api/users/me exists this goes away
   const actor = session ? findUserByEmail(session.email) : undefined;
 
   const [name, setName] = useState("");
@@ -51,7 +48,6 @@ export default function TeachingAssistantsPage() {
   const [existing, setExisting] = useState<AppUser | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
 
-  // other instructors supervising this person, so sharing is visible before acting
   function alsoWith(ta: AppUser): string {
     const others = supervisorsOf(ta.id).filter(
       (supervisor) => supervisor.id !== actor?.id,
@@ -59,9 +55,6 @@ export default function TeachingAssistantsPage() {
     return others.length === 0 ? "·" : others.map(displayName).join(", ");
   }
 
-  // when they joined this list, which is the supervision link rather than the
-  // account. A shared teaching assistant shows a different date to each
-  // instructor, which is the point
   function addedOn(ta: AppUser): string {
     const iso = actor ? linkedAt(actor.id, ta.id) : undefined;
     return iso ? fmtDateOnly(iso) : "·";
@@ -70,7 +63,6 @@ export default function TeachingAssistantsPage() {
   async function onAdd() {
     if (!session) return;
     setError(null);
-    // only ever asks whether this address can become my teaching assistant
     const lookup = lookupForLinking(session, email.trim());
     if (lookup.kind === "linkable") {
       setExisting(lookup.user);
