@@ -3,7 +3,7 @@ import { useState } from "react";
 import ResultPanel from "./ResultPanel";
 import { wordCount } from "../lib/format";
 import { useToast } from "../hooks/useToast";
-import StrictnessSlider from "./StrictnessSlider";
+import StrictnessField from "./StrictnessField";
 import { useCheckAnswer } from "../hooks/useChecks";
 import { ANSWER_MIN_CHARS, type Strictness } from "../api/types";
 
@@ -87,7 +87,7 @@ export default function SingleCheckTab() {
         </div>
 
         <div className="mt-6">
-          <StrictnessSlider value={strictness} onChange={setStrictness} />
+          <StrictnessField value={strictness} onChange={setStrictness} />
         </div>
 
         <div className="mt-7 flex items-center gap-3">

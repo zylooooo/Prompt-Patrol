@@ -7,13 +7,40 @@ export interface SegmentedToggleOption<T extends string> {
   title?: string;
 }
 
+const SIZE = {
+  sm: {
+    height: "h-7",
+    pad: "p-0.5",
+    inset: "top-0.5 bottom-0.5",
+    option: "px-2",
+    text: "text-xs",
+  },
+  md: {
+    height: "h-9",
+    pad: "p-1",
+    inset: "top-1 bottom-1",
+    option: "px-3",
+    text: "text-sm",
+  },
+  lg: {
+    height: "h-11",
+    pad: "p-1",
+    inset: "top-1 bottom-1",
+    option: "px-4",
+    text: "text-sm",
+  },
+} as const;
+
+export type SegmentedToggleSize = keyof typeof SIZE;
+
 interface SegmentedToggleProps<T extends string> {
   value: T;
   options: readonly SegmentedToggleOption<T>[];
   onChange: (next: T) => void;
   ariaLabel: string;
+  size?: SegmentedToggleSize;
+  fullWidth?: boolean;
   indicatorClassName?: string;
-  dense?: boolean;
 }
 
 export default function SegmentedToggle<T extends string>({
@@ -21,14 +48,17 @@ export default function SegmentedToggle<T extends string>({
   options,
   onChange,
   ariaLabel,
+  size = "md",
+  fullWidth = false,
   indicatorClassName,
-  dense = false,
 }: SegmentedToggleProps<T>) {
-  const textSize = dense ? "text-xs" : "text-sm";
-  const heightClass = dense ? "h-7" : "h-9";
-  const padClass = dense ? "p-0.5" : "p-1";
-  const indicatorInset = dense ? "top-0.5 bottom-0.5" : "top-1 bottom-1";
-  const optionPad = dense ? "px-2" : "px-3";
+  const {
+    height: heightClass,
+    pad: padClass,
+    inset: indicatorInset,
+    option: optionPad,
+    text: textSize,
+  } = SIZE[size];
 
   const groupRef = useRef<HTMLDivElement | null>(null);
   const buttonRefs = useRef<Map<T, HTMLButtonElement>>(new Map());
@@ -95,7 +125,9 @@ export default function SegmentedToggle<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
-      className={`relative inline-flex ${heightClass} max-w-full self-start overflow-x-auto rounded-lg border border-border bg-surface ${padClass}`}
+      className={`relative ${
+        fullWidth ? "flex w-full" : "inline-flex max-w-full self-start"
+      } ${heightClass} overflow-x-auto rounded-lg border border-border bg-surface ${padClass}`}
     >
       <span
         aria-hidden="true"
@@ -121,11 +153,13 @@ export default function SegmentedToggle<T extends string>({
             disabled={option.disabled}
             title={option.title}
             onClick={() => onChange(option.value)}
-            className={
+            className={`relative z-10 inline-flex items-center rounded-md ${
+              fullWidth ? "flex-1 justify-center" : ""
+            } ${optionPad} ${textSize} font-medium transition-colors duration-200 ${
               isActive
-                ? `relative z-10 inline-flex items-center rounded-md ${optionPad} ${textSize} font-medium text-foreground transition-colors duration-200`
-                : `relative z-10 inline-flex items-center rounded-md border-none ${optionPad} ${textSize} font-medium text-muted-foreground transition-colors duration-200 hover:text-foreground disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:text-disabled-foreground`
-            }
+                ? "text-foreground"
+                : "border-none text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:text-disabled-foreground"
+            }`}
           >
             {option.label}
           </button>

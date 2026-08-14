@@ -1,8 +1,8 @@
 import Button from "./ui/Button";
 import TextButton from "./ui/TextButton";
 import { useToast } from "../hooks/useToast";
+import StrictnessField from "./StrictnessField";
 import { useRunBatch } from "../hooks/useChecks";
-import StrictnessSlider from "./StrictnessSlider";
 import { useEffect, useRef, useState } from "react";
 import BatchResultsTable from "./BatchResultsTable";
 import { MAX_ROWS, parseAnswersCsv } from "../lib/csv";
@@ -136,7 +136,7 @@ export default function BatchTab() {
 
         {file && (
           <div className="mt-5 max-w-sm">
-            <StrictnessSlider value={strictness} onChange={setStrictness} />
+            <StrictnessField value={strictness} onChange={setStrictness} />
           </div>
         )}
 
