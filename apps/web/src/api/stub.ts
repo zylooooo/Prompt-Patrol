@@ -1,3 +1,23 @@
+// ---------------------------------------------------------------------------
+// STUB BACKEND — NOT A SECURITY BOUNDARY.
+//
+// Stands in for the checks and users modules, which do not exist server-side
+// yet. Delete this entire file once POST /api/checks and /api/users ship, and
+// replace the bodies in ./checks and ./users with apiRequest calls.
+//
+// Every permission check below is COSMETIC. It shapes the UI so the demo makes
+// sense; it stops nobody. The data lives in this browser's localStorage, so any
+// caller can edit it from devtools. Today the only role the server enforces is
+// in auth.py's `me` route; nothing here is checked again by anyone. The server
+// must enforce all of these rules independently and must never assume the
+// client did.
+//
+// Seed accounts use example.com deliberately: fabricated people must not sit on
+// a real institutional domain. They are not creatable through the UI, which
+// enforces the SMU rule — mirroring reality, where seeded accounts come from
+// scripts/provision_user rather than the roster screen.
+// ---------------------------------------------------------------------------
+
 import {
   ANSWER_MAX_CHARS,
   ANSWER_MIN_CHARS,
