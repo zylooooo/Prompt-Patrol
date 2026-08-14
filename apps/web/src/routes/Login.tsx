@@ -16,7 +16,7 @@ const HERO_IMAGE_URL =
   "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?q=75&w=2000&auto=format&fit=crop";
 
 const INPUT_CLASS =
-  "w-full rounded-lg border border-transparent bg-surface-muted px-3.5 py-3 text-sm text-foreground placeholder:text-disabled-foreground transition-all outline-none focus:outline-none focus:ring-2 focus:ring-focus-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+  "w-full rounded-lg border border-transparent bg-surface-muted px-3.5 py-3 text-sm text-foreground placeholder:text-disabled-foreground transition-all outline-hidden focus:outline-hidden focus:ring-2 focus:ring-focus-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
 
 const LABEL_CLASS =
   "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
@@ -59,7 +59,7 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
       {info.users.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           No accounts provisioned yet. Run{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5">
+          <code className="rounded-sm bg-surface-muted px-1 py-0.5">
             python -m scripts.provision_user add you@smu.edu.sg root_admin
           </code>{" "}
           in the API container first.

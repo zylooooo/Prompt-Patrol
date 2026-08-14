@@ -33,7 +33,7 @@ interface DropdownProps<T> {
 }
 
 const TRIGGER_BASE =
-  "inline-flex h-9 items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring/30";
+  "inline-flex h-9 items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
 
 export default function Dropdown<T>({
   value,
@@ -239,7 +239,7 @@ function Row({
         aria-selected={isSelected}
         disabled={disabled}
         onClick={onClick}
-        className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus:outline-none focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent ${
+        className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus:outline-hidden focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent ${
           isSelected
             ? "bg-surface-muted hover:bg-surface-muted"
             : "hover:bg-surface-muted"

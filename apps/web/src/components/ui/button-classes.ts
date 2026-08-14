@@ -21,17 +21,17 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
     "font-medium text-primary-foreground bg-primary hover:bg-primary-hover focus:ring-focus-ring/30 border border-transparent",
   secondary:
-    "font-medium text-foreground bg-surface hover:bg-surface-muted focus:ring-focus-ring/30 border border-border shadow-sm",
+    "font-medium text-foreground bg-surface hover:bg-surface-muted focus:ring-focus-ring/30 border border-border shadow-xs",
   destructive:
     "font-medium text-danger-foreground bg-danger hover:bg-danger-hover focus:ring-danger/30 border border-transparent",
   destructiveOutline:
-    "font-medium text-danger bg-surface hover:bg-danger-soft focus:ring-danger/30 border border-danger/40 shadow-sm",
+    "font-medium text-danger bg-surface hover:bg-danger-soft focus:ring-danger/30 border border-danger/40 shadow-xs",
   ghost:
     "text-muted-foreground hover:bg-surface-strong hover:text-foreground focus:ring-focus-ring/30 border border-transparent",
 };
 
 const BASE_CLASSES =
-  "inline-flex items-center justify-center gap-2 transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center gap-2 transition focus:outline-hidden focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60";
 
 export function buttonClasses(
   variant: ButtonVariant,

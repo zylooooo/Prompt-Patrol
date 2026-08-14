@@ -1,69 +1,109 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  --background: 249 250 252; /* #F9FAFC — faint indigo-tinted off-white */
-  --surface: 255 255 255; /* #FFFFFF */
-  --surface-muted: 238 240 248; /* #EEF0F8 — faint indigo grey */
-  --surface-modal: 228 231 242; /* #E4E7F2 — modal panel with indigo undertone */
-  --modal-muted: 245 246 251; /* #F5F6FB — lighter muted modal surface */
-  --surface-strong: 222 226 240; /* #DEE2F0 — chrome hover step */
-  --border: 217 221 236; /* #D9DDEC — soft indigo line */
+@theme {
+  --color-background: #f9fafc; /* faint indigo-tinted off-white */
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef0f8; /* faint indigo grey */
+  --color-surface-modal: #e4e7f2; /* modal panel w/ indigo undertone */
+  --color-modal-muted: #f5f6fb; /* lighter muted modal surface */
+  --color-surface-strong: #dee2f0; /* chrome hover step */
+  --color-border: #d9ddec; /* soft indigo line */
 
-  --foreground: 30 32 48; /* #1E2030 — dark indigo ink */
-  --muted-foreground: 88 93 117; /* #585D75 */
-  --disabled-foreground: 156 160 180; /* #9CA0B4 */
+  --color-foreground: #1e2030; /* dark indigo ink */
+  --color-muted-foreground: #585d75;
+  --color-disabled-foreground: #9ca0b4;
 
-  --primary: 67 56 202; /* #4338CA — deep indigo CTA */
-  --primary-hover: 55 48 163; /* #3730A3 */
-  --primary-soft: 228 228 250; /* #E4E4FA */
-  --primary-border: 179 178 240; /* #B3B2F0 */
-  --primary-foreground: 255 255 255; /* #FFFFFF */
+  --color-primary: #4338ca; /* deep indigo CTA */
+  --color-primary-hover: #3730a3;
+  --color-primary-soft: #e4e4fa;
+  --color-primary-border: #b3b2f0;
+  --color-primary-foreground: #ffffff;
 
-  --secondary: 90 96 128; /* #5A6080 — slate */
-  --secondary-hover: 71 76 105; /* #474C69 */
-  --secondary-soft: 232 234 243; /* #E8EAF3 */
-  --secondary-border: 200 204 222; /* #C8CCDE */
-  --secondary-foreground: 255 255 255; /* #FFFFFF */
+  --color-secondary: #5a6080; /* slate */
+  --color-secondary-hover: #474c69;
+  --color-secondary-soft: #e8eaf3;
+  --color-secondary-border: #c8ccde;
+  --color-secondary-foreground: #ffffff;
 
-  --accent: 99 102 241; /* #6366F1 — indigo link/accent */
-  --accent-hover: 79 70 229; /* #4F46E5 */
-  --accent-soft: 235 236 254; /* #EBECFE */
-  --accent-border: 189 191 246; /* #BDBFF6 */
-  --accent-foreground: 30 32 48; /* #1E2030 */
+  --color-accent: #6366f1; /* indigo link/accent */
+  --color-accent-hover: #4f46e5;
+  --color-accent-soft: #ebecfe;
+  --color-accent-border: #bdbff6;
+  --color-accent-foreground: #1e2030;
 
-  --danger: 185 28 28; /* #B91C1C */
-  --danger-hover: 153 27 27; /* #991B1B */
-  --danger-soft: 254 226 226; /* #FEE2E2 */
-  --danger-border: 252 165 165; /* #FCA5A5 */
-  --danger-foreground: 255 255 255; /* #FFFFFF */
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-danger-soft: #fee2e2;
+  --color-danger-border: #fca5a5;
+  --color-danger-foreground: #ffffff;
 
-  --table-header: 238 240 248; /* #EEF0F8 — match surface-muted */
-  --table-row-hover: 246 247 252; /* #F6F7FC */
-  --table-selected: 228 228 250; /* #E4E4FA — primary-soft */
-  --table-border: 217 221 236; /* #D9DDEC — match border */
+  --color-table-header: #eef0f8; /* match surface-muted */
+  --color-table-row-hover: #f6f7fc;
+  --color-table-selected: #e4e4fa; /* primary-soft */
+  --color-table-border: #d9ddec; /* match border */
 
-  --badge-bg: 228 228 250; /* #E4E4FA */
-  --badge-text: 55 48 163; /* #3730A3 */
-  --badge-border: 179 178 240; /* #B3B2F0 */
+  --color-badge-bg: #e4e4fa;
+  --color-badge-text: #3730a3;
+  --color-badge-border: #b3b2f0;
 
-  --input-bg: 255 255 255; /* #FFFFFF */
-  --input-border: 217 221 236; /* #D9DDEC — match border */
-  --input-border-focus: 67 56 202; /* #4338CA */
-  --input-placeholder: 122 127 150; /* #7A7F96 */
-  --input-disabled-bg: 238 240 248; /* #EEF0F8 — match surface-muted */
+  --color-input-bg: #ffffff;
+  --color-input-border: #d9ddec; /* match border */
+  --color-input-border-focus: #4338ca;
+  --color-input-placeholder: #7a7f96;
+  --color-input-disabled-bg: #eef0f8; /* match surface-muted */
 
-  --focus-ring: 99 102 241; /* #6366F1 */
+  --color-focus-ring: #6366f1;
+
+  --font-sans:
+    Figtree, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "DM Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  --animate-fadeInUp: fadeInUp 180ms ease-out;
+  --animate-fadeIn: fadeIn 150ms ease-out;
+
+  @keyframes fadeInUp {
+    0% {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
 }
 
 @layer base {
+  /* v4 defaults the border colour to `currentColor`; v3 defaulted to a theme
+     grey, which `borderColor.DEFAULT` overrode. Dropdown's trigger uses a bare
+     `border`, so restore the old behaviour globally rather than annotating
+     individual call sites. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border);
+  }
+
   html {
-    font-family: theme("fontFamily.sans");
+    font-family: var(--font-sans);
   }
 
   body {
-    background-color: rgb(var(--background));
-    color: rgb(var(--foreground));
+    background-color: var(--color-background);
+    color: var(--color-foreground);
   }
 }
