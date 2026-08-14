@@ -355,7 +355,6 @@ export default function UsersPage() {
 
           <Button
             type="submit"
-            size="lg"
             disabled={!canSubmit || createAccount.isPending}
           >
             {createAccount.isPending ? "Adding…" : "Add account"}

@@ -158,7 +158,6 @@ export default function BatchTab() {
               </TextButton>
             </div>
             <Button
-              size="lg"
               onClick={onRun}
               disabled={batch.isPending}
               className="shrink-0"

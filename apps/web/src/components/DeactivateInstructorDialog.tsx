@@ -121,17 +121,11 @@ export default function DeactivateInstructorDialog({
       busy={busy}
       footer={
         <>
-          <Button
-            variant="secondary"
-            size="lg"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button
             variant="destructive"
-            size="lg"
             onClick={() => void onConfirm()}
             disabled={blocked || busy}
           >

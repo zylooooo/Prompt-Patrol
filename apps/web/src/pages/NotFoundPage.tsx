@@ -31,7 +31,6 @@ export default function NotFoundPage() {
           </p>
           <div className="flex flex-col items-center gap-3 md:flex-row md:items-center">
             <Button
-              size="md"
               disabled={isPending}
               onClick={() => void navigate(destination.to, { replace: true })}
             >

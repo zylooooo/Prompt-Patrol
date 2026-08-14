@@ -124,19 +124,10 @@ export default function RelationshipDialog({
       busy={saving}
       footer={
         <>
-          <Button
-            variant="secondary"
-            size="lg"
-            onClick={onClose}
-            disabled={saving}
-          >
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button
-            size="lg"
-            onClick={() => void onSave()}
-            disabled={!dirty || saving}
-          >
+          <Button onClick={() => void onSave()} disabled={!dirty || saving}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
         </>
@@ -227,7 +218,6 @@ export default function RelationshipDialog({
         />
         <Button
           variant="secondary"
-          size="lg"
           onClick={() => {
             if (!toAdd) return;
             setSelected([...selected, toAdd]);

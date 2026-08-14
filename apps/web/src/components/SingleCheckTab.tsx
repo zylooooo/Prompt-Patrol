@@ -91,14 +91,10 @@ export default function SingleCheckTab() {
         </div>
 
         <div className="mt-7 flex items-center gap-3">
-          <Button
-            type="submit"
-            size="lg"
-            disabled={tooShort || check.isPending}
-          >
+          <Button type="submit" disabled={tooShort || check.isPending}>
             {check.isPending ? "Checking…" : "Check answer"}
           </Button>
-          <Button variant="secondary" size="lg" onClick={onClear}>
+          <Button variant="secondary" onClick={onClear}>
             Clear
           </Button>
         </div>

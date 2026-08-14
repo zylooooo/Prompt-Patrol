@@ -78,7 +78,6 @@ function DevLoginPanel({ info }: { info: DevAuthInfo }) {
           <Button
             type="button"
             variant="secondary"
-            size="md"
             fullWidth
             onClick={() => signIn.mutate(email)}
             disabled={signIn.isPending || !email}
@@ -160,7 +159,7 @@ export default function LoginPage() {
                 className={INPUT_CLASS}
               />
             </div>
-            <Button type="submit" size="md" fullWidth>
+            <Button type="submit" fullWidth>
               Sign in with Microsoft
             </Button>
             {entraError && (

@@ -66,6 +66,34 @@ describe("SegmentedToggle — semantics", () => {
   });
 });
 
+describe("SegmentedToggle — focus", () => {
+  it("draws the same focus ring as every other primitive in ui/", () => {
+    // Before this, the segments declared no focus style at all and fell back to
+    // the browser's own outline — measured as `outline: auto 1px` in Chrome while
+    // every sibling control drew a 2px token ring.
+    render(<Harness />);
+    for (const segment of screen.getAllByRole("radio")) {
+      const cls = segment.className.split(/\s+/);
+      expect(cls, segment.textContent ?? "").toContain("focus-visible:ring-2");
+      expect(cls, segment.textContent ?? "").toContain(
+        "focus-visible:ring-focus-ring/30",
+      );
+      expect(cls, segment.textContent ?? "").toContain("focus:outline-hidden");
+    }
+  });
+
+  it("rings on keyboard focus only, not on a mouse click", () => {
+    // The ring must be focus-visible: arrow keys move focus programmatically, so
+    // a bare `focus:` would also light up after a click.
+    render(<Harness />);
+    for (const segment of screen.getAllByRole("radio")) {
+      expect(
+        segment.className.split(/\s+/).filter((c) => /^focus:ring/.test(c)),
+      ).toEqual([]);
+    }
+  });
+});
+
 describe("SegmentedToggle — pointer", () => {
   it("selects on click", async () => {
     const onChange = vi.fn();
@@ -161,8 +189,6 @@ describe("SegmentedToggle — degenerate input", () => {
   });
 
   it("still navigates when the current value is absent from the options", async () => {
-    // Can happen while a filter value is being restored from a URL that no
-    // longer matches the option set.
     const onChange = vi.fn();
     render(
       <SegmentedToggle

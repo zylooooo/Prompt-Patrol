@@ -251,7 +251,6 @@ export default function TeachingAssistantsPage() {
           </label>
           <Button
             type="submit"
-            size="lg"
             disabled={!email.trim() || createAccount.isPending}
           >
             {createAccount.isPending ? "Adding…" : "Add teaching assistant"}
@@ -287,7 +286,6 @@ export default function TeachingAssistantsPage() {
           </p>
           <Button
             variant="secondary"
-            size="lg"
             className="mt-5"
             onClick={() => void refetch()}
           >
@@ -334,14 +332,12 @@ export default function TeachingAssistantsPage() {
             <>
               <Button
                 variant="secondary"
-                size="lg"
                 onClick={() => setExisting(null)}
                 disabled={link.isPending}
               >
                 Cancel
               </Button>
               <Button
-                size="lg"
                 onClick={() => void onConfirmLink()}
                 disabled={link.isPending}
               >
@@ -380,14 +376,12 @@ export default function TeachingAssistantsPage() {
             <>
               <Button
                 variant="secondary"
-                size="lg"
                 onClick={() => setConfirmRemove(null)}
                 disabled={unlink.isPending}
               >
                 Cancel
               </Button>
               <Button
-                size="lg"
                 onClick={() => void onConfirmRemove()}
                 disabled={unlink.isPending}
               >

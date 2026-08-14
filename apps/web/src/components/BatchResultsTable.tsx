@@ -144,7 +144,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
       )}
 
       <div className="mt-5 flex items-center justify-end">
-        <Button variant="secondary" size="lg" onClick={onDownload}>
+        <Button variant="secondary" onClick={onDownload}>
           Download results (CSV)
         </Button>
       </div>

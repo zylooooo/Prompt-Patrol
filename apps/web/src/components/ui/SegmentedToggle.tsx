@@ -153,7 +153,7 @@ export default function SegmentedToggle<T extends string>({
             disabled={option.disabled}
             title={option.title}
             onClick={() => onChange(option.value)}
-            className={`relative z-10 inline-flex items-center rounded-md ${
+            className={`relative z-10 inline-flex items-center rounded-md focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 ${
               fullWidth ? "flex-1 justify-center" : ""
             } ${optionPad} ${textSize} font-medium transition-colors duration-200 ${
               isActive
