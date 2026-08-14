@@ -11,6 +11,9 @@ import {
   useSupervision,
   useUsers,
 } from "../hooks/useUsers";
+import SegmentedToggle, {
+  type SegmentedToggleOption,
+} from "../components/ui/SegmentedToggle";
 import { useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
@@ -18,7 +21,6 @@ import { useToast } from "../hooks/useToast";
 import RowAction from "../components/RowAction";
 import PageHeader from "../components/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
-import FilterPills from "../components/ui/FilterPills";
 import TokenMultiSelect from "../components/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
@@ -27,11 +29,11 @@ import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog
 
 type Filter = "all" | "instructors" | "assistants" | "unassigned";
 
-const FILTERS: { id: Filter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "instructors", label: "Instructors" },
-  { id: "assistants", label: "Teaching assistants" },
-  { id: "unassigned", label: "Unassigned" },
+const FILTERS: SegmentedToggleOption<Filter>[] = [
+  { value: "all", label: "All" },
+  { value: "instructors", label: "Instructors" },
+  { value: "assistants", label: "Teaching assistants" },
+  { value: "unassigned", label: "Unassigned" },
 ];
 
 const FIELD =
@@ -376,13 +378,14 @@ export default function UsersPage() {
         )}
       </section>
 
-      <FilterPills
-        options={FILTERS}
-        value={filter}
-        onChange={setFilter}
-        ariaLabel="Filter accounts"
-        className="mt-6"
-      />
+      <div className="mt-6">
+        <SegmentedToggle
+          options={FILTERS}
+          value={filter}
+          onChange={setFilter}
+          ariaLabel="Filter accounts"
+        />
+      </div>
 
       <div className="mt-5">
         <DataTable<AppUser>

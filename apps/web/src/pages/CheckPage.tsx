@@ -1,13 +1,18 @@
 import { useState } from "react";
-import Tabs from "../components/Tabs";
 import { useAuth } from "../hooks/useAuth";
 import BatchTab from "../components/BatchTab";
 import PageHeader from "../components/PageHeader";
 import { hasScreeningAccess } from "../api/checks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import SingleCheckTab from "../components/SingleCheckTab";
+import Tabs, { type TabOption } from "../components/ui/Tabs";
 
 type TabId = "single" | "batch";
+
+const CHECK_TABS: TabOption<TabId>[] = [
+  { value: "single", label: "Single answer" },
+  { value: "batch", label: "Batch upload (CSV)" },
+];
 
 export default function CheckPage() {
   usePageTitle("Check answers");
@@ -39,12 +44,10 @@ export default function CheckPage() {
         <>
           <div className="mt-7">
             <Tabs
-              tabs={[
-                { id: "single", label: "Single answer" },
-                { id: "batch", label: "Batch upload (CSV)" },
-              ]}
-              active={tab}
+              tabs={CHECK_TABS}
+              value={tab}
               onChange={setTab}
+              ariaLabel="Check mode"
             />
           </div>
           <div

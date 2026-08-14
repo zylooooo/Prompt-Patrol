@@ -2,6 +2,9 @@ import DataTable, {
   TABLE_ICON_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
+import SegmentedToggle, {
+  type SegmentedToggleOption,
+} from "../components/ui/SegmentedToggle";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useHistory } from "../hooks/useChecks";
@@ -10,7 +13,6 @@ import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Pagination from "../components/ui/Pagination";
 import SearchInput from "../components/ui/SearchInput";
-import FilterPills from "../components/ui/FilterPills";
 import { fmtDateShort, truncate } from "../lib/format";
 import { RowActionLink } from "../components/RowAction";
 import { entryId, type HistoryEntry, type Verdict } from "../api/types";
@@ -19,11 +21,11 @@ import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 type Filter = "all" | Verdict;
 const PAGE_SIZE = 8;
 
-const FILTER_TABS: { id: Filter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "ai_generated", label: "Flagged" },
-  { id: "uncertain", label: "Uncertain" },
-  { id: "human_written", label: "Human" },
+const FILTER_TABS: SegmentedToggleOption<Filter>[] = [
+  { value: "all", label: "All" },
+  { value: "ai_generated", label: "Flagged" },
+  { value: "uncertain", label: "Uncertain" },
+  { value: "human_written", label: "Human" },
 ];
 
 const DAY_RANGES: DropdownOption<number>[] = [
@@ -199,7 +201,7 @@ export default function HistoryPage() {
                 ariaLabel="Search answers"
                 wrapperClassName="w-64"
               />
-              <FilterPills
+              <SegmentedToggle
                 options={FILTER_TABS}
                 value={filter}
                 onChange={setAndResetPage(setFilter)}
