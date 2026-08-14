@@ -7,6 +7,7 @@ import type {
   SupervisionLink,
 } from "./types";
 import * as stub from "./stub";
+import type { User } from "./auth";
 
 export const userKeys = {
   all: ["users"] as const,
@@ -16,10 +17,10 @@ export const userKeys = {
 };
 
 export function listUsers(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  return stub.listUsers(actorEmail, signal);
+  return stub.listUsers(actor, signal);
 }
 
 export function listSupervision(
@@ -29,53 +30,53 @@ export function listSupervision(
 }
 
 export function listMyAssistants(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  return stub.listMyAssistants(actorEmail, signal);
+  return stub.listMyAssistants(actor, signal);
 }
 
 export function createAccount(
-  actorEmail: string,
+  actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
-  return stub.createAccount(actorEmail, input);
+  return stub.createAccount(actor, input);
 }
 
 export function linkSupervision(
-  actorEmail: string,
+  actor: User,
   instructorId: string,
   taId: string,
 ): Promise<void> {
-  return stub.linkSupervision(actorEmail, instructorId, taId);
+  return stub.linkSupervision(actor, instructorId, taId);
 }
 
 export function unlinkSupervision(
-  actorEmail: string,
+  actor: User,
   instructorId: string,
   taId: string,
 ): Promise<void> {
-  return stub.unlinkSupervision(actorEmail, instructorId, taId);
+  return stub.unlinkSupervision(actor, instructorId, taId);
 }
 
 export function setUserActive(
-  actorEmail: string,
+  actor: User,
   id: string,
   active: boolean,
 ): Promise<AppUser> {
-  return stub.setUserActive(actorEmail, id, active);
+  return stub.setUserActive(actor, id, active);
 }
 
 export function deactivateInstructor(
-  actorEmail: string,
+  actor: User,
   id: string,
   plan: DeactivationPlan,
 ): Promise<DeactivationOutcome> {
-  return stub.deactivateInstructor(actorEmail, id, plan);
+  return stub.deactivateInstructor(actor, id, plan);
 }
 
-export function resendInvite(actorEmail: string, id: string): Promise<void> {
-  return stub.resendInvite(actorEmail, id);
+export function resendInvite(actor: User, id: string): Promise<void> {
+  return stub.resendInvite(actor, id);
 }
 
 export const findUserById = stub.findUserById;
@@ -85,9 +86,6 @@ export const assistantsOf = stub.assistantsOf;
 export const linkedAt = stub.linkedAt;
 export const strandedBy = stub.strandedBy;
 
-export function lookupForLinking(
-  actorEmail: string,
-  email: string,
-): LookupResult {
-  return stub.lookupForLinking(actorEmail, email);
+export function lookupForLinking(actor: User, email: string): LookupResult {
+  return stub.lookupForLinking(actor, email);
 }

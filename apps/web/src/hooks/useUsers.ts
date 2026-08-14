@@ -11,25 +11,26 @@ import {
   userKeys,
 } from "../api/users";
 import { useAuth } from "./useAuth";
+import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
 import type { CreateAccountInput, DeactivationPlan } from "../api/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-function useActorEmail(): string | null {
-  return useAuth().user?.email ?? null;
+function useActor(): User | null {
+  return useAuth().user;
 }
 
-function requireEmail(email: string | null): string {
-  if (email === null) throw new ApiError(401, "You are not signed in.");
-  return email;
+function requireActor(actor: User | null): User {
+  if (actor === null) throw new ApiError(401, "You are not signed in.");
+  return actor;
 }
 
 export function useUsers() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useQuery({
     queryKey: userKeys.list(),
-    queryFn: ({ signal }) => listUsers(requireEmail(email), signal),
-    enabled: email !== null,
+    queryFn: ({ signal }) => listUsers(requireActor(actor), signal),
+    enabled: actor !== null,
   });
 }
 
@@ -41,11 +42,11 @@ export function useSupervision() {
 }
 
 export function useMyAssistants() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useQuery({
     queryKey: userKeys.myAssistants(),
-    queryFn: ({ signal }) => listMyAssistants(requireEmail(email), signal),
-    enabled: email !== null,
+    queryFn: ({ signal }) => listMyAssistants(requireActor(actor), signal),
+    enabled: actor !== null,
   });
 }
 
@@ -60,46 +61,46 @@ function useRosterMutation<TArgs, TResult>(
 }
 
 export function useCreateAccount() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useRosterMutation((input: CreateAccountInput) =>
-    createAccount(requireEmail(email), input),
+    createAccount(requireActor(actor), input),
   );
 }
 
 export function useLinkSupervision() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useRosterMutation(
     ({ instructorId, taId }: { instructorId: string; taId: string }) =>
-      linkSupervision(requireEmail(email), instructorId, taId),
+      linkSupervision(requireActor(actor), instructorId, taId),
   );
 }
 
 export function useUnlinkSupervision() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useRosterMutation(
     ({ instructorId, taId }: { instructorId: string; taId: string }) =>
-      unlinkSupervision(requireEmail(email), instructorId, taId),
+      unlinkSupervision(requireActor(actor), instructorId, taId),
   );
 }
 
 export function useSetUserActive() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useRosterMutation(({ id, active }: { id: string; active: boolean }) =>
-    setUserActive(requireEmail(email), id, active),
+    setUserActive(requireActor(actor), id, active),
   );
 }
 
 export function useDeactivateInstructor() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useRosterMutation(
     ({ id, plan }: { id: string; plan: DeactivationPlan }) =>
-      deactivateInstructor(requireEmail(email), id, plan),
+      deactivateInstructor(requireActor(actor), id, plan),
   );
 }
 
 export function useResendInvite() {
-  const email = useActorEmail();
+  const actor = useActor();
   return useMutation({
-    mutationFn: (id: string) => resendInvite(requireEmail(email), id),
+    mutationFn: (id: string) => resendInvite(requireActor(actor), id),
   });
 }

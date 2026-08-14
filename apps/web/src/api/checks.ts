@@ -7,6 +7,7 @@ import type {
   Strictness,
 } from "./types";
 import * as stub from "./stub";
+import type { User } from "./auth";
 
 export const checkKeys = {
   all: ["checks"] as const,
@@ -15,39 +16,39 @@ export const checkKeys = {
 };
 
 export function listHistory(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<HistoryEntry[]> {
-  return stub.listHistory(actorEmail, signal);
+  return stub.listHistory(actor, signal);
 }
 
 export function getEntry(
-  actorEmail: string,
+  actor: User,
   id: string,
   signal?: AbortSignal,
 ): Promise<HistoryEntry | undefined> {
-  return stub.getEntry(actorEmail, id, signal);
+  return stub.getEntry(actor, id, signal);
 }
 
 export function checkAnswer(
-  actorEmail: string,
+  actor: User,
   input: CheckInput,
 ): Promise<SingleCheck> {
-  return stub.checkAnswer(actorEmail, input);
+  return stub.checkAnswer(actor, input);
 }
 
 export function runBatch(
-  actorEmail: string,
+  actor: User,
   fileName: string,
   rows: BatchRowInput[],
   strictness?: Strictness,
   onProgress?: (done: number, total: number) => void,
 ): Promise<BatchRun> {
-  return stub.runBatch(actorEmail, fileName, rows, strictness, onProgress);
+  return stub.runBatch(actor, fileName, rows, strictness, onProgress);
 }
 
-export function hasScreeningAccess(actorEmail: string): boolean {
-  return stub.hasScreeningAccess(actorEmail);
+export function hasScreeningAccess(actor: User): boolean {
+  return stub.hasScreeningAccess(actor);
 }
 
 export const MODEL_VERSION = stub.MODEL_VERSION;

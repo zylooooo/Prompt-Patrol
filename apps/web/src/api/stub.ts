@@ -25,6 +25,7 @@ import {
   type DeactivationPlan,
   type LookupResult,
 } from "./types";
+import type { User } from "./auth";
 import { ApiError } from "./client";
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -228,6 +229,147 @@ function prependHistory(entry: HistoryEntry) {
   }
 }
 
+const HISTORY_SEEDED_KEY = "pp.history.seeded.v2";
+
+const SEED_ANSWERS: {
+  ref: string;
+  question: string;
+  answer: string;
+  at: string;
+}[] = [
+  {
+    ref: "ECON101-Q3-0184",
+    question: "Explain how equilibrium price responds to a rise in demand.",
+    answer:
+      "Supply and demand determine the equilibrium price in a competitive market. Furthermore, when demand rises and supply is held constant, the equilibrium price typically increases. This relationship is defined as the law of demand, and it specifically ensures that markets clear over time.",
+    at: "2026-07-11T02:18:00.000Z",
+  },
+  {
+    ref: "CS201-Q1-0092",
+    question: "Why does this loop read past the end of the array?",
+    answer:
+      "my answer is that the loop runs one extra time because the condition uses less than or equal instead of less than, so it goes off the end of the array",
+    at: "2026-07-11T02:05:00.000Z",
+  },
+  {
+    ref: "ECON101-Q4-0211",
+    question: "What happened to ticket prices in the case study?",
+    answer:
+      "honestly i think the answer is that prices go up when more people want the thing. idk how to explain it better but thats what happened in the example we did in class lol",
+    at: "2026-07-10T09:31:00.000Z",
+  },
+  {
+    ref: "ECON101-Q2-0177",
+    question: "What happens to price when demand rises?",
+    answer: "It increases.",
+    at: "2026-07-10T09:12:00.000Z",
+  },
+];
+
+const SEED_BATCH_ROWS: { ref: string; answer: string }[] = [
+  {
+    ref: "BIO210-0001",
+    answer:
+      "The mitochondria produces ATP through oxidative phosphorylation, which occurs across the inner membrane where the electron transport chain establishes a proton gradient that ATP synthase subsequently uses to phosphorylate ADP into ATP for cellular work.",
+  },
+  {
+    ref: "BIO210-0002",
+    answer:
+      "Normalisation reduces redundancy by splitting tables so each fact is stored once. Third normal form removes transitive dependencies between non-key attributes.",
+  },
+  {
+    ref: "BIO210-0003",
+    answer:
+      "basically the cell wall keeps the shape and stops it bursting when water comes in, thats the main thing i remember from the practical we did",
+  },
+  {
+    ref: "BIO210-0004",
+    answer:
+      "my answer is that the loop runs one extra time because the condition uses less than or equal instead of less than, so it goes off the end of the array",
+  },
+  { ref: "BIO210-0005", answer: "It increases." },
+];
+
+const SEED_BATCH_AT = "2026-07-11T06:40:00.000Z";
+
+function seedHistoryFor(owner: AppUser) {
+  const seeded = readJson<string[]>(HISTORY_SEEDED_KEY, []);
+  if (seeded.includes(owner.id)) return;
+
+  const singles: SingleCheck[] = SEED_ANSWERS.map((seed) => {
+    const analysis = analyseAnswer(seed.answer, "standard", true);
+    return {
+      kind: "single",
+      checkId: newId(),
+      actorId: owner.id,
+      batchId: null,
+      externalRef: seed.ref,
+      verdict: analysis.verdict,
+      rawScore: analysis.rawScore,
+      confidence: null,
+      abstainReason: analysis.abstainReason,
+      truncated: false,
+      detector: analysis.detector,
+      answerText: seed.answer,
+      questionText: seed.question,
+      explanation: analysis.explanation,
+      createdAt: seed.at,
+      latencyMs: 610,
+    };
+  });
+
+  const batchId = newId();
+  const rows: BatchRow[] = SEED_BATCH_ROWS.map((seed) => {
+    const analysis = analyseAnswer(seed.answer, "standard", false);
+    return {
+      checkId: newId(),
+      actorId: owner.id,
+      batchId,
+      externalRef: seed.ref,
+      verdict: analysis.verdict,
+      rawScore: analysis.rawScore,
+      confidence: null,
+      abstainReason: analysis.abstainReason,
+      truncated: false,
+      detector: analysis.detector,
+      answerText: seed.answer,
+      questionText: null,
+      explanation: analysis.explanation,
+      createdAt: SEED_BATCH_AT,
+      latencyMs: null,
+    };
+  });
+
+  const counts: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 0,
+    human_written: 0,
+  };
+  for (const row of rows) counts[row.verdict]++;
+  const order: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 1,
+    human_written: 2,
+  };
+  rows.sort(
+    (a, b) => order[a.verdict] - order[b.verdict] || b.rawScore - a.rawScore,
+  );
+
+  const batch: BatchRun = {
+    id: batchId,
+    kind: "batch",
+    fileName: "bio210-midterm-sample.csv",
+    createdAt: SEED_BATCH_AT,
+    strictness: "standard",
+    rows,
+    counts,
+  };
+
+  const entries: HistoryEntry[] = [batch, ...singles];
+  writeJson(HISTORY_KEY, [...entries, ...loadHistory()].slice(0, HISTORY_CAP));
+  writeJson(HISTORY_SEEDED_KEY, [...seeded, owner.id]);
+}
+
 const T0 = "2026-07-01T00:00:00.000Z";
 const T1 = "2026-07-08T04:00:00.000Z";
 const T2 = "2026-07-09T02:00:00.000Z";
@@ -300,7 +442,7 @@ const SEED_USERS: AppUser[] = [
     email: "ta.d@example.com",
     name: "Demo TA D",
     role: "teaching_assistant",
-    provisionedBy: ID_INSTRUCTOR_B,
+    provisionedBy: ID_ADMIN,
     deletedAt: null,
     createdAt: T2,
   },
@@ -312,6 +454,66 @@ const SEED_SUPERVISION: SupervisionLink[] = [
   { instructorId: ID_INSTRUCTOR_B, taId: ID_TA_B, createdAt: T1 },
   { instructorId: ID_INSTRUCTOR_B, taId: ID_TA_C, createdAt: T2 },
 ];
+
+function assertSeedsConsistent() {
+  const byId = new Map(SEED_USERS.map((user) => [user.id, user]));
+  const problems: string[] = [];
+
+  if (new Set(SEED_USERS.map((u) => u.id)).size !== SEED_USERS.length) {
+    problems.push("duplicate user ids");
+  }
+  if (
+    new Set(SEED_USERS.map((u) => u.email.toLowerCase())).size !==
+    SEED_USERS.length
+  ) {
+    problems.push("duplicate user emails");
+  }
+
+  for (const user of SEED_USERS) {
+    if (user.provisionedBy !== null && !byId.has(user.provisionedBy)) {
+      problems.push(`${user.email}: provisionedBy references an unknown user`);
+    }
+  }
+
+  const seen = new Set<string>();
+  for (const link of SEED_SUPERVISION) {
+    const instructor = byId.get(link.instructorId);
+    const ta = byId.get(link.taId);
+    if (!instructor) problems.push("supervision link with unknown instructor");
+    else if (instructor.role !== "instructor") {
+      problems.push(`${instructor.email} supervises but is ${instructor.role}`);
+    }
+    if (!ta) problems.push("supervision link with unknown teaching assistant");
+    else if (ta.role !== "teaching_assistant") {
+      problems.push(`${ta.email} is supervised but is ${ta.role}`);
+    }
+    if (instructor && ta && link.createdAt < ta.createdAt) {
+      problems.push(
+        `link ${instructor.email}->${ta.email} predates the account`,
+      );
+    }
+    const key = `${link.instructorId}:${link.taId}`;
+    if (seen.has(key)) problems.push("duplicate supervision link");
+    seen.add(key);
+  }
+
+  for (const user of SEED_USERS) {
+    if (user.role !== "teaching_assistant" || !user.provisionedBy) continue;
+    const creator = byId.get(user.provisionedBy);
+    if (creator?.role !== "instructor") continue;
+    if (!seen.has(`${user.provisionedBy}:${user.id}`)) {
+      problems.push(
+        `${user.email}: provisioned by an instructor but not supervised by them`,
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`Inconsistent stub seed data:\n- ${problems.join("\n- ")}`);
+  }
+}
+
+if (import.meta.env.DEV) assertSeedsConsistent();
 
 function loadUsers(): AppUser[] {
   if (localStorage.getItem(USERS_KEY) === null) {
@@ -345,50 +547,71 @@ export function findUserById(id: string): AppUser | undefined {
   return loadUsers().find((user) => user.id === id);
 }
 
-function requireActor(actorEmail: string): AppUser {
-  const actor = findUserByEmail(actorEmail);
-  if (!actor) throw new ApiError(401, "You are not signed in.");
-  return actor;
+function requireActor(actor: User): AppUser {
+  const existing = findUserByEmail(actor.email);
+  if (existing) {
+    seedHistoryFor(existing);
+    if (existing.role !== actor.role) {
+      const users = loadUsers().map((user) =>
+        user.id === existing.id ? { ...user, role: actor.role } : user,
+      );
+      saveUsers(users);
+      return { ...existing, role: actor.role };
+    }
+    return existing;
+  }
+
+  const adopted: AppUser = {
+    id: newId(),
+    email: actor.email,
+    name: null,
+    role: actor.role,
+    provisionedBy: null,
+    deletedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+  saveUsers([...loadUsers(), adopted]);
+  seedHistoryFor(adopted);
+  return adopted;
 }
 
-function requireRole(actorEmail: string, min: UserRole): AppUser {
-  const actor = requireActor(actorEmail);
-  if (!atLeastRole(actor.role, min)) {
+function requireRole(actor: User, min: UserRole): AppUser {
+  const resolved = requireActor(actor);
+  if (!atLeastRole(resolved.role, min)) {
     throw new ApiError(403, "You do not have access to this.");
   }
-  return actor;
+  return resolved;
 }
 
-const requireAdmin = (actorEmail: string) =>
-  requireRole(actorEmail, "root_admin");
+const requireAdmin = (actor: User) => requireRole(actor, "root_admin");
 
-function requireScreeningAccess(actorEmail: string): AppUser {
-  const actor = requireActor(actorEmail);
-  if (actor.role !== "teaching_assistant") return actor;
-  const linked = loadSupervision().some((link) => link.taId === actor.id);
+function requireScreeningAccess(actor: User): AppUser {
+  const resolved = requireActor(actor);
+  if (resolved.role !== "teaching_assistant") return resolved;
+  const linked = loadSupervision().some((link) => link.taId === resolved.id);
   if (!linked) {
     throw new ApiError(
       403,
       "You are not assigned to an instructor yet, so there is nothing to screen.",
     );
   }
-  return actor;
+  return resolved;
 }
 
-export function hasScreeningAccess(actorEmail: string): boolean {
+export function hasScreeningAccess(actor: User): boolean {
   try {
-    requireScreeningAccess(actorEmail);
+    requireScreeningAccess(actor);
     return true;
   } catch {
     return false;
   }
 }
 
-function requireAdminOrSupervisor(actorEmail: string, taId: string): AppUser {
-  const actor = requireActor(actorEmail);
-  if (atLeastRole(actor.role, "root_admin")) return actor;
+function requireAdminOrSupervisor(actor: User, taId: string): AppUser {
+  const resolved = requireActor(actor);
+  if (atLeastRole(resolved.role, "root_admin")) return resolved;
   const supervises = loadSupervision().some(
-    (link) => link.instructorId === actor.id && link.taId === taId,
+    (link) => link.instructorId === resolved.id && link.taId === taId,
   );
   if (!supervises) {
     throw new ApiError(
@@ -396,7 +619,7 @@ function requireAdminOrSupervisor(actorEmail: string, taId: string): AppUser {
       "You can only manage your own teaching assistants.",
     );
   }
-  return actor;
+  return resolved;
 }
 
 function validateCheckInput(input: CheckInput) {
@@ -425,10 +648,10 @@ function validateCheckInput(input: CheckInput) {
 }
 
 export async function checkAnswer(
-  actorEmail: string,
+  actor: User,
   input: CheckInput,
 ): Promise<SingleCheck> {
-  const actor = requireScreeningAccess(actorEmail);
+  const resolved = requireScreeningAccess(actor);
   validateCheckInput(input);
   const startedAt = performance.now();
   await delay(650);
@@ -445,7 +668,7 @@ export async function checkAnswer(
   const entry: SingleCheck = {
     kind: "single",
     checkId: newId(),
-    actorId: actor.id,
+    actorId: resolved.id,
     batchId: null,
     externalRef: input.externalRef?.trim() || null,
     verdict: analysis.verdict,
@@ -465,13 +688,13 @@ export async function checkAnswer(
 }
 
 export async function runBatch(
-  actorEmail: string,
+  actor: User,
   fileName: string,
   inputs: BatchRowInput[],
   strictness: Strictness = "standard",
   onProgress?: (done: number, total: number) => void,
 ): Promise<BatchRun> {
-  const actor = requireScreeningAccess(actorEmail);
+  const resolved = requireScreeningAccess(actor);
   const batchId = newId();
   const rows: BatchRow[] = [];
 
@@ -486,7 +709,7 @@ export async function runBatch(
     );
     rows.push({
       checkId: newId(),
-      actorId: actor.id,
+      actorId: resolved.id,
       batchId,
       externalRef: row.externalRef,
       verdict: analysis.verdict,
@@ -539,34 +762,34 @@ function ownedBy(entry: HistoryEntry, actorId: string): boolean {
 }
 
 export async function listHistory(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<HistoryEntry[]> {
   await delay(150, signal);
-  const actor = requireScreeningAccess(actorEmail);
-  return loadHistory().filter((entry) => ownedBy(entry, actor.id));
+  const resolved = requireScreeningAccess(actor);
+  return loadHistory().filter((entry) => ownedBy(entry, resolved.id));
 }
 
 export async function getEntry(
-  actorEmail: string,
+  actor: User,
   id: string,
   signal?: AbortSignal,
 ): Promise<HistoryEntry | undefined> {
   await delay(120, signal);
-  const actor = requireScreeningAccess(actorEmail);
+  const resolved = requireScreeningAccess(actor);
   return loadHistory()
-    .filter((entry) => ownedBy(entry, actor.id))
+    .filter((entry) => ownedBy(entry, resolved.id))
     .find(
       (entry) => (entry.kind === "batch" ? entry.id : entry.checkId) === id,
     );
 }
 
 export async function listUsers(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
   await delay(150, signal);
-  requireAdmin(actorEmail);
+  requireAdmin(actor);
   return loadUsers();
 }
 
@@ -613,19 +836,16 @@ export function linkedAt(
 }
 
 export async function listMyAssistants(
-  actorEmail: string,
+  actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
   await delay(150, signal);
-  const actor = requireActor(actorEmail);
-  return assistantsOf(actor.id);
+  const resolved = requireActor(actor);
+  return assistantsOf(resolved.id);
 }
 
-export function lookupForLinking(
-  actorEmail: string,
-  email: string,
-): LookupResult {
-  requireActor(actorEmail);
+export function lookupForLinking(actor: User, email: string): LookupResult {
+  requireActor(actor);
   const match = findUserByEmail(email);
   if (!match) return { kind: "free" };
   if (match.role !== "teaching_assistant" || !isActive(match)) {
@@ -637,15 +857,15 @@ export function lookupForLinking(
 const SMU_EMAIL = /^[^@\s]+@([a-z]+\.)?smu\.edu\.sg$/i;
 
 export async function createAccount(
-  actorEmail: string,
+  actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
   await delay(300);
-  const actor = requireActor(actorEmail);
+  const resolved = requireActor(actor);
   const canCreate =
     input.role === "teaching_assistant"
-      ? atLeastRole(actor.role, "instructor")
-      : atLeastRole(actor.role, "root_admin");
+      ? atLeastRole(resolved.role, "instructor")
+      : atLeastRole(resolved.role, "root_admin");
   if (!canCreate) {
     throw new ApiError(403, "You cannot create an account with that role.");
   }
@@ -666,15 +886,15 @@ export async function createAccount(
     email,
     name: input.name?.trim() || null,
     role: input.role,
-    provisionedBy: actor.id,
+    provisionedBy: resolved.id,
     deletedAt: null,
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), user]);
 
-  const supervisors = atLeastRole(actor.role, "root_admin")
+  const supervisors = atLeastRole(resolved.role, "root_admin")
     ? (input.supervisorIds ?? [])
-    : [actor.id];
+    : [resolved.id];
   if (input.role === "teaching_assistant" && supervisors.length > 0) {
     const links = loadSupervision();
     const now = new Date().toISOString();
@@ -687,13 +907,16 @@ export async function createAccount(
 }
 
 export async function linkSupervision(
-  actorEmail: string,
+  actor: User,
   instructorId: string,
   taId: string,
 ): Promise<void> {
   await delay(200);
-  const actor = requireActor(actorEmail);
-  if (!atLeastRole(actor.role, "root_admin") && actor.id !== instructorId) {
+  const resolved = requireActor(actor);
+  if (
+    !atLeastRole(resolved.role, "root_admin") &&
+    resolved.id !== instructorId
+  ) {
     throw new ApiError(
       403,
       "You can only add teaching assistants to yourself.",
@@ -726,13 +949,16 @@ export async function linkSupervision(
 }
 
 export async function unlinkSupervision(
-  actorEmail: string,
+  actor: User,
   instructorId: string,
   taId: string,
 ): Promise<void> {
   await delay(200);
-  const actor = requireActor(actorEmail);
-  if (!atLeastRole(actor.role, "root_admin") && actor.id !== instructorId) {
+  const resolved = requireActor(actor);
+  if (
+    !atLeastRole(resolved.role, "root_admin") &&
+    resolved.id !== instructorId
+  ) {
     throw new ApiError(
       403,
       "You can only remove your own teaching assistants.",
@@ -746,13 +972,13 @@ export async function unlinkSupervision(
 }
 
 export async function setUserActive(
-  actorEmail: string,
+  actor: User,
   id: string,
   active: boolean,
 ): Promise<AppUser> {
   await delay(200);
-  const actor = requireAdmin(actorEmail);
-  if (actor.id === id) {
+  const resolved = requireAdmin(actor);
+  if (resolved.id === id) {
     throw new ApiError(403, "You cannot deactivate your own account.");
   }
   const users = loadUsers();
@@ -772,14 +998,14 @@ export function strandedBy(instructorId: string): AppUser[] {
 }
 
 export async function deactivateInstructor(
-  actorEmail: string,
+  actor: User,
   id: string,
   plan: DeactivationPlan,
 ): Promise<DeactivationOutcome> {
   await delay(300);
-  const actor = requireAdmin(actorEmail);
+  const resolved = requireAdmin(actor);
 
-  if (actor.id === id) {
+  if (resolved.id === id) {
     throw new ApiError(403, "You cannot deactivate your own account.");
   }
 
@@ -804,7 +1030,7 @@ export async function deactivateInstructor(
 
     for (const ta of stranded) {
       const account = users.find((candidate) => candidate.id === ta.id);
-      if (account && account.id !== actor.id) {
+      if (account && account.id !== resolved.id) {
         account.deletedAt = now;
         outcome.deactivated++;
       }
@@ -815,20 +1041,17 @@ export async function deactivateInstructor(
   }
 
   saveSupervision(loadSupervision().filter((link) => link.instructorId !== id));
-  await setUserActive(actorEmail, id, false);
+  await setUserActive(actor, id, false);
   return outcome;
 }
 
-export async function resendInvite(
-  actorEmail: string,
-  id: string,
-): Promise<void> {
+export async function resendInvite(actor: User, id: string): Promise<void> {
   await delay(200);
   const user = findUserById(id);
   if (!user) throw new ApiError(404, "That account no longer exists.");
   if (user.role === "teaching_assistant") {
-    requireAdminOrSupervisor(actorEmail, id);
+    requireAdminOrSupervisor(actor, id);
   } else {
-    requireAdmin(actorEmail);
+    requireAdmin(actor);
   }
 }
