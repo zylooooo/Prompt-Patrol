@@ -15,7 +15,36 @@ from models.session import UserSession
 logger = logging.getLogger(__name__)
 
 
+def normalize_email(email: str) -> str:
+    """
+    The one form an address is stored and matched in: trimmed and lowercased.
+
+    Entra chooses the case of the `email` / `preferred_username` claim it sends;
+    an admin chooses the case they type into the provisioning CLI. When those
+    two disagreed, a correctly provisioned person was told they were not
+    provisioned, and nothing on screen could explain why. Normalising on both
+    write and lookup removes the disagreement.
+
+    It also keeps the existing UNIQUE constraint on `users.email` meaningful:
+    without it, `A@smu.edu.sg` and `a@smu.edu.sg` are two accepted rows that no
+    lookup can tell apart.
+
+    Lowercasing the local part is a deliberate simplification. RFC 5321 permits
+    it to be case-sensitive, but nothing in this system's reach treats it that
+    way and Entra itself does not. Trimming is here because a trailing space
+    pasted into the CLI produced a row no login could ever match.
+
+    Rejected: a Postgres CITEXT column (what `docs/openapi.yaml` calls for) and
+    a functional unique index on `lower(email)`. Both are Postgres-only, and the
+    test suite builds its schema from `Base.metadata` on SQLite — so either
+    would leave the behaviour under test different from the behaviour deployed.
+    """
+    return email.strip().lower()
+
+
 async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | None:
+    # Normalised once here, so all three lookups below compare the same form.
+    email = normalize_email(email)
     result = await db.execute(select(User).where(User.entra_oid == oid, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
     if user is not None:
@@ -172,6 +201,10 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
         EmailAlreadyExistsError: a users row already exists for this email.
     """
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
+
+    # Before the duplicate check, so "Ada@smu.edu.sg" cannot be provisioned
+    # alongside an existing "ada@smu.edu.sg" and produce two rows for one person.
+    email = normalize_email(email)
 
     if role == UserRoleEnum.root_admin:
         logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor)

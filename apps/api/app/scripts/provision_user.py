@@ -5,13 +5,21 @@ import uuid
 
 from db import async_session
 from models import User, UserRoleEnum
+from services import normalize_email
 
 
 # Helper function to seed users into the database. Only for dev / seeding root admin.
 async def add_user(email: str, role: str) -> None:
     """Allowlists a user before their first Entra login. entra_oid is left
-    null; resolve_or_bind_user fills it in on that first successful login."""
+    null; resolve_or_bind_user fills it in on that first successful login.
+
+    This cannot go through services.create_user - that one requires an acting
+    user and refuses to produce a root_admin, which is exactly what this script
+    exists to seed. It shares create_user's normalisation instead, because a row
+    written here in a different case than Entra sends is a row nobody can log
+    into."""
     async with async_session() as db:
+        email = normalize_email(email)
         user = User(id=uuid.uuid4(), email=email, role=UserRoleEnum(role))
         db.add(user)
         await db.commit()

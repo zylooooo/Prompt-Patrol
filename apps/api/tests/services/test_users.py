@@ -11,6 +11,7 @@ from services.users_service import (
     activate_user_by_id,
     create_user,
     list_users,
+    normalize_email,
     resolve_or_bind_user,
     soft_delete_user,
 )
@@ -633,3 +634,100 @@ async def test_list_invalid_cursor_raises(db_session):
 
     with pytest.raises(ValueError):
         await list_users(db_session, admin, cursor="not-a-valid-cursor!!")
+
+
+# --- email normalisation ----------------------------------------------------
+# The stored form and the matched form must be the same one, or a correctly
+# provisioned person is told they are not provisioned.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Ada@smu.edu.sg", "ada@smu.edu.sg"),
+        ("ADA@SMU.EDU.SG", "ada@smu.edu.sg"),
+        ("  ada@smu.edu.sg  ", "ada@smu.edu.sg"),
+        ("\tAda@SMU.edu.sg\n", "ada@smu.edu.sg"),
+        ("ada@smu.edu.sg", "ada@smu.edu.sg"),
+    ],
+)
+def test_normalize_email_folds_case_and_trims(raw, expected):
+    assert normalize_email(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_login_binds_when_entra_sends_a_different_case_than_provisioned(db_session):
+    # The reported symptom: provisioned lowercase, Entra sends mixed case, and
+    # the user was rejected as unprovisioned with nothing able to explain why.
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="Ada@SMU.edu.sg")
+
+    assert resolved is not None
+    assert resolved.id == user.id
+    assert resolved.entra_oid == "oid-ada"
+
+
+@pytest.mark.asyncio
+async def test_login_matches_an_already_bound_row_regardless_of_claim_case(db_session):
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid="oid-ada", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="ADA@SMU.EDU.SG")
+
+    assert resolved is not None
+    assert resolved.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_login_tolerates_a_padded_email_claim(db_session):
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="  ada@smu.edu.sg  ")
+
+    assert resolved is not None
+    assert resolved.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_case_folding_does_not_let_an_email_claim_take_a_bound_row(db_session):
+    # The S0 guard must survive normalisation: folding case must not turn a
+    # rejected rebind into an accepted one.
+    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.root_admin)
+    db_session.add(victim)
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="attacker-oid", email="VICTIM@smu.edu.sg")
+
+    assert resolved is None
+    await db_session.refresh(victim)
+    assert victim.entra_oid == "victim-oid"
+
+
+@pytest.mark.asyncio
+async def test_create_user_stores_the_normalised_email(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, admin, "  New.Person@SMU.edu.sg ", UserRoleEnum.instructor)
+
+    assert created.email == "new.person@smu.edu.sg"
+
+
+@pytest.mark.asyncio
+async def test_create_user_rejects_a_duplicate_differing_only_by_case(db_session):
+    # Without normalisation both rows are accepted, and the second one is a
+    # second account for the same person that no login will ever reach.
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+    await create_user(db_session, admin, "person@smu.edu.sg", UserRoleEnum.instructor)
+
+    with pytest.raises(EmailAlreadyExistsError):
+        await create_user(db_session, admin, "Person@SMU.edu.sg", UserRoleEnum.instructor)

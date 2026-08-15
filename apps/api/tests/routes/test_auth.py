@@ -42,6 +42,24 @@ async def test_callback_creates_session_for_provisioned_user(client, db_session)
 
 
 @pytest.mark.asyncio
+async def test_callback_signs_in_when_entra_sends_a_different_email_case(client, db_session):
+    # End to end version of the provisioning-case bug: the row is correct, the
+    # person is real, and the only difference is capitalisation in the claim.
+    # This used to land on /login?error=not_provisioned.
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-ada", "email": "Ada@SMU.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == FRONTEND_URL
+    assert "__Host-session" in response.cookies
+
+
+@pytest.mark.asyncio
 async def test_callback_redirects_unprovisioned_user(client, db_session):
     fake_token = {"userinfo": {"oid": "oid-x", "email": "nobody@smu.edu.sg"}}
     with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
