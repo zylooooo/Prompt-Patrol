@@ -21,6 +21,7 @@ import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
 import RowAction from "../components/ui/RowAction";
+import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
@@ -268,24 +269,12 @@ export default function TeachingAssistantsPage() {
       </section>
 
       {isError ? (
-        <section
-          className="mt-6 rounded-xl border border-border bg-surface p-12 text-center"
-          role="alert"
-        >
-          <p className="text-lg font-medium text-foreground">
-            Could not load your list
-          </p>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Something went wrong reaching the server. Nothing has changed.
-          </p>
-          <Button
-            variant="secondary"
-            className="mt-5"
-            onClick={() => void refetch()}
-          >
-            Try again
-          </Button>
-        </section>
+        <ErrorState
+          className="mt-6"
+          title="Could not load your list"
+          description="Something went wrong reaching the server. Nothing has changed."
+          onRetry={() => void refetch()}
+        />
       ) : (
         <PageFill className="mt-6">
           <DataTable<AppUser>

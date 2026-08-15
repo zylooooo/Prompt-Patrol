@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { LOGIN_HINT_KEY } from "../../api/auth";
 import { ProtectedRoute } from "../ProtectedRoute";
+import userEvent from "@testing-library/user-event";
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,11 +18,14 @@ vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => useAuthMock() as unknown,
 }));
 
+const refetch = vi.fn();
+
 const resolved = (user: unknown) => ({
   user,
   isPending: false,
   isError: false,
   error: null,
+  refetch,
 });
 
 function renderGuarded(children: ReactNode = <p>protected content</p>) {
@@ -105,19 +109,28 @@ describe("ProtectedRoute", () => {
     expect(screen.getByTestId("login").textContent).toBe("login:no-reason");
   });
 
-  it("does not call a server error an expired session", () => {
-    // Otherwise a backend outage tells every user their session timed out and
-    // sends them round the sign-in loop for nothing.
+  it("says the server is unreachable instead of claiming a sign-out", async () => {
+    // The whole point: a failed session check is not an answer about who the
+    // user is. Sending them to /login states, wrongly, that they are signed
+    // out - and the sign-in they would then attempt runs through the same dead
+    // backend, so an outage reads as a broken account.
     localStorage.setItem(LOGIN_HINT_KEY, "ada@smu.edu.sg");
     useAuthMock.mockReturnValue({
       user: null,
       isPending: false,
       isError: true,
       error: new Error("boom"),
+      refetch,
     });
 
     renderGuarded();
 
-    expect(screen.getByTestId("login").textContent).toBe("login:no-reason");
+    expect(screen.queryByTestId("login")).toBeNull();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Can't reach Prompt Patrol");
+    expect(alert.textContent).toContain("have not been signed out");
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

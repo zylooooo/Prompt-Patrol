@@ -19,6 +19,7 @@ export function useAuth() {
     isPending,
     isError,
     error,
+    refetch,
   } = useQuery(sessionQueryOptions());
 
   useEffect(() => {
@@ -28,5 +29,5 @@ export function useAuth() {
     localStorage.setItem(LOGIN_HINT_KEY, user.email);
   }, [user?.email]);
 
-  return { user: user ?? null, isPending, isError, error };
+  return { user: user ?? null, isPending, isError, error, refetch };
 }
