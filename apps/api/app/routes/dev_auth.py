@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.middleware import SESSION_COOKIE_NAME
+from auth.dependencies import SESSION_COOKIE_NAME
 from config import DEV_AUTH_ENABLED, ENTRA_CONFIGURED
 from db import get_db
 from models import User
