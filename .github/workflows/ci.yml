@@ -109,7 +109,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [unit-tests, lint-frontend]
+    needs: [unit-tests, lint-frontend, lint-backend]
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
