@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from sqlalchemy import text
-from starlette.middleware.sessions import SessionMiddleware
+from contextlib import asynccontextmanager
 
 from config import (
     API_HOST,
@@ -18,7 +18,8 @@ from config import (
 )
 from db import engine
 from middleware import RequestIdMiddleware
-from routes import auth_router, users_router
+from routes import auth_router, checks_router, users_router
+from starlette.middleware.sessions import SessionMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ app.add_middleware(
 )
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
+app.include_router(checks_router)
 app.include_router(users_router)
 
 if DEV_AUTH_ENABLED:
