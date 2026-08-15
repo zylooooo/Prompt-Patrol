@@ -407,3 +407,28 @@ async def test_callback_without_the_login_hint_claim_keeps_any_stored_hint(clien
 
     await db_session.refresh(user)
     assert user.logout_hint == "previously-captured"
+
+
+@pytest.mark.asyncio
+async def test_a_new_login_leaves_other_sessions_alive(db_session, client):
+    # Signing in on a second device must not sign the first one out. This is
+    # why the callback does not revoke anything, and therefore why sessions
+    # accumulate - see the note on GuestRoute in 08-auth-and-security.md.
+    #
+    # It is also not fixable at the callback: __Host-session is SameSite=strict
+    # and /api/auth/callback is reached by a cross-site redirect from Microsoft,
+    # so the browser withholds the existing cookie and the server has no way to
+    # tell which prior session belonged to this browser.
+    user = User(id=uuid.uuid4(), email="two@smu.edu.sg", entra_oid="oid-two", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    first_device = await create_session(db_session, user.id)
+
+    fake_token = {"userinfo": {"oid": "oid-two", "email": "two@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert await authenticate_session(db_session, first_device) is not None
+    live = (await db_session.execute(select(UserSession).where(UserSession.deleted_at.is_(None)))).scalars().all()
+    assert len(live) == 2
