@@ -32,7 +32,7 @@ export default function CheckPage() {
       />
 
       {unassigned ? (
-        <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-12 text-center">
+        <section className="mt-8 shrink-0 rounded-xl bg-surface p-12 text-center shadow-md">
           <p className="text-lg font-medium text-foreground">
             You are not assigned to an instructor yet
           </p>

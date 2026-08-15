@@ -31,7 +31,7 @@ export default function ResultPanel({
 }: ResultPanelProps) {
   return (
     <section
-      className="flex flex-col rounded-xl border border-border bg-surface p-7"
+      className="flex flex-col rounded-xl bg-surface p-7 shadow-md"
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-4">
