@@ -33,7 +33,10 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
         raw_id = request.headers.get(GATEWAY_USER_ID_HEADER)
         if raw_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        user = await get_user_by_id(db, uuid.UUID(raw_id))
+        actor_id = uuid.UUID(raw_id)
+        # Self-lookup: id-equality check in _can_view_user passes regardless
+        # of role, so a bare id stand-in is enough here.
+        user = await get_user_by_id(db, User(id=actor_id), actor_id)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         return user

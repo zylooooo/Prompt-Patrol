@@ -1,0 +1,6 @@
+name: Prompt Patrol Dev
+values:
+  - key: SESSION_COOKIE
+    secret: true
+  - key: BASE_URL
+    value: ''

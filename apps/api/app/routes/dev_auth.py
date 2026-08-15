@@ -59,9 +59,7 @@ async def dev_login(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(User).where(User.email == email, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Account not provisioned"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account not provisioned")
 
     raw_token = await create_session(db, user.id)
     logger.warning(

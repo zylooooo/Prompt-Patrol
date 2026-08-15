@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC
 
 import pytest
 from fastapi import FastAPI
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from config import DEV_AUTH_ENABLED, resolve_dev_auth_enabled
 from db import get_db
 from main import app as main_app
-from models import UserRoleEnum, User, UserSession
+from models import User, UserRoleEnum, UserSession
 from routes.dev_auth import router as dev_auth_router
 
 
@@ -61,13 +62,13 @@ async def test_dev_login_rejects_unprovisioned_email(dev_client, db_session):
 
 @pytest.mark.asyncio
 async def test_dev_login_rejects_soft_deleted_user(dev_client, db_session):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     user = User(
         id=uuid.uuid4(),
         email="gone@smu.edu.sg",
         role=UserRoleEnum.instructor,
-        deleted_at=datetime.now(timezone.utc),
+        deleted_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -99,7 +100,7 @@ async def test_dev_login_ignores_role_in_request_body(dev_client, db_session):
 
 @pytest.mark.asyncio
 async def test_dev_users_lists_only_live_accounts(dev_client, db_session):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     db_session.add_all(
         [
@@ -108,7 +109,7 @@ async def test_dev_users_lists_only_live_accounts(dev_client, db_session):
                 id=uuid.uuid4(),
                 email="deleted@smu.edu.sg",
                 role=UserRoleEnum.instructor,
-                deleted_at=datetime.now(timezone.utc),
+                deleted_at=datetime.now(UTC),
             ),
         ]
     )
@@ -137,9 +138,7 @@ def test_dev_routes_mounted_only_when_flag_is_set():
     # Read through the OpenAPI schema rather than app.routes: FastAPI keeps
     # included routers lazy, so app.routes doesn't flatten to concrete paths.
     dev_paths = {path for path in main_app.openapi()["paths"] if path.startswith("/api/auth/dev")}
-    assert dev_paths == (
-        {"/api/auth/dev/login", "/api/auth/dev/users"} if DEV_AUTH_ENABLED else set()
-    )
+    assert dev_paths == ({"/api/auth/dev/login", "/api/auth/dev/users"} if DEV_AUTH_ENABLED else set())
 
 
 @pytest.mark.parametrize("environment", ["staging", "prod"])

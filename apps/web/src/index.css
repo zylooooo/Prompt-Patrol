@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 @theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
   --color-background: #f9fafc; /* faint indigo-tinted off-white */
   --color-surface: #ffffff;
   --color-surface-muted: #eef0f8; /* faint indigo grey */
@@ -37,6 +41,18 @@
   --color-danger-border: #fca5a5;
   --color-danger-foreground: #ffffff;
 
+  /* Only the dev-login panel uses these today. Values match the amber-50 /
+     amber-300 it previously hardcoded, so this is a token-only change. */
+  --color-warning-soft: #fffbeb;
+  --color-warning-border: #fcd34d;
+
+  --color-flag: #924a0a; /* flagged as AI - kept off danger's red on purpose */
+  --color-flag-soft: #fdeede;
+  --color-human: #1a7038;
+  --color-human-soft: #e4f4ea;
+  --color-unsure: #545a78; /* indigo-grey, matches muted-foreground */
+  --color-unsure-soft: #e9ebf3;
+
   --color-table-header: #eef0f8; /* match surface-muted */
   --color-table-row-hover: #f6f7fc;
   --color-table-selected: #e4e4fa; /* primary-soft */
@@ -63,6 +79,18 @@
 
   --animate-fadeInUp: fadeInUp 180ms ease-out;
   --animate-fadeIn: fadeIn 150ms ease-out;
+  --animate-toastIn: toastIn 200ms ease-out;
+
+  @keyframes toastIn {
+    0% {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
 
   @keyframes fadeInUp {
     0% {
@@ -86,10 +114,6 @@
 }
 
 @layer base {
-  /* v4 defaults the border colour to `currentColor`; v3 defaulted to a theme
-     grey, which `borderColor.DEFAULT` overrode. Dropdown's trigger uses a bare
-     `border`, so restore the old behaviour globally rather than annotating
-     individual call sites. */
   *,
   ::after,
   ::before,
@@ -98,12 +122,38 @@
     border-color: var(--color-border);
   }
 
+  :focus,
+  :focus-visible {
+    outline: none;
+  }
+
   html {
     font-family: var(--font-sans);
   }
 
   body {
     background-color: var(--color-background);
+    background-image:
+      radial-gradient(
+        circle at 18% 18%,
+        color-mix(in oklab, var(--color-accent) 7%, transparent),
+        transparent 38%
+      ),
+      radial-gradient(
+        circle at 82% 72%,
+        color-mix(in oklab, var(--color-primary) 4%, transparent),
+        transparent 34%
+      );
+    background-attachment: fixed;
     color: var(--color-foreground);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

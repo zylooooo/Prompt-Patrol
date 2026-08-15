@@ -1,7 +1,6 @@
 from .settings import (
     API_HOST,
     API_PORT,
-    configure_logging,
     DB_URL,
     DETECTOR_URL,
     DEV_AUTH_ENABLED,
@@ -13,9 +12,10 @@ from .settings import (
     ENVIRONMENT,
     FRONTEND_URL,
     LOG_LEVEL,
+    SESSION_SECRET,
+    configure_logging,
     request_id_ctx_var,
     resolve_dev_auth_enabled,
-    SESSION_SECRET,
 )
 
 __all__ = [

@@ -1,0 +1,5 @@
+$kind: http-request
+name: Get current user profile
+url: "{{BASE_URL}}/api/users/me"
+method: GET
+order: 4457785419271230

@@ -40,10 +40,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Node version declarations agree
+        working-directory: ${{ github.workspace }}
+        run: |
+          root="$(tr -d '[:space:]' < .nvmrc)"
+          engines="$(sed -n 's/.*"node"[[:space:]]*:[[:space:]]*">=\([0-9]*\).*/\1/p' apps/web/package.json)"
+          docker="$(sed -n 's/^ARG NODE_VERSION=\([0-9]*\).*/\1/p' apps/web/Dockerfile)"
+          types="$(sed -n 's/.*"@types\/node"[[:space:]]*:[[:space:]]*"[^0-9]*\([0-9]*\).*/\1/p' apps/web/package.json)"
+          echo ".nvmrc:$root  engines:>=$engines  Dockerfile ARG:$docker  @types/node:^$types"
+          fail=0
+          for v in "$engines" "$docker" "$types"; do
+            { [ -n "$v" ] && [ "$v" = "$root" ]; } || fail=1
+          done
+          if [ "$fail" != 0 ]; then
+            echo "::error::Node version declarations must all derive from .nvmrc ($root)"
+            exit 1
+          fi
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: apps/web/.nvmrc
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
@@ -92,7 +109,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [unit-tests, lint-frontend]
+    needs: [unit-tests, lint-frontend, lint-backend, unit-tests]
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
@@ -105,12 +122,12 @@ jobs:
 
       - name: Build web image
         run: |
-          NODE_VERSION="$(tr -d '[:space:]' < apps/web/.nvmrc)"
+          NODE_VERSION="$(tr -d '[:space:]' < .nvmrc)"
           case "$NODE_VERSION" in
             '' | *[!0-9.]*)
-              echo "::error file=apps/web/.nvmrc::Expected a numeric Node version, got '$NODE_VERSION'"
+              echo "::error file=.nvmrc::Expected a numeric Node version, got '$NODE_VERSION'"
               exit 1
               ;;
           esac
-          echo "Building web image on Node $NODE_VERSION (from apps/web/.nvmrc)"
+          echo "Building web image on Node $NODE_VERSION (from .nvmrc)"
           docker build --build-arg NODE_VERSION="$NODE_VERSION" -t prompt-patrol-web:ci ./apps/web

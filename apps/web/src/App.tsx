@@ -1,38 +1,48 @@
-import { Login } from "./routes/Login";
-import { NotFound } from "./routes/NotFound";
+import LoginPage from "./pages/LoginPage";
+import CheckPage from "./pages/CheckPage";
+import UsersPage from "./pages/UsersPage";
+import AppShell from "./components/AppShell";
+import HistoryPage from "./pages/HistoryPage";
+import NotFoundPage from "./pages/NotFoundPage";
+import HistoryDetailPage from "./pages/HistoryDetailPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
-
-function Dashboard() {
-  return (
-    <div className="p-8">
-      Signed in.
-      <form method="post" action="/api/auth/logout" className="mt-4">
-        <button
-          type="submit"
-          className="rounded-lg bg-secondary text-secondary-foreground px-4 py-2 text-sm hover:bg-secondary-hover"
-        >
-          Sign Out
-        </button>
-      </form>
-    </div>
-  );
-}
+import TeachingAssistantsPage from "./pages/TeachingAssistantsPage";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route
-          path="/"
           element={
             <ProtectedRoute>
-              <Dashboard />
+              <AppShell />
             </ProtectedRoute>
           }
-        />
-        <Route path="*" element={<NotFound />} />
+        >
+          <Route index element={<Navigate to="/check" replace />} />
+          <Route path="check" element={<CheckPage />} />
+          <Route path="history" element={<HistoryPage />} />
+          <Route path="history/:id" element={<HistoryDetailPage />} />
+          <Route
+            path="teaching-assistants"
+            element={
+              <ProtectedRoute minRole="instructor">
+                <TeachingAssistantsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="users"
+            element={
+              <ProtectedRoute minRole="root_admin">
+                <UsersPage />
+              </ProtectedRoute>
+            }
+          />
+        </Route>
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   );

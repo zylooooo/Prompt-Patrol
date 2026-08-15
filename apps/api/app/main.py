@@ -1,3 +1,12 @@
+import logging
+import sys
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from sqlalchemy import text
+from contextlib import asynccontextmanager
+
 from config import (
     API_HOST,
     API_PORT,
@@ -7,15 +16,9 @@ from config import (
     SESSION_SECRET,
     configure_logging,
 )
-import sys
-import uvicorn
-import logging
 from db import engine
-from fastapi import FastAPI
-from sqlalchemy import text
 from middleware import RequestIdMiddleware
 from routes import auth_router, checks_router, users_router
-from contextlib import asynccontextmanager
 from starlette.middleware.sessions import SessionMiddleware
 
 configure_logging()
@@ -33,6 +36,7 @@ async def lifespan(_app: FastAPI):
     logger.info("Database connection verified.")
     yield
     await engine.dispose()
+
 
 # Initialize the FastAPI application.
 # docs/redoc/openapi.json are dev-only, prod shouldn't publicly expose the schema.
@@ -72,13 +76,13 @@ if DEV_AUTH_ENABLED:
         "keep the API bound to loopback."
     )
 
+
 # Health check endpoint
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint to verify that API is running."""
-    return {
-        "status": "healthy"
-    }
+    return {"status": "healthy"}
+
 
 # Run the server
 def run_app():
@@ -98,6 +102,7 @@ def run_app():
     except Exception:
         logger.exception("An unexpected error occured.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     run_app()

@@ -1,0 +1,7 @@
+$kind: http-request
+name: Soft Delete User
+url: "{{BASE_URL}}/api/users/a13d2cc1-7d6b-480c-82c0-b5d5c2d85e8b"
+method: DELETE
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+order: 2623093512342850

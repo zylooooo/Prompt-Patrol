@@ -3,11 +3,10 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # app/ is the sys.path root for this project (see main.py), not a package.
 # Locally it's a subdir of apps/api/; in the Docker image it's flattened

@@ -5,12 +5,11 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import SESSION_COOKIE_NAME, require_role
-from auth.oidc import oauth
+from auth import SESSION_COOKIE_NAME, oauth, require_role
 from config import ENTRA_CONFIGURED, ENTRA_REDIRECT_URI, ENTRA_TENANT_ID, FRONTEND_URL
 from db import get_db
-from models import UserRoleEnum, User
-from services import resolve_or_bind_user, create_session, revoke_session
+from models import User, UserRoleEnum
+from services import create_session, resolve_or_bind_user, revoke_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
