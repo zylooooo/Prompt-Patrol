@@ -2,16 +2,10 @@ import type { ReactNode } from "react";
 import { LOGIN_HINT_KEY } from "../../api/auth";
 import { ProtectedRoute } from "../ProtectedRoute";
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-
-/**
- * An idle session dies server-side (90 minutes) with nothing telling the
- * browser. The user finds out when a refetch bounces them here, so the bounce
- * has to explain itself rather than looking like a random logout.
- */
 
 const useAuthMock = vi.fn();
 vi.mock("../../hooks/useAuth", () => ({
@@ -19,6 +13,14 @@ vi.mock("../../hooks/useAuth", () => ({
 }));
 
 const refetch = vi.fn();
+
+const pendingAuth = {
+  user: null,
+  isPending: true,
+  isError: false,
+  error: null,
+  refetch,
+};
 
 const resolved = (user: unknown) => ({
   user,
@@ -62,6 +64,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  // In afterEach, not at the end of each test body: a test that fails before
+  // its last line would otherwise leave fake timers installed and take
+  // unrelated tests down with it.
+  vi.useRealTimers();
 });
 
 describe("ProtectedRoute", () => {
@@ -75,19 +81,30 @@ describe("ProtectedRoute", () => {
     expect(screen.getByText("protected content")).toBeDefined();
   });
 
-  it("renders nothing while the session is still resolving", () => {
-    useAuthMock.mockReturnValue({
-      user: null,
-      isPending: true,
-      isError: false,
-      error: null,
-    });
+  it("renders nothing for a session check that answers promptly", () => {
+    // A flash of the login page would state an answer the app does not have
+    // yet; a spinner for 30ms is just a flicker. Neither, briefly, is correct.
+    vi.useFakeTimers();
+    useAuthMock.mockReturnValue(pendingAuth);
 
     const { container } = renderGuarded();
+    act(() => void vi.advanceTimersByTime(200));
 
-    // Deliberate: a flash of the login page before the session resolves is
-    // worse than a blank frame.
     expect(container.textContent).toBe("");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows a labelled spinner once the check is visibly slow", () => {
+    vi.useFakeTimers();
+    useAuthMock.mockReturnValue(pendingAuth);
+
+    renderGuarded();
+    act(() => void vi.advanceTimersByTime(250));
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Checking your session",
+    );
+    expect(screen.queryByTestId("login")).toBeNull();
   });
 
   it("blames an expired session when this browser held one", () => {
