@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+src = ["app"]
+
+[tool.ruff.lint]
+# Default (E4/E7/E9/F) plus import sorting and pyupgrade — deliberately not
+# turning on stricter categories (e.g. B, E501) yet since that would force
+# a large reformatting pass unrelated to any actual bug.
+select = ["E4", "E7", "E9", "F", "I", "UP"]

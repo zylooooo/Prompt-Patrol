@@ -1,9 +1,8 @@
 import base64
 import binascii
-import uuid
 import logging
-
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +19,7 @@ async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User |
     Called from the callback route after Entra hands back claims.
 
     There's no self-service signup here, a users row has to already exist
-    for successful login. We try matching on entra_oid first, that's the normal 
+    for successful login. We try matching on entra_oid first, that's the normal
     path for every login after the first. If that misses, fall back to matching
     on email and bind the oid to that row, which is what lets an admin
     provision someone before they've ever logged in. No match on either one
@@ -56,7 +55,7 @@ async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) ->
         db (AsyncSession): The database session.
         actor (User): The user requesting the deletion, used for authorization checks.
         user_id (uuid.UUID): The ID of the user to delete.
-    
+
     Raises:
         PermissionError: If the actor is not authorized to delete the target user.
     """
@@ -70,14 +69,19 @@ async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) ->
     if target_user is None:
         logger.info("No target user found for soft deletion")
         return None
-    
+
     if actor.role == UserRoleEnum.instructor:
         if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
-            logger.warning("Actor %s with role %s cannot delete user ID: %s. Insufficient permissions.", actor.id, actor.role, user_id)
+            logger.warning(
+                "Actor %s with role %s cannot delete user ID: %s. Insufficient permissions.",
+                actor.id,
+                actor.role,
+                user_id,
+            )
             raise PermissionError(f"role {actor.role} may not delete user ID: {user_id}")
 
     # Soft delete the user and their sessions.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await db.execute(update(User).where(User.id == user_id).values(deleted_at=now))
     await db.execute(
         update(UserSession)
@@ -96,22 +100,18 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
         db (AsyncSession): The database session.
         actor (uuid.UUID): The ID of the user making the request, used for authorization.
         user_id (uuid.UUID): The ID of the user to fetch.
-    
+
     Returns:
         User | None: The user object if found and not soft-deleted, otherwise None.
     """
     logger.debug("Fetching user by ID: %s", user_id)
-    result = await db.execute(
-        select(User).where(
-            User.id == user_id, User.deleted_at.is_(None)
-        )
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
 
     if user is None:
         logger.debug("No user found with ID: %s or user is soft-deleted.", user_id)
         return None
-    
+
     logger.debug("Authorizationg check for actor: %s requesting user ID: %s", actor, user_id)
     if not _can_view_user(actor, user):
         logger.warning("Actor %s is not authorized to view user ID: %s", actor, user_id)
@@ -124,8 +124,8 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
 def _can_view_user(actor: User, target: User) -> bool:
     """
     Helper function to determine visibility of account.
-    root_admin sees everyone, everyone sees themselves, instructors see other 
-    instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin 
+    root_admin sees everyone, everyone sees themselves, instructors see other
+    instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin
     rows are never visible to a non-admin.
     """
     # Can consider changing the TA filtering logic if we eventually implemnet a join table
@@ -157,7 +157,7 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
         email (str): The email of the new user.
         role (UserRoleEnum): The role of the new user.
         actor (User): The user creating the new user, used for authorization checks.
-    
+
     Returns:
         User: The newly created user object.
 
@@ -174,7 +174,9 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
         logger.warning("Actor %s with role %s cannot create users. Insufficient permissions.", actor, actor.role)
         raise PermissionError(f"role {actor.role} may not provision any users")
     if actor.role == UserRoleEnum.instructor and role != UserRoleEnum.teaching_assistant:
-        logger.warning("Actor %s with role %s cannot create user with role %s. Insufficient permissions.", actor, actor.role, role)
+        logger.warning(
+            "Actor %s with role %s cannot create user with role %s. Insufficient permissions.", actor, actor.role, role
+        )
         raise PermissionError(f"role {actor.role} may not provision role {role}")
 
     existing = await db.execute(select(User).where(User.email == email))
@@ -227,7 +229,12 @@ async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID)
 
     if actor.role == UserRoleEnum.instructor:
         if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
-            logger.warning("Actor %s with role %s cannot restore user ID: %s. Insufficient permissions.", actor.id, actor.role, user_id)
+            logger.warning(
+                "Actor %s with role %s cannot restore user ID: %s. Insufficient permissions.",
+                actor.id,
+                actor.role,
+                user_id,
+            )
             raise PermissionError(f"role {actor.role} may not restore user ID: {user_id}")
 
     if target_user.deleted_at is None:

@@ -4,8 +4,9 @@ Revision ID: 0001_users_and_sessions
 Revises:
 Create Date: 2026-08-10
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0001_users_and_sessions"
 down_revision = None
@@ -22,18 +23,14 @@ def upgrade() -> None:
         sa.Column("role", sa.String(), nullable=False),
         sa.Column("provisioned_by", sa.Uuid(), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
-        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_table(
         "sessions",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("token_hash", sa.String(), nullable=False, unique=True),
         sa.Column("user_id", sa.Uuid(), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
-        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column(
             "last_active_at",
             sa.DateTime(timezone=True),

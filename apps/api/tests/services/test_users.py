@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from exceptions import EmailAlreadyExistsError, UserNotDeletedError
-from models import UserRoleEnum, User
+from models import User, UserRoleEnum
 from services.users_service import (
     _can_view_user,
     activate_user_by_id,

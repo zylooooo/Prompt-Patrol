@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
     # raw token so the caller can set it as the cookie, only the hash gets
     # written to the DB.
     raw_token = generate_session_token()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session_row = UserSession(
         id=uuid.uuid4(),
         token_hash=hash_token(raw_token),
@@ -37,7 +37,7 @@ async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
     # one it was, there's no reason for a caller to know why a session died.
     # A successful lookup bumps last_active_at, sliding the idle window.
     token_hash = hash_token(raw_token)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
         select(UserSession, User)
         .join(User, UserSession.user_id == User.id)
@@ -64,6 +64,6 @@ async def revoke_session(db: AsyncSession, raw_token: str) -> None:
     await db.execute(
         update(UserSession)
         .where(UserSession.token_hash == token_hash, UserSession.deleted_at.is_(None))
-        .values(deleted_at=datetime.now(timezone.utc))
+        .values(deleted_at=datetime.now(UTC))
     )
     await db.commit()

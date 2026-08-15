@@ -16,6 +16,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     deleted_at: datetime | None
 
+
 class UserCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 

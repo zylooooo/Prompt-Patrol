@@ -15,8 +15,7 @@ if ENTRA_CONFIGURED:
         # Single-tenant scoped, not /common - we don't want arbitrary Microsoft
         # accounts showing up in the login flow.
         server_metadata_url=(
-            f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}"
-            "/v2.0/.well-known/openid-configuration"
+            f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration"
         ),
         # code_challenge_method turns on PKCE (SHA256) alongside the confidential
         # client secret. Authlib handles generating/stashing the verifier and

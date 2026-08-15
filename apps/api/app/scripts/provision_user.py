@@ -4,7 +4,7 @@ import sys
 import uuid
 
 from db import async_session
-from models import UserRoleEnum, User
+from models import User, UserRoleEnum
 
 
 # Helper function to seed users into the database. Only for dev / seeding root admin.

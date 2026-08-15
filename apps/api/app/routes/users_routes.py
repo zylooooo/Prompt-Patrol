@@ -7,9 +7,8 @@ from auth.dependencies import require_role
 from db import get_db
 from exceptions import EmailAlreadyExistsError, UserNotDeletedError
 from models import User, UserRoleEnum
-from schemas import UserResponse, UserCreateRequest, UserListResponse
-from services import get_user_by_id, create_user, soft_delete_user, activate_user_by_id, list_users
-
+from schemas import UserCreateRequest, UserListResponse, UserResponse
+from services import activate_user_by_id, create_user, get_user_by_id, list_users, soft_delete_user
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -64,6 +63,7 @@ async def get_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return target
 
+
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def provision_user(
     create_request: UserCreateRequest,
@@ -87,11 +87,10 @@ async def provision_user(
         )
     return user
 
+
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
-    user_id: uuid.UUID,
-    actor: User = Depends(require_role(UserRoleEnum.instructor)),
-    db: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, actor: User = Depends(require_role(UserRoleEnum.instructor)), db: AsyncSession = Depends(get_db)
 ):
     """
     Soft delete a user. Authorization checks performed in service layer.
@@ -104,11 +103,10 @@ async def delete_user(
             detail="You are not authorized to delete this user.",
         )
 
+
 @router.post("/{user_id}/restore", response_model=UserResponse, status_code=status.HTTP_200_OK)
 async def restore_user(
-    user_id: uuid.UUID,
-    actor: User = Depends(require_role(UserRoleEnum.instructor)),
-    db: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, actor: User = Depends(require_role(UserRoleEnum.instructor)), db: AsyncSession = Depends(get_db)
 ):
     """
     Restore a soft-deleted user. Authorization checks performed in service layer.

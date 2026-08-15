@@ -1,4 +1,4 @@
-from .user_schema import UserResponse, UserCreateRequest, UserListResponse
+from .user_schema import UserCreateRequest, UserListResponse, UserResponse
 
 __all__ = [
     "UserResponse",

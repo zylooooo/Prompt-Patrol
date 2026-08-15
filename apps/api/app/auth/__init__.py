@@ -1,4 +1,4 @@
-from .dependencies import get_current_user, require_role, SESSION_COOKIE_NAME
+from .dependencies import SESSION_COOKIE_NAME, get_current_user, require_role
 from .oidc import oauth
 from .tokens import generate_session_token, hash_token
 
