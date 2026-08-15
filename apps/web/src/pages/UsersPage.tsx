@@ -1,3 +1,6 @@
+import SegmentedToggle, {
+  type SegmentedToggleOption,
+} from "../components/ui/SegmentedToggle";
 import {
   displayName,
   isActive,
@@ -11,9 +14,10 @@ import {
   useSupervision,
   useUsers,
 } from "../hooks/useUsers";
-import SegmentedToggle, {
-  type SegmentedToggleOption,
-} from "../components/ui/SegmentedToggle";
+import DataTable, {
+  TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
+  type DataTableColumn,
+} from "../components/ui/DataTable";
 import { useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
@@ -25,7 +29,6 @@ import Page, { PageFill } from "../components/ui/Page";
 import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
-import DataTable, { type DataTableColumn } from "../components/ui/DataTable";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
 type Filter = "all" | "instructors" | "assistants" | "unassigned";
@@ -46,7 +49,7 @@ const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
 ];
 
 export default function UsersPage() {
-  usePageTitle("Users");
+  usePageTitle("Manage All Accounts");
   const { user: actor } = useAuth();
   const { showToast } = useToast();
   const { data: users, isPending } = useUsers();
@@ -173,7 +176,7 @@ export default function UsersPage() {
       header: "Name",
       width: "minmax(0,1.2fr)",
       cell: (u) => (
-        <span className="truncate text-sm font-medium text-foreground">
+        <span className="min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground">
           {displayName(u)}
         </span>
       ),
@@ -183,7 +186,7 @@ export default function UsersPage() {
       header: "Email",
       width: "minmax(0,1.5fr)",
       cell: (u) => (
-        <span className="truncate font-mono text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground">
           {u.email}
         </span>
       ),
@@ -206,7 +209,7 @@ export default function UsersPage() {
       hideWhenCompact: true,
       cell: (u) => (
         <span
-          className={`truncate text-[13px] ${
+          className={`min-w-0 max-w-[11rem] truncate text-[13px] ${
             supervisorText(u) === "Unassigned"
               ? "font-medium text-disabled-foreground"
               : "text-muted-foreground"
@@ -219,7 +222,7 @@ export default function UsersPage() {
     {
       id: "status",
       header: "Status",
-      width: "minmax(0,0.8fr)",
+      width: "7rem",
       cell: (u) => (
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -235,7 +238,7 @@ export default function UsersPage() {
     {
       id: "actions",
       header: "",
-      width: "minmax(0,1.8fr)",
+      width: TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
       align: "right",
       cell: (u) => {
         const isSelf = actor?.email.toLowerCase() === u.email.toLowerCase();
@@ -285,7 +288,7 @@ export default function UsersPage() {
   return (
     <Page>
       <PageHeader
-        title="Users"
+        title="Manage All Accounts"
         subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
       />
 
@@ -361,12 +364,6 @@ export default function UsersPage() {
           </Button>
         </form>
 
-        <p className="mt-4 text-xs leading-relaxed text-disabled-foreground">
-          There is no password to share. The email has to match their SMU
-          account exactly, since that is what links the two together when they
-          first sign in with Microsoft.
-        </p>
-
         {error && (
           <p
             className="mt-4 rounded-md bg-danger-soft px-4 py-3 text-[13px] text-danger"
@@ -395,7 +392,7 @@ export default function UsersPage() {
           isLoading={isPending}
           loadingLabel="Loading accounts…"
           emptyState={
-            <p className="px-3 py-10 text-center text-sm text-disabled-foreground">
+            <p className="text-disabled-foreground">
               No accounts match this filter.
             </p>
           }

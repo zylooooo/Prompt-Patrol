@@ -117,6 +117,9 @@ jobs:
       - name: Build API image
         run: docker build -t prompt-patrol-api:ci ./apps/api
 
+      - name: Build detector image
+        run: docker build -t prompt-patrol-detector:ci ./apps/detector
+
       - name: Build web image
         run: |
           NODE_VERSION="$(tr -d '[:space:]' < .nvmrc)"

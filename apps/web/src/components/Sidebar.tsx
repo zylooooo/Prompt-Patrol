@@ -1,3 +1,4 @@
+import Wordmark from "./ui/Wordmark";
 import { Menu, X } from "lucide-react";
 import type { User } from "../api/auth";
 import { atLeastRole, ROLE_TEXT } from "../types";
@@ -104,15 +105,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
         }`}
       >
         <div className="flex shrink-0 items-start justify-between px-6 pt-9">
-          <div className="inline-block">
-            <p className="text-lg font-bold text-primary-foreground">
-              Prompt Patrol
-            </p>
-            <div
-              aria-hidden="true"
-              className="mt-2 h-[3px] w-full rounded-full bg-accent"
-            />
-          </div>
+          <Wordmark className="[&_.logo-accent]:fill-accent-border h-11 w-auto text-primary-foreground" />
           <button
             ref={closerRef}
             type="button"
@@ -170,7 +163,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
             <form method="post" action="/api/auth/logout">
               <button
                 type="submit"
-                className="rounded-sm text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
+                className="-my-1 rounded-sm py-1 text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
               >
                 Sign out
               </button>

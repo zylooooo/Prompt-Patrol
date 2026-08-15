@@ -6,7 +6,7 @@ backend only.
 
 ## Migrations
 
-```
+```bash
 docker exec prompt-patrol-api alembic upgrade head
 ```
 
@@ -19,7 +19,7 @@ work around.
 There is no self-service signup, so every account has to be allowlisted before
 its first sign-in.
 
-```
+```bash
 docker exec prompt-patrol-api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"
 ```
 

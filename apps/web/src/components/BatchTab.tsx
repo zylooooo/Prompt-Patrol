@@ -77,7 +77,7 @@ export default function BatchTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-xl border border-border bg-surface p-7">
+      <section className="rounded-xl bg-surface p-7 shadow-md">
         <div
           onDragOver={(e) => {
             e.preventDefault();

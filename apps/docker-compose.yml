@@ -18,6 +18,25 @@ services:
       timeout: 5s
       retries: 5
 
+  detector:
+    build:
+      context: ./detector
+      dockerfile: Dockerfile
+    container_name: prompt-patrol-detector
+    restart: unless-stopped
+    volumes:
+      # Persists the ~500MB model download across rebuilds - without this,
+      # every `--build` re-downloads it from Hugging Face.
+      - detector_model_cache:/home/detectoruser/.cache/huggingface
+    networks:
+      - prompt-patrol-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
   # Start FastAPI Application
   api:
     build:
@@ -39,6 +58,8 @@ services:
       - prompt-patrol-network
     depends_on:
       postgres:
+        condition: service_healthy
+      detector:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -69,3 +90,4 @@ networks:
 
 volumes:
   postgres_data:
+  detector_model_cache:

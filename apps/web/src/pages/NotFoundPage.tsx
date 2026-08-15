@@ -12,7 +12,7 @@ export default function NotFoundPage() {
     : { to: "/login", label: "Go to sign in" };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
+    <main className="flex min-h-screen items-center justify-center px-6 py-12">
       <section className="grid w-full max-w-4xl items-center gap-10 md:grid-cols-[auto_1fr] md:gap-16">
         <div className="flex justify-center text-foreground md:justify-end">
           <FourOhFour />

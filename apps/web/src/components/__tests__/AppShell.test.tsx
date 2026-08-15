@@ -1,9 +1,11 @@
 import AppShell from "../AppShell";
-import { Route } from "react-router-dom";
+import { StrictMode } from "react";
 import { renderRoute } from "../../test/render";
-import { cleanup, screen } from "@testing-library/react";
 import { installDomStubs } from "../../test/dom-stubs";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 /**
  * The shell's job is to be exactly one viewport tall and never scroll. jsdom
@@ -78,5 +80,52 @@ describe("AppShell — skip link", () => {
     expect(skip).not.toBeNull();
     expect(container.firstElementChild?.firstElementChild).toBe(skip);
     expect(screen.getByRole("main").id).toBe("main-content");
+  });
+});
+
+describe("AppShell — focus management", () => {
+  // The rest of this file pins classes; this one pins behaviour, because the
+  // regression it guards was invisible to a DOM-order assertion.
+  //
+  // StrictMode must wrap the *router*, exactly as main.tsx does. Nesting it
+  // inside the route element does not reproduce: React remounts that subtree and
+  // the refs come back fresh, so the double-effect never sees stale state.
+  const renderStrict = () =>
+    render(
+      <StrictMode>
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          <MemoryRouter initialEntries={["/check"]}>
+            <Routes>
+              <Route path="/" element={<AppShell />}>
+                <Route path="check" element={<p>page body</p>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+
+  it("does not pull focus into <main> on first render under StrictMode", () => {
+    // React 19 double-invokes effects in dev, and a "have I run once?" ref flag
+    // does not survive it: pass 1 clears the flag, pass 2 focuses <main>. Focus
+    // starting inside <main> moves the browser's sequential-focus start point
+    // past the skip link AND the whole sidebar, so the first Tab lands on page
+    // content and the nav comes last — confirmed in Chromium, where the skip
+    // link was reached 10th in dev and 1st in the production build. Comparing
+    // pathnames instead is idempotent under a repeated effect.
+    renderStrict();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("still leaves <main> focusable for the skip link to target", () => {
+    // Positive control: the fix must not work by making <main> unfocusable.
+    renderStrict();
+    const main = screen.getByRole("main");
+    main.focus();
+    expect(document.activeElement).toBe(main);
   });
 });

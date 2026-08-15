@@ -48,7 +48,7 @@ export default function SingleCheckTab() {
           e.preventDefault();
           onSubmit();
         }}
-        className="rounded-xl border border-border bg-surface p-7"
+        className="rounded-xl bg-surface p-7 shadow-md"
       >
         <div className="flex items-center justify-between">
           <label htmlFor="answer" className={LABEL_CLASS}>

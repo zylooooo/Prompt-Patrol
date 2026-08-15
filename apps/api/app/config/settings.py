@@ -25,6 +25,8 @@ DB_URL: str = _require_env("DB_URL")
 
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+DETECTOR_URL: str = os.getenv("DETECTOR_URL", "http://detector:8001")
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
 VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
