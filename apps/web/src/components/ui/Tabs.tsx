@@ -111,7 +111,7 @@ export default function Tabs<T extends string>({
               aria-controls={`panel-${tab.value}`}
               tabIndex={isActive ? 0 : -1}
               onClick={() => onChange(tab.value)}
-              className={`relative ${optionClass} font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/40 ${
+              className={`relative ${optionClass} font-medium transition-colors focus-visible:bg-accent-soft focus-visible:text-foreground ${
                 isActive
                   ? "text-accent"
                   : "text-muted-foreground hover:text-foreground"

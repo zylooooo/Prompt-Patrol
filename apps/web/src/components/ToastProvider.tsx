@@ -36,7 +36,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => setMessage(null)}
-            className="animate-toastIn flex items-center gap-3 rounded-lg bg-primary py-3 pr-5 pl-4 text-sm text-primary-foreground shadow-lg transition focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
+            className="animate-toastIn flex items-center gap-3 rounded-lg bg-primary py-3 pr-5 pl-4 text-sm text-primary-foreground shadow-lg transition focus-visible:bg-primary-hover"
           >
             <span
               aria-hidden

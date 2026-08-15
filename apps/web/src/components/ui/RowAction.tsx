@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 const ROW_ACTION_CLASS =
-  "cursor-pointer rounded-md px-2.5 py-[5px] text-[13px] text-primary transition-colors hover:bg-primary-soft focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 disabled:pointer-events-none disabled:opacity-45";
+  "cursor-pointer rounded-md px-2.5 py-[5px] text-[13px] text-primary transition-colors hover:bg-primary-soft focus-visible:bg-primary-soft disabled:pointer-events-none disabled:opacity-45";
 
 interface RowActionProps {
   onClick: () => void;

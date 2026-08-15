@@ -40,12 +40,12 @@ export default function SearchInput({
     size === "sm"
       ? `w-full rounded-md border border-border py-1.5 pl-7 ${
           hideClear || !filled ? "pr-2" : "pr-7"
-        } text-sm font-medium text-foreground outline-hidden transition-colors placeholder:font-normal placeholder:text-disabled-foreground focus:outline-hidden focus:ring-0 ${
+        } text-sm font-medium text-foreground outline-hidden transition-colors placeholder:font-normal placeholder:text-disabled-foreground focus-visible:bg-accent-soft ${
           filled ? "bg-modal-muted" : "bg-surface hover:bg-modal-muted"
         }`
       : `h-9 w-full rounded-lg border border-border pl-9 ${
           hideClear || !filled ? "pr-3" : "pr-9"
-        } text-sm font-medium text-foreground outline-hidden transition-colors placeholder:font-normal placeholder:text-disabled-foreground focus:outline-hidden focus:ring-0 ${
+        } text-sm font-medium text-foreground outline-hidden transition-colors placeholder:font-normal placeholder:text-disabled-foreground focus-visible:bg-accent-soft ${
           filled ? "bg-modal-muted" : "bg-surface hover:bg-modal-muted"
         }`;
 

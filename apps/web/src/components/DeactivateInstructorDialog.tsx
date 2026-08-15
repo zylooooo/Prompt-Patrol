@@ -85,8 +85,10 @@ export default function DeactivateInstructorDialog({
     extra?: ReactNode,
   ) => (
     <label
-      className={`block cursor-pointer rounded-lg border px-3.5 py-3 focus-within:ring-2 focus-within:ring-focus-ring/30 ${
-        mode === value ? "border-primary bg-primary-soft" : "border-border"
+      className={`block cursor-pointer rounded-lg border px-3.5 py-3 ${
+        mode === value
+          ? "border-primary bg-primary-soft focus-within:bg-accent-border/60"
+          : "border-border focus-within:bg-accent-soft"
       }`}
     >
       <span className="flex items-start gap-3">

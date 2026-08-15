@@ -115,14 +115,22 @@ describe("Button — states that must not lie about interactivity", () => {
     expect(cls).toContain("disabled:opacity-60");
   });
 
-  it("rings on keyboard focus only, like every other primitive in ui/", () => {
-    // A bare `focus:ring` left a ring behind after a mouse click; Dropdown,
-    // Pagination, RowAction, TextButton, Tabs and TokenMultiSelect all use
-    // focus-visible.
-    render(<Button>x</Button>);
-    const cls = screen.getByRole("button").className.split(/\s+/);
-    expect(cls).toContain("focus-visible:ring-2");
-    expect(cls.filter((c) => /^focus:ring/.test(c))).toEqual([]);
+  it("shows focus as a fill change, never a ring", () => {
+    // Every variant adopts its own hover fill on keyboard focus. Rings and
+    // outlines are banned app-wide — see src/__tests__/focus-indicators.test.ts.
+    for (const variant of VARIANTS) {
+      cleanup();
+      render(<Button variant={variant}>x</Button>);
+      const cls = screen.getByRole("button").className.split(/\s+/);
+      expect(
+        cls.filter((c) => /^focus-visible:bg-/.test(c)),
+        `${variant} shows nothing on focus`,
+      ).toHaveLength(1);
+      expect(
+        cls.filter((c) => /^focus(-visible)?:(ring|outline)-/.test(c)),
+        `${variant} draws a ring`,
+      ).toEqual([]);
+    }
   });
 });
 

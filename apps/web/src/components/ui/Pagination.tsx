@@ -115,7 +115,7 @@ function PagerButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-muted-foreground"
+      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground focus-visible:bg-accent-soft focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-surface disabled:hover:text-muted-foreground"
     >
       {children}
     </button>
@@ -147,7 +147,7 @@ function PageNumberButton({
       className={
         isCurrent
           ? "inline-flex h-8 min-w-[2rem] items-center justify-center rounded-md bg-primary px-2 text-sm font-semibold text-primary-foreground"
-          : "inline-flex h-8 min-w-[2rem] items-center justify-center rounded-md border border-transparent px-2 text-sm font-medium text-muted-foreground transition-colors hover:border-border hover:bg-surface-muted focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30 disabled:cursor-not-allowed disabled:opacity-40"
+          : "inline-flex h-8 min-w-[2rem] items-center justify-center rounded-md border border-transparent px-2 text-sm font-medium text-muted-foreground transition-colors hover:border-border hover:bg-surface-muted focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
       }
     >
       {page}

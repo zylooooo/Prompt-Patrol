@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 export type TextTone = "primary" | "muted";
 
 const TEXT_BASE =
-  "rounded-sm underline-offset-2 transition-colors hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
+  "rounded-sm underline-offset-2 transition-colors hover:underline focus-visible:underline";
 
 const TONE: Record<TextTone, string> = {
   primary: "text-primary",

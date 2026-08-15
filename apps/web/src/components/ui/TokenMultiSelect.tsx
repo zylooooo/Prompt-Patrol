@@ -71,7 +71,7 @@ export default function TokenMultiSelect({
                 type="button"
                 aria-label={`Remove ${labelFor(value)}`}
                 onClick={() => onChange(selected.filter((v) => v !== value))}
-                className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
+                className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:bg-accent-soft focus-visible:text-foreground"
               >
                 <X aria-hidden className="h-3 w-3" />
               </button>
@@ -84,7 +84,7 @@ export default function TokenMultiSelect({
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-controls={popoverId}
-          className="flex flex-1 items-center justify-between gap-2 self-stretch rounded-sm px-1 text-left focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30"
+          className="flex flex-1 items-center justify-between gap-2 self-stretch rounded-sm px-1 text-left focus-visible:bg-accent-soft"
         >
           {selected.length === 0 && (
             <span className="text-sm text-input-placeholder">
@@ -113,7 +113,7 @@ export default function TokenMultiSelect({
           {choices.map((choice) => (
             <label
               key={choice.value}
-              className={`flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-focus-ring/30 ${
+              className={`flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm focus-within:bg-accent-soft ${
                 selected.includes(choice.value)
                   ? "bg-surface-muted font-medium text-foreground"
                   : "text-foreground"

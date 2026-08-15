@@ -140,7 +140,7 @@ export default function DataTable<T>({
                   <button
                     type="button"
                     onClick={() => onSort?.(c.sortKey!)}
-                    className={`group inline-flex min-w-0 items-center gap-1 text-left uppercase tracking-wide transition-colors hover:text-foreground focus:outline-hidden focus-visible:text-foreground ${
+                    className={`group inline-flex min-w-0 items-center gap-1 text-left uppercase tracking-wide transition-colors hover:text-foreground focus-visible:text-foreground ${
                       isActiveSort ? "text-foreground" : ""
                     }`}
                   >

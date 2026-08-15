@@ -8,7 +8,7 @@ import { useCheckAnswer } from "../hooks/useChecks";
 import { ANSWER_MIN_CHARS, type Strictness } from "../types";
 
 const FIELD_CLASS =
-  "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
+  "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
 const LABEL_CLASS =
   "text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";

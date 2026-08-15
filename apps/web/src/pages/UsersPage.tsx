@@ -38,7 +38,7 @@ const FILTERS: SegmentedToggleOption<Filter>[] = [
 ];
 
 const FIELD =
-  "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus:outline-hidden focus:ring-2 focus:ring-focus-ring/30";
+  "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
 const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
   { value: "instructor", label: "Instructor" },

@@ -21,19 +21,19 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "font-medium text-primary-foreground bg-primary enabled:hover:bg-primary-hover focus-visible:ring-focus-ring/30 border border-transparent",
+    "font-medium text-primary-foreground bg-primary enabled:hover:bg-primary-hover focus-visible:bg-primary-hover border border-transparent",
   secondary:
-    "font-medium text-foreground bg-surface enabled:hover:bg-surface-muted focus-visible:ring-focus-ring/30 border border-border shadow-xs",
+    "font-medium text-foreground bg-surface enabled:hover:bg-surface-muted focus-visible:bg-accent-soft border border-border shadow-xs",
   destructive:
-    "font-medium text-danger-foreground bg-danger enabled:hover:bg-danger-hover focus-visible:ring-danger/30 border border-transparent",
+    "font-medium text-danger-foreground bg-danger enabled:hover:bg-danger-hover focus-visible:bg-danger-hover border border-transparent",
   destructiveOutline:
-    "font-medium text-danger bg-surface enabled:hover:bg-danger-soft focus-visible:ring-danger/30 border border-danger/40 shadow-xs",
+    "font-medium text-danger bg-surface enabled:hover:bg-danger-soft focus-visible:bg-danger-soft border border-danger/40 shadow-xs",
   ghost:
-    "text-muted-foreground enabled:hover:bg-surface-strong enabled:hover:text-foreground focus-visible:ring-focus-ring/30 border border-transparent",
+    "text-muted-foreground enabled:hover:bg-surface-strong enabled:hover:text-foreground focus-visible:bg-accent-soft focus-visible:text-foreground border border-transparent",
 };
 
 const BASE_CLASSES =
-  "inline-flex items-center justify-center gap-2 rounded-lg transition focus:outline-hidden focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center gap-2 rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60";
 
 function buttonClasses(
   variant: ButtonVariant,

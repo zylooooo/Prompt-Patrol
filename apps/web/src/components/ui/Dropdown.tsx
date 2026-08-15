@@ -66,7 +66,7 @@ interface DropdownProps<T> {
 }
 
 const TRIGGER_BASE =
-  "inline-flex items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/30";
+  "inline-flex items-center gap-2 rounded-lg border bg-surface px-3 text-sm font-medium transition-colors focus-visible:bg-accent-soft";
 
 const TRIGGER_SIZE = {
   md: "h-9",
@@ -529,7 +529,7 @@ export default function Dropdown<T>({
                         setQuery("");
                         setIsOpen(false);
                       }}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-accent transition-colors hover:bg-surface-muted focus:outline-hidden focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-accent transition-colors hover:bg-surface-muted focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
                     >
                       <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
                       <span className="flex-1 truncate text-left">
@@ -548,7 +548,7 @@ export default function Dropdown<T>({
                         topAction.onClick();
                         setIsOpen(false);
                       }}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-muted focus:outline-hidden focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
                     >
                       {topAction.leading}
                       <span className="flex-1 truncate text-left">
@@ -683,7 +683,7 @@ function Row({
   children: ReactNode;
   trailing?: ReactNode;
 }) {
-  const baseRowClass = `flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus:outline-hidden focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent ${
+  const baseRowClass = `flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent ${
     isSelected
       ? "bg-surface-muted hover:bg-surface-muted"
       : "hover:bg-surface-muted"
@@ -700,7 +700,7 @@ function Row({
           aria-selected={isSelected}
           disabled={disabled}
           onClick={onClick}
-          className="flex flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus:outline-hidden focus-visible:bg-surface-muted disabled:cursor-not-allowed disabled:text-disabled-foreground"
+          className="flex flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground"
         >
           {children}
         </button>

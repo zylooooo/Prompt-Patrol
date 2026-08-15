@@ -82,7 +82,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
         aria-controls={SIDEBAR_ID}
         className={`${
           isDrawerOpen ? "hidden" : "inline-flex"
-        } fixed top-3 left-3 z-50 h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-md transition-colors hover:bg-primary-hover focus:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring/40 md:hidden`}
+        } fixed top-3 left-3 z-50 h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-md transition-colors hover:bg-primary-hover focus-visible:bg-primary-hover md:hidden`}
       >
         <Menu className="h-5 w-5" aria-hidden="true" />
       </button>
@@ -118,7 +118,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
             type="button"
             onClick={close}
             aria-label="Close navigation"
-            className="-mr-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-primary-foreground/70 transition-colors hover:text-primary-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/60 md:hidden"
+            className="-mr-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-primary-foreground/70 transition-colors hover:text-primary-foreground focus-visible:bg-accent/30 focus-visible:text-primary-foreground md:hidden"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
@@ -134,7 +134,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
                 <NavLink
                   to={item.to}
                   className={({ isActive }) =>
-                    `flex items-center gap-3 rounded-md py-2 text-sm transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                    `flex items-center gap-3 rounded-md py-2 text-sm transition-colors focus-visible:bg-accent/30 focus-visible:text-primary-foreground ${
                       isActive
                         ? "font-semibold text-primary-foreground"
                         : "text-primary-foreground/70 hover:text-primary-foreground"
@@ -170,7 +170,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
             <form method="post" action="/api/auth/logout">
               <button
                 type="submit"
-                className="rounded-sm text-accent-soft transition-colors hover:text-primary-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/60"
+                className="rounded-sm text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
               >
                 Sign out
               </button>

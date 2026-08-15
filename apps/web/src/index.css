@@ -114,16 +114,17 @@
 }
 
 @layer base {
-  /* v4 defaults the border colour to `currentColor`; v3 defaulted to a theme
-     grey, which `borderColor.DEFAULT` overrode. Dropdown's trigger uses a bare
-     `border`, so restore the old behaviour globally rather than annotating
-     individual call sites. */
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
     border-color: var(--color-border);
+  }
+
+  :focus,
+  :focus-visible {
+    outline: none;
   }
 
   html {
@@ -136,8 +137,6 @@
   }
 }
 
-/* Unlayered on purpose: `!important` here outranks the utilities that would
-   otherwise run --animate-fadeInUp and --animate-fadeIn. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
