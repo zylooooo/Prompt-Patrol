@@ -5,9 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import require_role
 from db import get_db
+from exceptions import EmailAlreadyExistsError
 from models import User, UserRoleEnum
-from schemas import UserResponse
+from schemas import UserResponse, UserCreateRequest
 from services import get_user_by_id
+from services.users_service import create_user
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -33,3 +35,29 @@ async def get_user(
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return target
+
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def provision_user(
+    create_request: UserCreateRequest,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delegation-scoped: root_admin provisions instructors, instructor
+    provisions teaching_assistants. require_role(instructor) above already
+    blocks TAs; the service layer re-checks role delegation (and always
+    rejects role=root_admin) as the source of truth for authorization.
+    """
+    try:
+        user = await create_user(db, create_request.email, create_request.role, actor)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to create a user with this role.",
+        )
+    except EmailAlreadyExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        )
+    return user

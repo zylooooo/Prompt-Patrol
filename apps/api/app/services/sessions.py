@@ -4,9 +4,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.tokens import generate_session_token, hash_token
-from models import User
-from models.session import UserSession
+from auth import generate_session_token, hash_token
+from models import User, UserSession
 
 # 30 min sliding idle timeout, 4h hard cap that never gets extended.
 SESSION_ABSOLUTE_TTL = timedelta(hours=4)

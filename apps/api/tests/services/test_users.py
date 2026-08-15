@@ -1,9 +1,16 @@
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from exceptions import EmailAlreadyExistsError
 from models import UserRoleEnum, User
-from services.users_service import _can_view_user, resolve_or_bind_user, soft_delete_user
+from services.users_service import (
+    _can_view_user,
+    create_user,
+    resolve_or_bind_user,
+    soft_delete_user,
+)
 
 
 def _user(role, provisioned_by=None):
@@ -123,3 +130,97 @@ async def test_soft_delete_user_cascades_to_sessions(db_session):
     await soft_delete_user(db_session, user.id)
 
     assert await authenticate_session(db_session, raw_token) is None
+
+
+@pytest.mark.asyncio
+async def test_root_admin_creates_instructor(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, "new-instructor@smu.edu.sg", UserRoleEnum.instructor, admin)
+
+    assert created.email == "new-instructor@smu.edu.sg"
+    assert created.role == UserRoleEnum.instructor
+    assert created.provisioned_by == admin.id
+
+
+@pytest.mark.asyncio
+async def test_instructor_creates_ta(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+
+    created = await create_user(db_session, "new-ta@smu.edu.sg", UserRoleEnum.teaching_assistant, instructor)
+
+    assert created.role == UserRoleEnum.teaching_assistant
+    assert created.provisioned_by == instructor.id
+
+
+@pytest.mark.asyncio
+async def test_ta_cannot_create_any_user(db_session):
+    ta = _user(UserRoleEnum.teaching_assistant)
+    db_session.add(ta)
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await create_user(db_session, "nope@smu.edu.sg", UserRoleEnum.teaching_assistant, ta)
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_create_instructor(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await create_user(db_session, "peer@smu.edu.sg", UserRoleEnum.instructor, instructor)
+
+
+@pytest.mark.asyncio
+async def test_root_admin_cannot_create_root_admin(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await create_user(db_session, "another-admin@smu.edu.sg", UserRoleEnum.root_admin, admin)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_email_raises_conflict(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    existing = User(id=uuid.uuid4(), email="taken@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add_all([admin, existing])
+    await db_session.commit()
+
+    with pytest.raises(EmailAlreadyExistsError):
+        await create_user(db_session, "taken@smu.edu.sg", UserRoleEnum.instructor, admin)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_email_raises_conflict_even_if_soft_deleted(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    existing = User(
+        id=uuid.uuid4(),
+        email="gone@smu.edu.sg",
+        role=UserRoleEnum.instructor,
+        deleted_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+    db_session.add_all([admin, existing])
+    await db_session.commit()
+
+    with pytest.raises(EmailAlreadyExistsError):
+        await create_user(db_session, "gone@smu.edu.sg", UserRoleEnum.instructor, admin)
+
+
+@pytest.mark.asyncio
+async def test_create_user_persists_row(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, "persisted@smu.edu.sg", UserRoleEnum.instructor, admin)
+
+    result = await db_session.execute(select(User).where(User.id == created.id))
+    assert result.scalar_one_or_none() is not None

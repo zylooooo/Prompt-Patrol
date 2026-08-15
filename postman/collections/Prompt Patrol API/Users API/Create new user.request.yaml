@@ -1,0 +1,16 @@
+$kind: http-request
+name: Create new user
+url: "{{BASE_URL}}/api/users"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: "{\r
+
+    \    \"email\": \"instructor@email.com\",\r
+
+    \    \"role\": \"instructor\"\r
+
+    }"
+order: 1437751017783928

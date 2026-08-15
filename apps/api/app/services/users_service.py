@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exceptions import EmailAlreadyExistsError
 from models import User, UserRoleEnum
 from models.session import UserSession
 
@@ -92,10 +93,12 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
 
 
 def _can_view_user(actor: User, target: User) -> bool:
-    """Helper function to determine visibility of account.
+    """
+    Helper function to determine visibility of account.
     root_admin sees everyone, everyone sees themselves, instructors see other 
     instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin 
-    rows are never visible to a non-admin."""
+    rows are never visible to a non-admin.
+    """
     # Can consider changing the TA filtering logic if we eventually implemnet a join table
     # to better store relationships between instructors and TAs.
     if actor.role == UserRoleEnum.root_admin:
@@ -111,3 +114,46 @@ def _can_view_user(actor: User, target: User) -> bool:
             return True
         return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.provisioned_by
     return False
+
+
+async def create_user(db: AsyncSession, email: str, role: UserRoleEnum, actor: User) -> User:
+    """
+    Creates a new user in the database, per the delegation chain:
+    root_admin -> instructor, instructor -> teaching_assistant, TA -> nobody.
+    `role=root_admin` is rejected regardless of actor - there is exactly one,
+    created only by the seed migration.
+
+    Args:
+        db (AsyncSession): The database session.
+        email (str): The email of the new user.
+        role (UserRoleEnum): The role of the new user.
+        actor (User): The user creating the new user, used for authorization checks.
+
+    Raises:
+        PermissionError: actor's role may not provision the requested role.
+        EmailAlreadyExistsError: a users row already exists for this email.
+    """
+    logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
+
+    if role == UserRoleEnum.root_admin:
+        logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor)
+        raise PermissionError("root_admin cannot be provisioned via this endpoint")
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s with role %s cannot create users. Insufficient permissions.", actor, actor.role)
+        raise PermissionError(f"role {actor.role} may not provision any users")
+    if actor.role == UserRoleEnum.instructor and role != UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s with role %s cannot create user with role %s. Insufficient permissions.", actor, actor.role, role)
+        raise PermissionError(f"role {actor.role} may not provision role {role}")
+
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none() is not None:
+        logger.warning("Attempted to provision duplicate email: %s", email)
+        raise EmailAlreadyExistsError(email)
+
+    user = User(email=email, role=role, provisioned_by=actor.id)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info("User created successfully")
+
+    return user
