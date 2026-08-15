@@ -17,7 +17,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  
+
   # Start FastAPI Application
   api:
     build:
@@ -30,9 +30,10 @@ services:
     ports:
       # Loopback only. Nothing needs this on other interfaces - the frontend
       # container reaches the API over the compose network and the Vite dev
-      # proxy reaches it via localhost - while DEV_AUTH_ENABLED would
-      # otherwise let anyone on the same network sign in as a provisioned
-      # user. Drop the 127.0.0.1 prefix only for deliberate LAN testing.
+      # proxy reaches it via localhost. Keep it even though the password-less
+      # dev login (the original reason for this line) is gone: the API still
+      # terminates sessions over plain HTTP locally, so it should not be
+      # exposed to the LAN. Drop the prefix only for deliberate LAN testing.
       - 127.0.0.1:8000:8000
     networks:
       - prompt-patrol-network
@@ -45,7 +46,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-  
+
   # Frontend
   frontend:
     build:

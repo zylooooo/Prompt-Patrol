@@ -6,20 +6,15 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import SESSION_COOKIE_NAME, oauth, require_role
-from config import ENTRA_CONFIGURED, ENTRA_REDIRECT_URI, ENTRA_TENANT_ID, FRONTEND_URL
+from config import ENTRA_REDIRECT_URI, ENTRA_TENANT_ID, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
 from services import create_session, resolve_or_bind_user, revoke_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# The Entra-backed endpoints live on their own router so they can be left
-# unmounted when no app registration is configured. oauth.entra doesn't exist
-# in that case, so mounting them would 500 on the first request.
-entra_router = APIRouter()
 
-
-@entra_router.get("/login")
+@router.get("/login")
 async def login(request: Request, login_hint: str | None = None):
     """
     Redirects to Microsoft's authorize endpoint. Authlib stashes the PKCE
@@ -31,7 +26,7 @@ async def login(request: Request, login_hint: str | None = None):
     return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, **kwargs)
 
 
-@entra_router.get("/callback")
+@router.get("/callback")
 async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Validates state and PKCE verifier against ppauthflow, redeems the code
@@ -42,23 +37,17 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.entra.authorize_access_token(request)
     except OAuthError:
-        # Stale or replayed callback. Send them back to try again.
         return RedirectResponse(url="/api/auth/login", status_code=status.HTTP_303_SEE_OTHER)
     claims = token["userinfo"]
     email = claims.get("email") or claims["preferred_username"]
 
-    # Role comes from our own users table, never from Entra claims/groups.
     user = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
     if user is None:
-        # Authenticated with Entra, just not provisioned an account in the app.
-        # Redirect to the frontend login page so it can explain what happened.
         return RedirectResponse(
             url=f"{FRONTEND_URL}/login?error=not_provisioned",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    # Authenticated and provisioned: issue the session cookie that binds the
-    # browser to this user.
     raw_token = await create_session(db, user.id)
     response = RedirectResponse(url=FRONTEND_URL, status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
@@ -84,14 +73,10 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)):
     if raw_token:
         await revoke_session(db, raw_token)
 
-    if ENTRA_CONFIGURED:
-        logout_url = (
-            f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v2.0/logout"
-            f"?post_logout_redirect_uri={quote(FRONTEND_URL, safe='')}"
-        )
-    else:
-        # Nothing to sign out of upstream, just bounce back to the frontend.
-        logout_url = FRONTEND_URL
+    logout_url = (
+        f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v2.0/logout"
+        f"?post_logout_redirect_uri={quote(FRONTEND_URL, safe='')}"
+    )
     response = RedirectResponse(url=logout_url, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(
         SESSION_COOKIE_NAME,
@@ -111,7 +96,3 @@ async def me(user: User = Depends(require_role(UserRoleEnum.teaching_assistant))
     bootstrap its auth state. Returns basic user info only.
     """
     return {"email": user.email, "role": user.role}
-
-
-if ENTRA_CONFIGURED:
-    router.include_router(entra_router)

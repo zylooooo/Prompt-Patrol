@@ -2,10 +2,8 @@ from .settings import (
     API_HOST,
     API_PORT,
     DB_URL,
-    DEV_AUTH_ENABLED,
     ENTRA_CLIENT_ID,
     ENTRA_CLIENT_SECRET,
-    ENTRA_CONFIGURED,
     ENTRA_REDIRECT_URI,
     ENTRA_TENANT_ID,
     ENVIRONMENT,
@@ -14,7 +12,6 @@ from .settings import (
     SESSION_SECRET,
     configure_logging,
     request_id_ctx_var,
-    resolve_dev_auth_enabled,
 )
 
 __all__ = [
@@ -22,16 +19,13 @@ __all__ = [
     "API_PORT",
     "configure_logging",
     "DB_URL",
-    "DEV_AUTH_ENABLED",
     "ENTRA_CLIENT_ID",
     "ENTRA_CLIENT_SECRET",
-    "ENTRA_CONFIGURED",
     "ENTRA_REDIRECT_URI",
     "ENTRA_TENANT_ID",
     "ENVIRONMENT",
     "FRONTEND_URL",
     "LOG_LEVEL",
     "request_id_ctx_var",
-    "resolve_dev_auth_enabled",
     "SESSION_SECRET",
 ]
