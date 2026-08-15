@@ -11,5 +11,3 @@ pytest-asyncio==1.4.0
 httpx==0.28.1
 aiosqlite==0.22.1
 ruff==0.14.5
-transformers==4.55.4
-torch==2.8.0

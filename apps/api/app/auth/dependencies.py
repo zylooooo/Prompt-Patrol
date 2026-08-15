@@ -6,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import ENVIRONMENT
 from db import get_db
 from models import User, UserRoleEnum
-from services.sessions import authenticate_session
-from services.users_service import get_user_by_id
 
 SESSION_COOKIE_NAME = "__Host-session"
 GATEWAY_USER_ID_HEADER = "X-PP-User-Id"
@@ -28,6 +26,9 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     and SG rules. In dev, it validates the session cookie directly and returns
     the user object.
     """
+    from services.sessions import authenticate_session
+    from services.users_service import get_user_by_id
+
     if ENVIRONMENT != "dev":
         raw_id = request.headers.get(GATEWAY_USER_ID_HEADER)
         if raw_id is None:

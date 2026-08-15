@@ -1,14 +1,14 @@
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from db import get_db
-from detection.baseline import Score
 from main import app
 from models import User, UserRoleEnum
 from routes.checks import require_any_user
+from services.detector_client import Score
 
 
 @pytest.fixture
@@ -44,7 +44,10 @@ async def test_create_check_happy_path(client, db_session):
     user = User(id=uuid.uuid4(), email="ta@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
     _authed_request(client, user)
 
-    with patch("services.checks.score_text", return_value=Score(raw_score=0.9, truncated=False)):
+    with patch(
+        "services.checks.score_text",
+        new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
+    ):
         response = client.post(
             "/api/checks",
             json={"answer_text": AI_LIKE, "strictness": "standard"},
@@ -65,7 +68,10 @@ async def test_create_check_abstains_on_short_answer(client, db_session):
     user = User(id=uuid.uuid4(), email="ta2@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
     _authed_request(client, user)
 
-    with patch("services.checks.score_text", return_value=Score(raw_score=0.9, truncated=False)):
+    with patch(
+        "services.checks.score_text",
+        new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
+    ):
         response = client.post(
             "/api/checks",
             json={"answer_text": "too short reply"},

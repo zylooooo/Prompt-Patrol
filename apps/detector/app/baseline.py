@@ -8,7 +8,7 @@ MODEL_VERSION = "roberta-base-openai-detector-v0"
 MODEL_NAME = "openai-community/roberta-base-openai-detector"
 MAX_TOKENS = 512
 
-_AI_LABEL = "fake" 
+_AI_LABEL = "fake"
 
 
 @dataclass(frozen=True)

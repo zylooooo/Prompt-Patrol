@@ -3,9 +3,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from starlette.concurrency import run_in_threadpool
-
-from detection import MODEL_VERSION, score_text
+from services.detector_client import MODEL_VERSION, score_text
 
 DETECTOR_TIMEOUT_SECONDS = 10
 
@@ -57,9 +55,7 @@ async def create_check(
 ) -> dict:
     start = time.perf_counter()
     try:
-        result = await asyncio.wait_for(
-            run_in_threadpool(score_text, answer_text), timeout=DETECTOR_TIMEOUT_SECONDS
-        )
+        result = await asyncio.wait_for(score_text(answer_text), timeout=DETECTOR_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         raise DetectorTimeoutError from exc
     except Exception as exc:
