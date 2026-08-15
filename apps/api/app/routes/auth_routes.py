@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import quote
 
 from authlib.integrations.base_client.errors import OAuthError
@@ -11,17 +12,22 @@ from db import get_db
 from models import User, UserRoleEnum
 from services import create_session, resolve_or_bind_user, revoke_session
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+ENTRA_USER_CANCELLED = "access_denied"
+
+
+def _login_redirect(error_code: str) -> RedirectResponse:
+    return RedirectResponse(
+        url=f"{FRONTEND_URL}/login?error={error_code}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.get("/login")
 async def login(request: Request, login_hint: str | None = None):
-    """
-    Redirects to Microsoft's authorize endpoint. Authlib stashes the PKCE
-    code_verifier and OAuth state in the ppauthflow session cookie so
-    /callback can validate the response later. login_hint just pre-fills the
-    Microsoft sign-in form, it's not something we trust for identity.
-    """
     kwargs = {"login_hint": login_hint} if login_hint else {}
     return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, **kwargs)
 
@@ -36,17 +42,22 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     """
     try:
         token = await oauth.entra.authorize_access_token(request)
-    except OAuthError:
-        return RedirectResponse(url="/api/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+    except OAuthError as exc:
+        if exc.error == ENTRA_USER_CANCELLED:
+            logger.info("Entra sign-in cancelled by the user.")
+            return _login_redirect("sign_in_cancelled")
+        logger.warning(
+            "Entra callback rejected (error=%s, description=%s).",
+            exc.error,
+            exc.description,
+        )
+        return _login_redirect("sign_in_failed")
     claims = token["userinfo"]
     email = claims.get("email") or claims["preferred_username"]
 
     user = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
     if user is None:
-        return RedirectResponse(
-            url=f"{FRONTEND_URL}/login?error=not_provisioned",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
+        return _login_redirect("not_provisioned")
 
     raw_token = await create_session(db, user.id)
     response = RedirectResponse(url=FRONTEND_URL, status_code=status.HTTP_303_SEE_OTHER)

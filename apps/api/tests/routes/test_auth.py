@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from authlib.integrations.base_client.errors import OAuthError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -92,6 +93,58 @@ async def test_me_with_valid_session_returns_user(client, db_session):
 
     assert response.status_code == 200
     assert response.json() == {"email": "loggedin@smu.edu.sg", "role": "instructor"}
+
+
+def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
+    # Regression: this used to redirect to /api/auth/login, which re-enters the
+    # Entra redirect immediately - a user who cancelled was thrown back at the
+    # prompt they had just dismissed and could never reach our own login page.
+    error = OAuthError(error="access_denied", description="user cancelled")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_cancelled"
+    assert "__Host-session" not in response.cookies
+
+
+def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
+    error = OAuthError(error="mismatching_state", description="CSRF Warning!")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_failed"
+    assert "__Host-session" not in response.cookies
+
+
+def test_callback_never_redirects_back_into_the_entra_flow(client):
+    # The loop guard. No callback failure may point the browser at a URL that
+    # restarts the OIDC redirect - the user must always land somewhere with a
+    # way out.
+    for error in (
+        OAuthError(error="access_denied", description="user cancelled"),
+        OAuthError(error="mismatching_state", description="CSRF Warning!"),
+        OAuthError(description='Missing "state" parameter'),
+    ):
+        with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+            response = client.get("/api/auth/callback", follow_redirects=False)
+
+        assert "/api/auth/login" not in response.headers["location"]
+        assert response.headers["location"].startswith(f"{FRONTEND_URL}/login?error=")
+
+
+def test_callback_does_not_reflect_entra_error_text_into_the_url(client):
+    # error_description is provider-controlled. It must never reach a URL the
+    # browser lands on.
+    error = OAuthError(error="invalid_client", description="<script>alert(1)</script>")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    location = response.headers["location"]
+    assert "script" not in location
+    assert "invalid_client" not in location
+    assert location == f"{FRONTEND_URL}/login?error=sign_in_failed"
 
 
 @pytest.mark.asyncio

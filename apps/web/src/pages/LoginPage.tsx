@@ -15,6 +15,10 @@ const LABEL_CLASS =
 const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   not_provisioned:
     "Your Microsoft account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
+  sign_in_cancelled:
+    "Sign-in was cancelled, so you aren't signed in. Use the button below when you're ready to try again.",
+  sign_in_failed:
+    "We couldn't complete sign-in with Microsoft. This usually means the sign-in page was left open too long. Start again below.",
 };
 
 function LoginHero() {
