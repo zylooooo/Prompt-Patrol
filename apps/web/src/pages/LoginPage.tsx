@@ -139,7 +139,7 @@ export default function LoginPage() {
     : null;
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen">
       <LoginHero />
 
       <div className="flex w-full items-center justify-center px-6 py-10 lg:w-1/3 lg:px-8 xl:w-1/4">

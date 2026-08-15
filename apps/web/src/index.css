@@ -133,6 +133,18 @@
 
   body {
     background-color: var(--color-background);
+    background-image:
+      radial-gradient(
+        circle at 18% 18%,
+        color-mix(in oklab, var(--color-accent) 7%, transparent),
+        transparent 38%
+      ),
+      radial-gradient(
+        circle at 82% 72%,
+        color-mix(in oklab, var(--color-primary) 4%, transparent),
+        transparent 34%
+      );
+    background-attachment: fixed;
     color: var(--color-foreground);
   }
 }
