@@ -8,6 +8,7 @@ import { useState } from "react";
 import { ApiError } from "../api/client";
 import Button from "../components/ui/Button";
 import { LOGIN_HINT_KEY } from "../hooks/useAuth";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 const DEV_BUILD = import.meta.env.DEV;
@@ -20,6 +21,12 @@ const INPUT_CLASS =
 
 const LABEL_CLASS =
   "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
+
+// Keyed by the ?error= value /api/auth/callback redirects here with.
+const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
+  not_provisioned:
+    "Your Microsoft account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
+};
 
 function useDevAuth() {
   return useQuery({
@@ -121,6 +128,13 @@ export function Login() {
     devAuthInfo !== null && !devAuthInfo.entra_configured;
   const [entraError, setEntraError] = useState<string | null>(null);
 
+  const [searchParams] = useSearchParams();
+  const redirectError = searchParams.get("error");
+  const redirectErrorMessage = redirectError
+    ? (REDIRECT_ERROR_MESSAGES[redirectError] ??
+      "Sign-in failed. Please try again.")
+    : null;
+
   return (
     <div className="flex min-h-screen bg-background">
       <LoginHero />
@@ -135,6 +149,15 @@ export function Login() {
               Sign in to Prompt Patrol
             </h2>
           </header>
+
+          {redirectErrorMessage && (
+            <div
+              role="alert"
+              className="mb-5 rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
+            >
+              {redirectErrorMessage}
+            </div>
+          )}
 
           <form
             method="get"
