@@ -13,7 +13,7 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 # Provides an async database session which is automatically closed after the request is done.
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     async with async_session() as session:
         try:
             yield session

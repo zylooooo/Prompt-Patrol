@@ -1,0 +1,7 @@
+$kind: http-request
+name: Get user by ID
+url: "{{BASE_URL}}/api/users/ace4ecfa-cc44-48e5-b4be-c74a6d65f786"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+order: 1786779468941

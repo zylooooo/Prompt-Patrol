@@ -14,6 +14,7 @@ class UserSession(Base):
     The session is associated with a user and is used to track authentication.
     After a user authenticates with Entra ID, a session is created and managed in this table.
     """
+
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)

@@ -2,13 +2,13 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from config import ENTRA_CONFIGURED, FRONTEND_URL
 from db import get_db
 from main import app
-from models import UserRoleEnum, User, UserSession
+from models import User, UserRoleEnum, UserSession
 from services import create_session
 
 needs_entra = pytest.mark.skipif(
@@ -104,6 +104,4 @@ def test_stale_cookie_on_protected_route_returns_401(client):
 
 def test_entra_routes_mounted_only_when_configured():
     entra_paths = {"/api/auth/login", "/api/auth/callback"} & set(app.openapi()["paths"])
-    assert entra_paths == (
-        {"/api/auth/login", "/api/auth/callback"} if ENTRA_CONFIGURED else set()
-    )
+    assert entra_paths == ({"/api/auth/login", "/api/auth/callback"} if ENTRA_CONFIGURED else set())
