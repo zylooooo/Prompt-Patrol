@@ -7,6 +7,7 @@ import {
 import { useState } from "react";
 import { ApiError } from "../api/client";
 import Button from "../components/ui/Button";
+import Wordmark from "../components/ui/Wordmark";
 import { LOGIN_HINT_KEY } from "../hooks/useAuth";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -22,7 +23,6 @@ const INPUT_CLASS =
 const LABEL_CLASS =
   "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
 
-// Keyed by the ?error= value /api/auth/callback redirects here with.
 const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   not_provisioned:
     "Your Microsoft account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
@@ -113,8 +113,12 @@ function LoginHero() {
       style={{ backgroundImage: `url("${HERO_IMAGE_URL}")` }}
     >
       <div className="absolute inset-0 bg-foreground/55" />
-      <div className="relative z-10 flex max-w-2xl flex-col justify-end p-12 text-disabled-foreground">
-        <h1 className="text-5xl font-bold tracking-normal">Prompt Patrol</h1>
+      <div className="relative z-10 flex max-w-2xl flex-col justify-end p-12 text-primary-foreground">
+        <Wordmark
+          role="heading"
+          aria-level={1}
+          className="[&_.logo-accent]:fill-accent-border h-24 w-auto"
+        />
       </div>
     </div>
   );
@@ -141,10 +145,11 @@ export default function LoginPage() {
       <div className="flex w-full items-center justify-center px-6 py-10 lg:w-1/3 lg:px-8 xl:w-1/4">
         <div className="w-full max-w-sm">
           <header className="mb-8">
-            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-accent">
+            <Wordmark className="mb-6 h-14 w-auto text-foreground lg:hidden" />
+            <p className="mb-3 text-xs font-bold tracking-wider text-accent uppercase">
               AI-Answer Triage for Instructors
             </p>
-            <h2 className="text-3xl font-bold leading-tight tracking-tight text-foreground">
+            <h2 className="text-3xl leading-tight font-bold tracking-tight text-foreground">
               Sign in to Prompt Patrol
             </h2>
           </header>

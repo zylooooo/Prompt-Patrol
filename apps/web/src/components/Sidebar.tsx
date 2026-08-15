@@ -105,7 +105,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
         }`}
       >
         <div className="flex shrink-0 items-start justify-between px-6 pt-9">
-          <Wordmark className="h-11 w-auto text-primary-foreground" />
+          <Wordmark className="[&_.logo-accent]:fill-accent-border h-11 w-auto text-primary-foreground" />
           <button
             ref={closerRef}
             type="button"
