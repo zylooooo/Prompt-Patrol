@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from models import UserRoleEnum, User
-from services.users_service import can_view_user, resolve_or_bind_user, soft_delete_user
+from services.users_service import _can_view_user, resolve_or_bind_user, soft_delete_user
 
 
 def _user(role, provisioned_by=None):
@@ -13,32 +13,32 @@ def _user(role, provisioned_by=None):
 def test_root_admin_sees_everyone():
     admin = _user(UserRoleEnum.root_admin)
     other_admin = _user(UserRoleEnum.root_admin)
-    assert can_view_user(admin, other_admin) is True
+    assert _can_view_user(admin, other_admin) is True
 
 
 def test_everyone_sees_themselves():
     ta = _user(UserRoleEnum.teaching_assistant)
-    assert can_view_user(ta, ta) is True
+    assert _can_view_user(ta, ta) is True
 
 
 def test_root_admin_invisible_to_non_admin():
     instructor = _user(UserRoleEnum.instructor)
     admin = _user(UserRoleEnum.root_admin)
-    assert can_view_user(instructor, admin) is False
+    assert _can_view_user(instructor, admin) is False
 
 
 def test_instructor_sees_other_instructor_and_ta():
     instructor = _user(UserRoleEnum.instructor)
     other_instructor = _user(UserRoleEnum.instructor)
     ta = _user(UserRoleEnum.teaching_assistant)
-    assert can_view_user(instructor, other_instructor) is True
-    assert can_view_user(instructor, ta) is True
+    assert _can_view_user(instructor, other_instructor) is True
+    assert _can_view_user(instructor, ta) is True
 
 
 def test_ta_sees_any_instructor():
     ta = _user(UserRoleEnum.teaching_assistant)
     instructor = _user(UserRoleEnum.instructor)
-    assert can_view_user(ta, instructor) is True
+    assert _can_view_user(ta, instructor) is True
 
 
 def test_ta_sees_sibling_ta_same_provisioner_only():
@@ -47,8 +47,8 @@ def test_ta_sees_sibling_ta_same_provisioner_only():
     ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor_id)
     sibling_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor_id)
     unrelated_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor_id)
-    assert can_view_user(ta, sibling_ta) is True
-    assert can_view_user(ta, unrelated_ta) is False
+    assert _can_view_user(ta, sibling_ta) is True
+    assert _can_view_user(ta, unrelated_ta) is False
 
 
 @pytest.mark.asyncio

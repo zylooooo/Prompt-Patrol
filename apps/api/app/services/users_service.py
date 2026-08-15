@@ -58,12 +58,13 @@ async def soft_delete_user(db: AsyncSession, user_id: uuid.UUID) -> None:
     await db.commit()
 
 
-async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
+async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
     """
     Fetches a user by their ID. Returns None if the user doesn't exist or has been soft-deleted.
 
     Args:
         db (AsyncSession): The database session.
+        actor (uuid.UUID): The ID of the user making the request, used for authorization.
         user_id (uuid.UUID): The ID of the user to fetch.
     
     Returns:
@@ -80,12 +81,17 @@ async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     if user is None:
         logger.debug("No user found with ID: %s or user is soft-deleted.", user_id)
         return None
+    
+    logger.debug("Authorizationg check for actor: %s requesting user ID: %s", actor, user_id)
+    if not _can_view_user(actor, user):
+        logger.warning("Actor %s is not authorized to view user ID: %s", actor, user_id)
+        return None
 
     logger.info("User fetched successfully")
     return user
 
 
-def can_view_user(actor: User, target: User) -> bool:
+def _can_view_user(actor: User, target: User) -> bool:
     """Helper function to determine visibility of account.
     root_admin sees everyone, everyone sees themselves, instructors see other 
     instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin 

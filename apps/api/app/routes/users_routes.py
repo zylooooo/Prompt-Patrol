@@ -7,7 +7,7 @@ from auth.dependencies import require_role
 from db import get_db
 from models import User, UserRoleEnum
 from schemas import UserResponse
-from services import can_view_user, get_user_by_id
+from services import get_user_by_id
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -29,7 +29,7 @@ async def get_user(
     can be read. Both "doesn't exist" and "exists but not visible to this actor"
     return 404, to prevent enumeration attacks.
     """
-    target = await get_user_by_id(db, user_id)
-    if target is None or not can_view_user(actor, target):
+    target = await get_user_by_id(db, actor, user_id)
+    if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return target
