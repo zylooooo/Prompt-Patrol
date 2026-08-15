@@ -1,15 +1,22 @@
-from contextlib import asynccontextmanager
-
+from config import (
+    API_HOST,
+    API_PORT,
+    DEV_AUTH_ENABLED,
+    ENVIRONMENT,
+    LOG_LEVEL,
+    SESSION_SECRET,
+    configure_logging,
+)
+import sys
+import uvicorn
+import logging
+from db import engine
 from fastapi import FastAPI
 from sqlalchemy import text
-from starlette.middleware.sessions import SessionMiddleware
-from config import API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL, SESSION_SECRET, configure_logging
-from db import engine
 from middleware import RequestIdMiddleware
 from routes import auth_router, users_router
-import uvicorn
-import sys
-import logging
+from contextlib import asynccontextmanager
+from starlette.middleware.sessions import SessionMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -27,7 +34,7 @@ async def lifespan(_app: FastAPI):
     yield
     await engine.dispose()
 
-# Initialize FastAPI app
+# Initialize the FastAPI application.
 # docs/redoc/openapi.json are dev-only, prod shouldn't publicly expose the schema.
 _docs_enabled = ENVIRONMENT == "dev"
 app = FastAPI(
@@ -38,6 +45,7 @@ app = FastAPI(
     redoc_url="/redoc" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
 # This is Starlette's own signed-cookie session ("ppauthflow"), it only
 # carries the OAuth state + PKCE verifier across the Entra redirect. It's not
 # the same thing as SESSION_COOKIE_NAME, which is our own post-login session.
@@ -52,6 +60,16 @@ app.add_middleware(
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
 app.include_router(users_router)
+
+if DEV_AUTH_ENABLED:
+    from routes.dev_auth import router as dev_auth_router
+
+    app.include_router(dev_auth_router)
+    logger.warning(
+        "DEV LOGIN ENABLED: /api/auth/dev/* will issue a real session to any "
+        "provisioned email with no identity check. Local development only - "
+        "keep the API bound to loopback."
+    )
 
 # Health check endpoint
 @app.get("/health")

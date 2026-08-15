@@ -1,24 +1,26 @@
-import { useEffect, useState } from "react";
-
-type User = { email: string; role: string };
+import { useEffect } from "react";
+import { getCurrentUser, authKeys } from "../api/auth";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const LOGIN_HINT_KEY = "pp_login_hint";
 
+export const sessionQueryOptions = () =>
+  queryOptions({
+    queryKey: authKeys.session(),
+    queryFn: ({ signal }) => getCurrentUser(signal),
+  });
+
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: user,
+    isPending,
+    isError,
+    error,
+  } = useQuery(sessionQueryOptions());
 
   useEffect(() => {
-    fetch("/api/auth/me", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((u: User | null) => {
-        setUser(u);
-        // Not a credential, just a UX convenience so Entra can pre-fill the
-        // email field on the next login (see login_hint on /api/auth/login).
-        if (u?.email) localStorage.setItem(LOGIN_HINT_KEY, u.email);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    if (user?.email) localStorage.setItem(LOGIN_HINT_KEY, user.email);
+  }, [user?.email]);
 
-  return { user, loading };
+  return { user: user ?? null, isPending, isError, error };
 }

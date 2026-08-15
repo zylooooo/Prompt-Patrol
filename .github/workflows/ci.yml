@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   lint-backend:
     runs-on: ubuntu-latest
@@ -39,15 +43,18 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "25"
+          node-version-file: apps/web/.nvmrc
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run oxlint
+      - name: Run ESLint
         run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -83,9 +90,6 @@ jobs:
       - name: Run unit tests
         run: pytest
 
-  # Build-only smoke test: catches broken Dockerfiles/build scripts before merge.
-  # No registry push yet since there's no deploy target. Once one exists, push
-  # these images to GHCR (or ECR, per CLAUDE.md's deploy target) here instead.
   docker-build:
     runs-on: ubuntu-latest
     needs: [unit-tests, lint-frontend]
@@ -97,4 +101,13 @@ jobs:
         run: docker build -t prompt-patrol-api:ci ./apps/api
 
       - name: Build web image
-        run: docker build -t prompt-patrol-web:ci ./apps/web
+        run: |
+          NODE_VERSION="$(tr -d '[:space:]' < apps/web/.nvmrc)"
+          case "$NODE_VERSION" in
+            '' | *[!0-9.]*)
+              echo "::error file=apps/web/.nvmrc::Expected a numeric Node version, got '$NODE_VERSION'"
+              exit 1
+              ;;
+          esac
+          echo "Building web image on Node $NODE_VERSION (from apps/web/.nvmrc)"
+          docker build --build-arg NODE_VERSION="$NODE_VERSION" -t prompt-patrol-web:ci ./apps/web
