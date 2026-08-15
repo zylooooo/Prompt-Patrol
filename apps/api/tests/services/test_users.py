@@ -13,8 +13,9 @@ from services.users_service import (
 )
 
 
-def _user(role, provisioned_by=None):
-    return User(id=uuid.uuid4(), email=f"{role.value}@smu.edu.sg", role=role, provisioned_by=provisioned_by)
+def _user(role, provisioned_by=None, email=None):
+    uid = uuid.uuid4()
+    return User(id=uid, email=email or f"{role.value}-{uid}@smu.edu.sg", role=role, provisioned_by=provisioned_by)
 
 
 def test_root_admin_sees_everyone():
@@ -122,14 +123,114 @@ async def test_soft_deleted_user_not_resolved(db_session):
 async def test_soft_delete_user_cascades_to_sessions(db_session):
     from services import authenticate_session, create_session
 
+    admin = _user(UserRoleEnum.root_admin)
     user = User(id=uuid.uuid4(), email="b@smu.edu.sg", entra_oid="oid-b", role=UserRoleEnum.instructor)
-    db_session.add(user)
+    db_session.add_all([admin, user])
     await db_session.commit()
     raw_token = await create_session(db_session, user.id)
 
-    await soft_delete_user(db_session, user.id)
+    await soft_delete_user(db_session, admin, user.id)
 
     assert await authenticate_session(db_session, raw_token) is None
+
+
+@pytest.mark.asyncio
+async def test_ta_cannot_delete_any_user(db_session):
+    ta = _user(UserRoleEnum.teaching_assistant)
+    target = _user(UserRoleEnum.teaching_assistant)
+    db_session.add_all([ta, target])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await soft_delete_user(db_session, ta, target.id)
+
+
+@pytest.mark.asyncio
+async def test_root_admin_can_delete_anyone(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    target = _user(UserRoleEnum.instructor)
+    db_session.add_all([admin, target])
+    await db_session.commit()
+
+    await soft_delete_user(db_session, admin, target.id)
+
+    await db_session.refresh(target)
+    assert target.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_instructor_can_delete_own_ta(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    db_session.add(ta)
+    await db_session.commit()
+
+    await soft_delete_user(db_session, instructor, ta.id)
+
+    await db_session.refresh(ta)
+    assert ta.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_delete_unrelated_ta(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    other_instructor_id = uuid.uuid4()
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor_id)
+    db_session.add_all([instructor, ta])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await soft_delete_user(db_session, instructor, ta.id)
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_delete_instructor(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _user(UserRoleEnum.instructor)
+    db_session.add_all([instructor, other_instructor])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await soft_delete_user(db_session, instructor, other_instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_delete_root_admin(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add_all([instructor, admin])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await soft_delete_user(db_session, instructor, admin.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_user_is_noop(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    # No exception, and no row created either - this is idempotent-delete
+    # semantics, not an authorization decision.
+    await soft_delete_user(db_session, admin, uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_delete_already_deleted_user_is_noop(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    target = User(
+        id=uuid.uuid4(),
+        email="already-gone@smu.edu.sg",
+        role=UserRoleEnum.instructor,
+        deleted_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+    db_session.add_all([admin, target])
+    await db_session.commit()
+
+    await soft_delete_user(db_session, admin, target.id)
 
 
 @pytest.mark.asyncio
@@ -138,7 +239,7 @@ async def test_root_admin_creates_instructor(db_session):
     db_session.add(admin)
     await db_session.commit()
 
-    created = await create_user(db_session, "new-instructor@smu.edu.sg", UserRoleEnum.instructor, admin)
+    created = await create_user(db_session, admin, "new-instructor@smu.edu.sg", UserRoleEnum.instructor)
 
     assert created.email == "new-instructor@smu.edu.sg"
     assert created.role == UserRoleEnum.instructor
@@ -151,7 +252,7 @@ async def test_instructor_creates_ta(db_session):
     db_session.add(instructor)
     await db_session.commit()
 
-    created = await create_user(db_session, "new-ta@smu.edu.sg", UserRoleEnum.teaching_assistant, instructor)
+    created = await create_user(db_session, instructor, "new-ta@smu.edu.sg", UserRoleEnum.teaching_assistant)
 
     assert created.role == UserRoleEnum.teaching_assistant
     assert created.provisioned_by == instructor.id
@@ -164,7 +265,7 @@ async def test_ta_cannot_create_any_user(db_session):
     await db_session.commit()
 
     with pytest.raises(PermissionError):
-        await create_user(db_session, "nope@smu.edu.sg", UserRoleEnum.teaching_assistant, ta)
+        await create_user(db_session, ta, "nope@smu.edu.sg", UserRoleEnum.teaching_assistant)
 
 
 @pytest.mark.asyncio
@@ -174,7 +275,7 @@ async def test_instructor_cannot_create_instructor(db_session):
     await db_session.commit()
 
     with pytest.raises(PermissionError):
-        await create_user(db_session, "peer@smu.edu.sg", UserRoleEnum.instructor, instructor)
+        await create_user(db_session, instructor, "peer@smu.edu.sg", UserRoleEnum.instructor)
 
 
 @pytest.mark.asyncio
@@ -184,7 +285,7 @@ async def test_root_admin_cannot_create_root_admin(db_session):
     await db_session.commit()
 
     with pytest.raises(PermissionError):
-        await create_user(db_session, "another-admin@smu.edu.sg", UserRoleEnum.root_admin, admin)
+        await create_user(db_session, admin, "another-admin@smu.edu.sg", UserRoleEnum.root_admin)
 
 
 @pytest.mark.asyncio
@@ -195,7 +296,7 @@ async def test_duplicate_email_raises_conflict(db_session):
     await db_session.commit()
 
     with pytest.raises(EmailAlreadyExistsError):
-        await create_user(db_session, "taken@smu.edu.sg", UserRoleEnum.instructor, admin)
+        await create_user(db_session, admin, "taken@smu.edu.sg", UserRoleEnum.instructor)
 
 
 @pytest.mark.asyncio
@@ -211,7 +312,7 @@ async def test_duplicate_email_raises_conflict_even_if_soft_deleted(db_session):
     await db_session.commit()
 
     with pytest.raises(EmailAlreadyExistsError):
-        await create_user(db_session, "gone@smu.edu.sg", UserRoleEnum.instructor, admin)
+        await create_user(db_session, admin, "gone@smu.edu.sg", UserRoleEnum.instructor)
 
 
 @pytest.mark.asyncio
@@ -220,7 +321,7 @@ async def test_create_user_persists_row(db_session):
     db_session.add(admin)
     await db_session.commit()
 
-    created = await create_user(db_session, "persisted@smu.edu.sg", UserRoleEnum.instructor, admin)
+    created = await create_user(db_session, admin, "persisted@smu.edu.sg", UserRoleEnum.instructor)
 
     result = await db_session.execute(select(User).where(User.id == created.id))
     assert result.scalar_one_or_none() is not None

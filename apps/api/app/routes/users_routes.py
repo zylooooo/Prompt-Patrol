@@ -8,8 +8,8 @@ from db import get_db
 from exceptions import EmailAlreadyExistsError
 from models import User, UserRoleEnum
 from schemas import UserResponse, UserCreateRequest
-from services import get_user_by_id
-from services.users_service import create_user
+from services import get_user_by_id, create_user, soft_delete_user
+
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -43,13 +43,10 @@ async def provision_user(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Delegation-scoped: root_admin provisions instructors, instructor
-    provisions teaching_assistants. require_role(instructor) above already
-    blocks TAs; the service layer re-checks role delegation (and always
-    rejects role=root_admin) as the source of truth for authorization.
+    Create new user endpoint. Authorization checks performed in service layer.
     """
     try:
-        user = await create_user(db, create_request.email, create_request.role, actor)
+        user = await create_user(db, actor, create_request.email, create_request.role)
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -61,3 +58,20 @@ async def provision_user(
             detail="A user with this email already exists.",
         )
     return user
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: uuid.UUID,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Soft delete a user. Authorization checks performed in service layer.
+    """
+    try:
+        await soft_delete_user(db, actor, user_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to delete this user.",
+        )

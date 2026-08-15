@@ -225,6 +225,7 @@ __marimo__/
 .claude/*
 docs/superpowers/*
 .firecrawl/*
+CLAUDE.md
 
 # AI context documentation — local only, never shared
 docs/ai-context/

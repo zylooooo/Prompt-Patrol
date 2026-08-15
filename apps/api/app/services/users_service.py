@@ -43,12 +43,38 @@ async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User |
     return user
 
 
-async def soft_delete_user(db: AsyncSession, user_id: uuid.UUID) -> None:
+async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) -> None:
     """
     Marks the user deleted_at and revokes (soft-deletes) all their
     sessions in the same operation, so a deactivated account can't keep
-    using a still-live cookie.
+    using a still-live cookie. Root admins can delete any user, instructors can only
+    delete TAs they provisoned, and TAs can't delete anyone.
+
+    Args:
+        db (AsyncSession): The database session.
+        actor (User): The user requesting the deletion, used for authorization checks.
+        user_id (uuid.UUID): The ID of the user to delete.
+    
+    Raises:
+        PermissionError: If the actor is not authorized to delete the target user.
     """
+    logger.debug("Attempting to soft delete user with ID: %s by actor: %s", user_id, actor.id)
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s attempted to delete a user. Insufficient permissions.", actor.id)
+        raise PermissionError(f"role {actor.role} may not delete any users")
+
+    result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
+    target_user = result.scalar_one_or_none()
+    if target_user is None:
+        logger.info("No target user found for soft deletion")
+        return None
+    
+    if actor.role == UserRoleEnum.instructor:
+        if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
+            logger.warning("Actor %s with role %s cannot delete user ID: %s. Insufficient permissions.", actor.id, actor.role, user_id)
+            raise PermissionError(f"role {actor.role} may not delete user ID: {user_id}")
+
+    # Soft delete the user and their sessions.
     now = datetime.now(timezone.utc)
     await db.execute(update(User).where(User.id == user_id).values(deleted_at=now))
     await db.execute(
@@ -57,6 +83,7 @@ async def soft_delete_user(db: AsyncSession, user_id: uuid.UUID) -> None:
         .values(deleted_at=now)
     )
     await db.commit()
+    logger.info("Successfully deleted user.")
 
 
 async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
@@ -116,7 +143,7 @@ def _can_view_user(actor: User, target: User) -> bool:
     return False
 
 
-async def create_user(db: AsyncSession, email: str, role: UserRoleEnum, actor: User) -> User:
+async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleEnum) -> User:
     """
     Creates a new user in the database, per the delegation chain:
     root_admin -> instructor, instructor -> teaching_assistant, TA -> nobody.
@@ -128,6 +155,9 @@ async def create_user(db: AsyncSession, email: str, role: UserRoleEnum, actor: U
         email (str): The email of the new user.
         role (UserRoleEnum): The role of the new user.
         actor (User): The user creating the new user, used for authorization checks.
+    
+    Returns:
+        User: The newly created user object.
 
     Raises:
         PermissionError: actor's role may not provision the requested role.

@@ -5,7 +5,6 @@ import uuid
 
 from db import async_session
 from models import UserRoleEnum, User
-from services import soft_delete_user
 
 
 # Helper function to seed users into the database. Only for dev / seeding root admin.
@@ -20,9 +19,15 @@ async def add_user(email: str, role: str) -> None:
 
 
 async def delete_user(user_id: str) -> None:
+    """Hard delete a user from the database."""
     async with async_session() as db:
-        await soft_delete_user(db, uuid.UUID(user_id))
-        print(f"Soft-deleted user {user_id} and revoked their sessions")
+        user = await db.get(User, uuid.UUID(user_id))
+        if user is None:
+            print(f"No user found with ID {user_id}")
+            return
+        await db.delete(user)
+        await db.commit()
+        print(f"Deleted user {user.email} ({user.id})")
 
 
 def main() -> None:
