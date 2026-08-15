@@ -13,7 +13,7 @@ const SECTION_LABEL =
   "text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
 
 export default function HistoryDetailPage() {
-  usePageTitle("History entry");
+  usePageTitle("Check details");
   const { id } = useParams<{ id: string }>();
   const { data: entry, isPending } = useEntry(id);
 

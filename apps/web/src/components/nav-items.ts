@@ -8,11 +8,11 @@ export interface NavItem {
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/check", label: "Check answers" },
-  { to: "/history", label: "History" },
+  { to: "/history", label: "Past checks" },
   {
     to: "/teaching-assistants",
-    label: "Teaching assistants",
+    label: "My teaching assistants",
     minRole: "instructor",
   },
-  { to: "/users", label: "Users", minRole: "root_admin" },
+  { to: "/users", label: "All accounts", minRole: "root_admin" },
 ];

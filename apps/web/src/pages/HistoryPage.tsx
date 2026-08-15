@@ -57,7 +57,7 @@ function matchesDays(entry: HistoryEntry, days: number): boolean {
 }
 
 export default function HistoryPage() {
-  usePageTitle("History");
+  usePageTitle("Past checks");
   const navigate = useNavigate();
   const { data, isPending } = useHistory();
   const [filter, setFilter] = useState<Filter>("all");
@@ -167,7 +167,7 @@ export default function HistoryPage() {
   return (
     <Page>
       <PageHeader
-        title="History"
+        title="Past checks"
         subtitle="Every check is stored with its score, verdict, and model version."
         actions={<ModelStatusBadge />}
       />

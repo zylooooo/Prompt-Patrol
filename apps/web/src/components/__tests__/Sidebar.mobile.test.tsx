@@ -149,11 +149,14 @@ describe("Sidebar drawer — dismissal", () => {
     // the user just asked for.
     renderDrawer();
     await userEvent.click(opener());
+    // Selected by href, not label — this test is about the drawer closing, so a
+    // copy change in nav-items should not fail it.
     await userEvent.click(
-      within(screen.getByRole("navigation", { name: "Primary" })).getByRole(
-        "link",
-        { name: "History" },
-      ),
+      within(
+        screen.getByRole("navigation", { name: "Primary" }),
+      ).getByRole<HTMLAnchorElement>("link", {
+        name: (_, el) => el.getAttribute("href") === "/history",
+      }),
     );
     expect(aside().hasAttribute("inert")).toBe(true);
   });

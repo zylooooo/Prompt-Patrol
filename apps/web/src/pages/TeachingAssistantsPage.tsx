@@ -30,7 +30,7 @@ const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
 export default function TeachingAssistantsPage() {
-  usePageTitle("Teaching assistants");
+  usePageTitle("My teaching assistants");
   const { user: session } = useAuth();
   const { showToast } = useToast();
   const { data: assistants, isPending, isError, refetch } = useMyAssistants();
@@ -213,7 +213,7 @@ export default function TeachingAssistantsPage() {
   return (
     <Page>
       <PageHeader
-        title="Teaching assistants"
+        title="My teaching assistants"
         subtitle="Accounts you supervise. They can screen answers for your courses."
       />
 
