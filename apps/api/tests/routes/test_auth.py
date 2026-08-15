@@ -1,16 +1,15 @@
 import uuid
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 from fastapi.testclient import TestClient
 
-from config import ENTRA_CONFIGURED
+from config import ENTRA_CONFIGURED, FRONTEND_URL
 from db import get_db
 from main import app
 from models import UserRoleEnum, User, UserSession
-from services.sessions import create_session
+from services import create_session
 
 needs_entra = pytest.mark.skipif(
     not ENTRA_CONFIGURED,
@@ -36,7 +35,7 @@ async def test_callback_creates_session_for_provisioned_user(client, db_session)
     await db_session.commit()
 
     fake_token = {"userinfo": {"oid": "oid-prov", "email": "prov@smu.edu.sg"}}
-    with patch("routes.auth.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
@@ -49,12 +48,14 @@ async def test_callback_creates_session_for_provisioned_user(client, db_session)
 
 @needs_entra
 @pytest.mark.asyncio
-async def test_callback_rejects_unprovisioned_user(client, db_session):
+async def test_callback_redirects_unprovisioned_user(client, db_session):
     fake_token = {"userinfo": {"oid": "oid-x", "email": "nobody@smu.edu.sg"}}
-    with patch("routes.auth.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=not_provisioned"
+    assert "__Host-session" not in response.cookies
     result = await db_session.execute(select(UserSession))
     assert result.scalars().all() == []
 
@@ -71,13 +72,11 @@ async def test_me_with_valid_session_returns_user(client, db_session):
     await db_session.commit()
     raw_token = await create_session(db_session, user.id)
 
-    @asynccontextmanager
-    async def fake_async_session():
-        yield db_session
-
-    with patch("auth.middleware.async_session", fake_async_session):
-        client.cookies.set("__Host-session", raw_token)
-        response = client.get("/api/auth/me")
+    # get_current_user shares the same overridden get_db dependency as the
+    # route handler now, no need to patch a separate module-level session for
+    # it to see the row we just created.
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me")
 
     assert response.status_code == 200
     assert response.json() == {"email": "loggedin@smu.edu.sg", "role": "instructor"}
@@ -85,30 +84,20 @@ async def test_me_with_valid_session_returns_user(client, db_session):
 
 @needs_entra
 @pytest.mark.asyncio
-async def test_stale_cookie_on_auth_path_falls_through(client, db_session):
-    @asynccontextmanager
-    async def fake_async_session():
-        yield db_session
-
+async def test_callback_ignores_stale_cookie(client, db_session):
+    # /callback doesn't depend on get_current_user at all, so a stale or
+    # invalid session cookie can't affect it, it's simply never looked at.
     fake_token = {"userinfo": {"oid": "oid-stale", "email": "stale@smu.edu.sg"}}
-    with patch("auth.middleware.async_session", fake_async_session), patch(
-        "routes.auth.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)
-    ):
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         client.cookies.set("__Host-session", "not-a-real-token")
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code != 401
 
 
-@pytest.mark.asyncio
-async def test_stale_cookie_on_non_auth_path_returns_401(client, db_session):
-    @asynccontextmanager
-    async def fake_async_session():
-        yield db_session
-
-    with patch("auth.middleware.async_session", fake_async_session):
-        client.cookies.set("__Host-session", "not-a-real-token")
-        response = client.get("/health")
+def test_stale_cookie_on_protected_route_returns_401(client):
+    client.cookies.set("__Host-session", "not-a-real-token")
+    response = client.get("/api/auth/me")
 
     assert response.status_code == 401
 

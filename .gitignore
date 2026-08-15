@@ -250,3 +250,6 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Research notes — local only
+docs/research/*

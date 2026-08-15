@@ -5,9 +5,10 @@ import uuid
 
 from db import async_session
 from models import UserRoleEnum, User
-from services.users import soft_delete_user
+from services import soft_delete_user
 
 
+# Helper function to seed users into the database. Only for dev / seeding root admin.
 async def add_user(email: str, role: str) -> None:
     """Allowlists a user before their first Entra login. entra_oid is left
     null; resolve_or_bind_user fills it in on that first successful login."""
@@ -42,6 +43,7 @@ def main() -> None:
         asyncio.run(delete_user(args.user_id))
 
 
+## Can consider deleting this whole file in production after seeding the root admin.
 if __name__ == "__main__":
     sys.path.insert(0, ".")
     main()
