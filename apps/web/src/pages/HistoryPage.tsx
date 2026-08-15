@@ -57,7 +57,7 @@ function matchesDays(entry: HistoryEntry, days: number): boolean {
 }
 
 export default function HistoryPage() {
-  usePageTitle("History");
+  usePageTitle("Screening History");
   const navigate = useNavigate();
   const { data, isPending } = useHistory();
   const [filter, setFilter] = useState<Filter>("all");
@@ -101,7 +101,7 @@ export default function HistoryPage() {
     {
       id: "kind",
       header: "Type",
-      width: "minmax(0,0.5fr)",
+      width: "7rem",
       hideWhenCompact: true,
       cell: (entry) => (
         <span className="truncate text-sm text-muted-foreground">
@@ -114,7 +114,7 @@ export default function HistoryPage() {
       header: "Answer",
       width: "minmax(0,2fr)",
       cell: (entry) => (
-        <span className="truncate text-sm text-muted-foreground">
+        <span className="min-w-0 max-w-[18rem] truncate text-sm text-muted-foreground">
           {entry.kind === "single"
             ? truncate(entry.answerText ?? "Answer not retained", 60)
             : `${entry.fileName} · ${entry.rows.length} answers`}
@@ -124,7 +124,7 @@ export default function HistoryPage() {
     {
       id: "score",
       header: "Score",
-      width: "minmax(0,0.5fr)",
+      width: "6rem",
       hideWhenCompact: true,
       cell: (entry) => (
         <span className="font-mono text-[13px] text-foreground">
@@ -167,7 +167,7 @@ export default function HistoryPage() {
   return (
     <Page>
       <PageHeader
-        title="History"
+        title="Screening History"
         subtitle="Every check is stored with its score, verdict, and model version."
         actions={<ModelStatusBadge />}
       />
@@ -221,7 +221,7 @@ export default function HistoryPage() {
             />
           </div>
 
-          <PageFill className="mt-5">
+          <PageFill className="mt-5 gap-4">
             <DataTable<HistoryEntry>
               fillHeight
               columns={columns}
@@ -229,21 +229,21 @@ export default function HistoryPage() {
               getRowId={entryId}
               onSelect={(id) => void navigate(`/history/${id}`)}
               emptyState={
-                <p className="px-3 py-10 text-center text-sm text-disabled-foreground">
+                <p className="text-disabled-foreground">
                   No checks match the current filters.
                 </p>
               }
-              footer={
-                <Pagination
-                  page={current + 1}
-                  totalPages={pageCount}
-                  total={entries.length}
-                  pageSize={PAGE_SIZE}
-                  itemNoun="checks"
-                  onPageChange={(next) => setPage(next - 1)}
-                />
-              }
             />
+            <div className="shrink-0">
+              <Pagination
+                page={current + 1}
+                totalPages={pageCount}
+                total={entries.length}
+                pageSize={PAGE_SIZE}
+                itemNoun="checks"
+                onPageChange={(next) => setPage(next - 1)}
+              />
+            </div>
           </PageFill>
         </>
       )}

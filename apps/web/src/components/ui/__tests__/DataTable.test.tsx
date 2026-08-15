@@ -110,6 +110,86 @@ describe("DataTable — states", () => {
   });
 });
 
+describe("DataTable — status regions", () => {
+  // A rowgroup may only own row children, so a status region parked inside the
+  // table is invalid ARIA. Both must be siblings of role="table".
+  it("renders the empty state outside role=table", () => {
+    const { container } = renderTable({
+      rows: [],
+      emptyState: <p>Nothing here</p>,
+    });
+    const table = container.querySelector("[role='table']")!;
+    expect(table.textContent).not.toContain("Nothing here");
+    expect(container.textContent).toContain("Nothing here");
+  });
+
+  it("keeps the loading affordance out of role=table too", () => {
+    const { container } = renderTable({
+      rows: [],
+      isLoading: true,
+      loadingLabel: "Fetching…",
+    });
+    const table = container.querySelector("[role='table']")!;
+    expect(table.textContent).not.toContain("Fetching…");
+  });
+
+  it("drops the rowgroup entirely while empty", () => {
+    renderTable({ rows: [], emptyState: <p>Nothing here</p> });
+    expect(screen.queryByRole("rowgroup")).toBeNull();
+  });
+
+  it("centres empty copy in the scrollport, not across the full column width", () => {
+    // The wrapper that grows past the viewport is `w-max min-w-full`; centring
+    // inside it would centre against the wide table rather than what is visible.
+    renderTable({
+      fillHeight: true,
+      rows: [],
+      emptyState: <span>Nothing here</span>,
+    });
+    const wrap = screen.getByText("Nothing here").parentElement!;
+    expect(wrap.className).toContain("items-center");
+    expect(wrap.className).toContain("justify-center");
+    expect(wrap.className).not.toMatch(/\bw-max\b/);
+    expect(wrap.closest(".w-max")).toBeNull();
+  });
+});
+
+describe("DataTable — horizontal overflow", () => {
+  // Columns are floored at a real minimum so a wide table scrolls sideways
+  // instead of crushing its headers; the growth lives on one wrapper so the
+  // header row and every body row resolve `fr` against the same width.
+  it("gives the table a horizontal scrollport", () => {
+    const { container } = renderTable();
+    expect(container.querySelector("[role='table']")!.className).toContain(
+      "overflow-x-auto",
+    );
+  });
+
+  it("puts header and rows inside one w-max min-w-full wrapper", () => {
+    const { container } = renderTable();
+    const wrapper = container.querySelector(".w-max.min-w-full")!;
+    expect(wrapper).not.toBeNull();
+    // both the header row and the rowgroup, or the two would size differently
+    expect(wrapper.querySelector("[role='row']")).not.toBeNull();
+    expect(wrapper.querySelector("[role='rowgroup']")).not.toBeNull();
+  });
+
+  it("floors a zero-min fr column so it can overflow", () => {
+    const { container } = renderTable();
+    const header = container.querySelector("[role='row']") as HTMLElement;
+    expect(header.style.gridTemplateColumns).toContain("minmax(8rem, 1fr)");
+  });
+
+  it("keeps a collapsed column's track at zero rather than flooring it", () => {
+    // The compact branch emits minmax(0,0fr) *instead of* resolving the width.
+    // Routing it through resolveGridColumnWidth would floor it at 8rem and a
+    // hidden column would still occupy space — the whole point of collapsing.
+    const { container } = renderTable({ isCompact: true });
+    const header = container.querySelector("[role='row']") as HTMLElement;
+    expect(header.style.gridTemplateColumns).toContain("minmax(0,0fr)");
+  });
+});
+
 describe("DataTable — selection", () => {
   it("calls onSelect with the row id", async () => {
     const onSelect = vi.fn();

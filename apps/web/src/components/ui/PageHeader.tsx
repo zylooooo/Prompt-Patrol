@@ -12,8 +12,8 @@ export default function PageHeader({
   actions,
 }: PageHeaderProps) {
   return (
-    <header className="flex shrink-0 items-start justify-between gap-6">
-      <div>
+    <header className="flex shrink-0 flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+      <div className="min-w-0">
         <h1 className="text-[26px] font-bold text-foreground">{title}</h1>
         {subtitle && (
           <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>

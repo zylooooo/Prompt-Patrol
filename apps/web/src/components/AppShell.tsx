@@ -7,18 +7,16 @@ export default function AppShell() {
   const { user } = useAuth();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
-  const firstRender = useRef(true);
+  const lastPath = useRef(location.pathname);
 
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    if (lastPath.current === location.pathname) return;
+    lastPath.current = location.pathname;
     mainRef.current?.focus();
   }, [location.pathname]);
 
   return (
-    <div className="relative flex h-dvh overflow-hidden bg-background">
+    <div className="relative flex h-dvh overflow-hidden">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-60 focus:rounded-md focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary"

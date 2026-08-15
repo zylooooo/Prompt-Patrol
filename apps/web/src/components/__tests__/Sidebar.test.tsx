@@ -31,19 +31,30 @@ const navLinks = () =>
   );
 
 describe("Sidebar — role-gated navigation", () => {
+  // Destinations are identified by href, not by label: role gating is about
+  // which routes are reachable, and asserting the copy made every wording
+  // change look like a permissions regression.
+  const hrefs = () => navLinks().map((a) => a.getAttribute("href"));
+
   it("shows only the ungated destinations to a teaching assistant", () => {
     renderAt(asUser("teaching_assistant"));
-    expect(navLinks().map((a) => a.textContent)).toEqual([
-      "Check answers",
-      "History",
-    ]);
+    expect(hrefs()).toEqual(["/check", "/history"]);
   });
 
   it("adds teaching assistants for an instructor, but not users", () => {
     renderAt(asUser("instructor"));
+    expect(hrefs()).toContain("/teaching-assistants");
+    expect(hrefs()).not.toContain("/users");
+  });
+
+  it("labels every destination from NAV_ITEMS", () => {
+    // The one place copy is asserted, so an empty or duplicated label is caught
+    // without pinning the wording in five other tests.
+    renderAt(asUser("root_admin"));
     const labels = navLinks().map((a) => a.textContent);
-    expect(labels).toContain("Teaching assistants");
-    expect(labels).not.toContain("Users");
+    expect(labels).toEqual(NAV_ITEMS.map((i) => i.label));
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.every((l) => (l ?? "").trim().length > 0)).toBe(true);
   });
 
   it("shows every destination to a root admin", () => {
@@ -84,17 +95,17 @@ describe("Sidebar — active state", () => {
       (a) => a.getAttribute("aria-current") === "page",
     );
     expect(current).toHaveLength(1);
-    expect(current[0].textContent).toBe("History");
+    expect(current[0].getAttribute("href")).toBe("/history");
   });
 
   it("keeps the parent link current on a nested detail route", () => {
-    // /history/:id must still light up History, or the user loses their place.
+    // /history/:id must still light up the parent, or the user loses their place.
     renderAt(asUser("root_admin"), "/history/abc-123");
     const current = navLinks().filter(
       (a) => a.getAttribute("aria-current") === "page",
     );
     expect(current).toHaveLength(1);
-    expect(current[0].textContent).toBe("History");
+    expect(current[0].getAttribute("href")).toBe("/history");
   });
 
   it("marks nothing current on a route outside the nav", () => {
