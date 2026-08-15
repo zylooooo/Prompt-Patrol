@@ -1,7 +1,7 @@
 import asyncio
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from services.detector_client import MODEL_VERSION, score_text
 
@@ -18,9 +18,7 @@ DETECTOR_CAPABILITIES: dict = {
     "min_answer_chars": 10,
     "max_answer_chars": 10000,
     "max_tokens_scored": 512,
-    "strictness_levels": [
-        {"level": level, "target_fpr": fpr} for level, fpr in TARGET_FPR.items()
-    ],
+    "strictness_levels": [{"level": level, "target_fpr": fpr} for level, fpr in TARGET_FPR.items()],
     "calibration_version": None,
     "supports_confidence": False,
     "supports_explanation": False,
@@ -56,7 +54,7 @@ async def create_check(
     start = time.perf_counter()
     try:
         result = await asyncio.wait_for(score_text(answer_text), timeout=DETECTOR_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise DetectorTimeoutError from exc
     except Exception as exc:
         raise DetectorUnavailableError from exc
@@ -88,6 +86,6 @@ async def create_check(
         "question_text": question_text,
         "explanation": None,
         "spans": None,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
         "latency_ms": latency_ms,
     }

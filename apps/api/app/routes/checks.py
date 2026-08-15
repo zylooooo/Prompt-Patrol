@@ -9,9 +9,9 @@ from config import request_id_ctx_var
 from models import User, UserRoleEnum
 from services.checks import (
     DETECTOR_CAPABILITIES,
+    THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
-    THRESHOLDS,
     create_check,
 )
 
@@ -51,9 +51,7 @@ async def create_check_route(
     user: User = Depends(require_any_user),
 ):
     if body.strictness not in THRESHOLDS:
-        return _error(
-            400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}."
-        )
+        return _error(400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}.")
 
     answer_text = body.answer_text
     if len(answer_text) > 10000:
@@ -74,9 +72,7 @@ async def create_check_route(
         return _error(504, "detector_timeout", "Detector exceeded the 10s budget.")
     except DetectorUnavailableError:
         logger.exception("Detector call failed.")
-        return _error(
-            503, "detector_unavailable", "The detector is temporarily unavailable."
-        )
+        return _error(503, "detector_unavailable", "The detector is temporarily unavailable.")
 
     response.headers["Location"] = f"/api/checks/{result['check_id']}"
     return result

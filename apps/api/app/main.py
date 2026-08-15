@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from sqlalchemy import text
-from contextlib import asynccontextmanager
+from starlette.middleware.sessions import SessionMiddleware
 
 from config import (
     API_HOST,
@@ -19,7 +19,6 @@ from config import (
 from db import engine
 from middleware import RequestIdMiddleware
 from routes import auth_router, checks_router, users_router
-from starlette.middleware.sessions import SessionMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
