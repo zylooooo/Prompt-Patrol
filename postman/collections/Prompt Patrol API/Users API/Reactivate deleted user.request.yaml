@@ -1,4 +1,7 @@
 $kind: http-request
-url: ""
-method: GET
+name: Reactivate deleted user
+url: "{{BASE_URL}}/api/users/ace4ecfa-cc44-48e5-b4be-c74a6d65f786/restore"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
 order: 3683351111373628

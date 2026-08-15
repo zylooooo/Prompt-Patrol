@@ -7,8 +7,8 @@ from auth.dependencies import require_role
 from db import get_db
 from exceptions import EmailAlreadyExistsError, UserNotDeletedError
 from models import User, UserRoleEnum
-from schemas import UserResponse, UserCreateRequest
-from services import get_user_by_id, create_user, soft_delete_user, activate_user_by_id
+from schemas import UserResponse, UserCreateRequest, UserListResponse
+from services import get_user_by_id, create_user, soft_delete_user, activate_user_by_id, list_users
 
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
@@ -17,6 +17,34 @@ router = APIRouter(
     tags=["users"],
     dependencies=[Depends(require_role(UserRoleEnum.teaching_assistant))],
 )
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    actor: User = Depends(require_role(UserRoleEnum.teaching_assistant)),
+):
+    """Return current user profile"""
+    return actor
+
+
+@router.get("/", response_model=UserListResponse)
+async def list_all_users(
+    role: UserRoleEnum | None = None,
+    include_deleted: bool = False,
+    limit: int = 50,
+    cursor: str | None = None,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delegation-scoped directory listing. Authorization/scoping performed in
+    service layer.
+    """
+    try:
+        items, next_cursor = await list_users(db, actor, role, include_deleted, limit, cursor)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor")
+    return UserListResponse(items=[UserResponse.model_validate(u) for u in items], next_cursor=next_cursor)
 
 
 @router.get("/{user_id}", response_model=UserResponse)

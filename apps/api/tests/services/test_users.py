@@ -9,6 +9,7 @@ from services.users_service import (
     _can_view_user,
     activate_user_by_id,
     create_user,
+    list_users,
     resolve_or_bind_user,
     soft_delete_user,
 )
@@ -438,3 +439,113 @@ async def test_restore_persists_cleared_deleted_at(db_session):
 
     result = await db_session.execute(select(User).where(User.id == target.id))
     assert result.scalar_one().deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_ta_cannot_list_users(db_session):
+    ta = _user(UserRoleEnum.teaching_assistant)
+    db_session.add(ta)
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await list_users(db_session, ta)
+
+
+@pytest.mark.asyncio
+async def test_root_admin_sees_everyone_in_list(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    other_admin = _user(UserRoleEnum.root_admin)
+    instructor = _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    db_session.add_all([admin, other_admin, instructor, ta])
+    await db_session.commit()
+
+    items, next_cursor = await list_users(db_session, admin)
+
+    assert {u.id for u in items} == {admin.id, other_admin.id, instructor.id, ta.id}
+    assert next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_instructor_sees_only_own_tas(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _user(UserRoleEnum.instructor)
+    db_session.add_all([instructor, other_instructor])
+    await db_session.commit()
+    own_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    other_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor.id)
+    db_session.add_all([own_ta, other_ta])
+    await db_session.commit()
+
+    items, _ = await list_users(db_session, instructor)
+
+    assert {u.id for u in items} == {own_ta.id}
+
+
+@pytest.mark.asyncio
+async def test_instructor_role_filter_outside_scope_returns_empty(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+    own_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    db_session.add(own_ta)
+    await db_session.commit()
+
+    items, _ = await list_users(db_session, instructor, role=UserRoleEnum.instructor)
+
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_list_excludes_deleted_by_default(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    active = _user(UserRoleEnum.instructor)
+    deleted = _deleted_user(UserRoleEnum.instructor)
+    db_session.add_all([admin, active, deleted])
+    await db_session.commit()
+
+    items, _ = await list_users(db_session, admin)
+
+    assert {u.id for u in items} == {admin.id, active.id}
+
+
+@pytest.mark.asyncio
+async def test_list_include_deleted(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    deleted = _deleted_user(UserRoleEnum.instructor)
+    db_session.add_all([admin, deleted])
+    await db_session.commit()
+
+    items, _ = await list_users(db_session, admin, include_deleted=True)
+
+    assert deleted.id in {u.id for u in items}
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_cursor(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    others = [_user(UserRoleEnum.instructor) for _ in range(3)]
+    db_session.add_all([admin, *others])
+    await db_session.commit()
+
+    first_page, next_cursor = await list_users(db_session, admin, limit=2)
+    assert len(first_page) == 2
+    assert next_cursor is not None
+
+    second_page, next_cursor2 = await list_users(db_session, admin, limit=2, cursor=next_cursor)
+    assert next_cursor2 is None
+
+    seen_ids = {u.id for u in first_page} | {u.id for u in second_page}
+    assert seen_ids == {admin.id, others[0].id, others[1].id, others[2].id}
+    # No overlap between pages.
+    assert {u.id for u in first_page}.isdisjoint({u.id for u in second_page})
+
+
+@pytest.mark.asyncio
+async def test_list_invalid_cursor_raises(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    with pytest.raises(ValueError):
+        await list_users(db_session, admin, cursor="not-a-valid-cursor!!")

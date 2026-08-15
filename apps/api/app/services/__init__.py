@@ -4,7 +4,8 @@ from .users_service import (
     soft_delete_user,
     get_user_by_id,
     create_user,
-    activate_user_by_id
+    activate_user_by_id,
+    list_users,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "get_user_by_id",
     "create_user",
     "activate_user_by_id",
+    "list_users",
 ]

@@ -1,3 +1,5 @@
+import base64
+import binascii
 import uuid
 import logging
 
@@ -238,3 +240,76 @@ async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID)
     logger.info("User restored successfully")
 
     return target_user
+
+
+def _encode_cursor(user_id: uuid.UUID) -> str:
+    return base64.urlsafe_b64encode(str(user_id).encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(base64.urlsafe_b64decode(cursor.encode()).decode())
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("Invalid cursor") from exc
+
+
+async def list_users(
+    db: AsyncSession,
+    actor: User,
+    role: UserRoleEnum | None = None,
+    include_deleted: bool = False,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> tuple[list[User], str | None]:
+    """
+    Delegation-scoped directory listing, keyset-paginated by id ascending.
+    root_admin sees everyone; instructorsees only teaching_assistant rows they themselves provisioned.
+
+    Args:
+        db (AsyncSession): The database session.
+        actor (User): The user requesting the listing, used for authorization/scoping.
+        role (UserRoleEnum | None): Optional role filter.
+        include_deleted (bool): Whether to include soft-deleted rows.
+        limit (int): Max rows to return.
+        cursor (str | None): Opaque cursor from a previous page's next_cursor.
+
+    Returns:
+        tuple[list[User], str | None]: (items, next_cursor). next_cursor is
+        None when there's no further page.
+
+    Raises:
+        PermissionError: actor is a teaching_assistant.
+        ValueError: cursor is malformed.
+    """
+    logger.debug("Listing users requested by actor: %s", actor.id)
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s with role %s cannot list users.", actor.id, actor.role)
+        raise PermissionError(f"role {actor.role} may not list users")
+
+    query = select(User)
+
+    if actor.role == UserRoleEnum.instructor:
+        query = query.where(User.role == UserRoleEnum.teaching_assistant, User.provisioned_by == actor.id)
+        if role is not None:
+            query = query.where(User.role == role)
+    elif role is not None:
+        query = query.where(User.role == role)
+
+    if not include_deleted:
+        query = query.where(User.deleted_at.is_(None))
+
+    if cursor is not None:
+        query = query.where(User.id > _decode_cursor(cursor))
+
+    query = query.order_by(User.id).limit(limit + 1)
+
+    result = await db.execute(query)
+    rows = list(result.scalars().all())
+
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        next_cursor = _encode_cursor(rows[-1].id)
+
+    logger.info("Listed %d users for actor %s", len(rows), actor.id)
+    return rows, next_cursor

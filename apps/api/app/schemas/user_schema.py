@@ -21,3 +21,8 @@ class UserCreateRequest(BaseModel):
 
     email: str
     role: UserRoleEnum
+
+
+class UserListResponse(BaseModel):
+    items: list[UserResponse]
+    next_cursor: str | None = None
