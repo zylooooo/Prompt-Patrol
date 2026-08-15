@@ -17,7 +17,7 @@ const CHECK_TABS: TabOption<TabId>[] = [
 ];
 
 export default function CheckPage() {
-  usePageTitle("Check answers");
+  usePageTitle("Screen New Answers");
   const { user } = useAuth();
   const [tab, setTab] = useState<TabId>("single");
 
@@ -26,7 +26,7 @@ export default function CheckPage() {
   return (
     <Page>
       <PageHeader
-        title="Check answers"
+        title="Screen New Answers"
         subtitle="Screen short answers for signs of AI generation."
         actions={unassigned ? undefined : <ModelStatusBadge />}
       />

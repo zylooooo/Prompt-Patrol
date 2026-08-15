@@ -49,7 +49,7 @@ const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
 ];
 
 export default function UsersPage() {
-  usePageTitle("All accounts");
+  usePageTitle("Manage All Accounts");
   const { user: actor } = useAuth();
   const { showToast } = useToast();
   const { data: users, isPending } = useUsers();
@@ -288,7 +288,7 @@ export default function UsersPage() {
   return (
     <Page>
       <PageHeader
-        title="All accounts"
+        title="Manage All Accounts"
         subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
       />
 
