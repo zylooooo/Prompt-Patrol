@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import require_role
 from db import get_db
-from exceptions import EmailAlreadyExistsError
+from exceptions import EmailAlreadyExistsError, UserNotDeletedError
 from models import User, UserRoleEnum
 from schemas import UserResponse, UserCreateRequest
-from services import get_user_by_id, create_user, soft_delete_user
+from services import get_user_by_id, create_user, soft_delete_user, activate_user_by_id
 
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
@@ -75,3 +75,28 @@ async def delete_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to delete this user.",
         )
+
+@router.post("/{user_id}/restore", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def restore_user(
+    user_id: uuid.UUID,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Restore a soft-deleted user. Authorization checks performed in service layer.
+    """
+    try:
+        user = await activate_user_by_id(db, actor, user_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to restore this user.",
+        )
+    except UserNotDeletedError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User is not currently deleted.",
+        )
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exceptions import EmailAlreadyExistsError
+from exceptions import EmailAlreadyExistsError, UserNotDeletedError
 from models import User, UserRoleEnum
 from models.session import UserSession
 
@@ -187,3 +187,54 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
     logger.info("User created successfully")
 
     return user
+
+
+async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
+    """
+    Restores a soft-deleted user by clearing deleted_at. Same delegation chain
+    as soft_delete_user: root_admin can restore anyone (except root_admin
+    targets), instructor can only restore teaching_assistant rows they
+    themselves provisioned, TA can't restore anyone.
+
+    Args:
+        db (AsyncSession): The database session.
+        actor (User): The user requesting the account restoration, used for authorization checks.
+        user_id (uuid.UUID): The ID of the user to restore.
+
+    Returns:
+        User | None: The restored user object, or None if no user exists with this id.
+
+    Raises:
+        PermissionError: If the actor is not authorized to restore the target user.
+        UserNotDeletedError: If the target user exists but isn't currently deleted.
+    """
+    logger.debug("Attempting to restore user with ID: %s requested by actor: %s", user_id, actor.id)
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s with role %s cannot restore users. Insufficient permissions.", actor.id, actor.role)
+        raise PermissionError(f"role {actor.role} may not restore any users")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    target_user = result.scalar_one_or_none()
+    if target_user is None:
+        logger.info("No target user found for restoration")
+        return None
+
+    if target_user.role == UserRoleEnum.root_admin:
+        logger.warning("Actor %s attempted to restore a root_admin user, always rejected.", actor.id)
+        raise PermissionError("root_admin cannot be restored via this endpoint")
+
+    if actor.role == UserRoleEnum.instructor:
+        if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
+            logger.warning("Actor %s with role %s cannot restore user ID: %s. Insufficient permissions.", actor.id, actor.role, user_id)
+            raise PermissionError(f"role {actor.role} may not restore user ID: {user_id}")
+
+    if target_user.deleted_at is None:
+        logger.info("Target user ID: %s is not currently deleted", user_id)
+        raise UserNotDeletedError(str(user_id))
+
+    target_user.deleted_at = None
+    await db.commit()
+    await db.refresh(target_user)
+    logger.info("User restored successfully")
+
+    return target_user

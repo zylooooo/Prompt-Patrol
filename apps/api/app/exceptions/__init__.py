@@ -1,5 +1,6 @@
-from .user_exceptions import EmailAlreadyExistsError
+from .user_exceptions import EmailAlreadyExistsError, UserNotDeletedError
 
 __all__ = [
-    "EmailAlreadyExistsError"
+    "EmailAlreadyExistsError",
+    "UserNotDeletedError",
 ]

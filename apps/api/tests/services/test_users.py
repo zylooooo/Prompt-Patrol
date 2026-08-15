@@ -3,10 +3,11 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from exceptions import EmailAlreadyExistsError
+from exceptions import EmailAlreadyExistsError, UserNotDeletedError
 from models import UserRoleEnum, User
 from services.users_service import (
     _can_view_user,
+    activate_user_by_id,
     create_user,
     resolve_or_bind_user,
     soft_delete_user,
@@ -16,6 +17,12 @@ from services.users_service import (
 def _user(role, provisioned_by=None, email=None):
     uid = uuid.uuid4()
     return User(id=uid, email=email or f"{role.value}-{uid}@smu.edu.sg", role=role, provisioned_by=provisioned_by)
+
+
+def _deleted_user(role, provisioned_by=None, email=None):
+    user = _user(role, provisioned_by=provisioned_by, email=email)
+    user.deleted_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    return user
 
 
 def test_root_admin_sees_everyone():
@@ -325,3 +332,109 @@ async def test_create_user_persists_row(db_session):
 
     result = await db_session.execute(select(User).where(User.id == created.id))
     assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_ta_cannot_restore_any_user(db_session):
+    ta = _user(UserRoleEnum.teaching_assistant)
+    target = _deleted_user(UserRoleEnum.teaching_assistant)
+    db_session.add_all([ta, target])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await activate_user_by_id(db_session, ta, target.id)
+
+
+@pytest.mark.asyncio
+async def test_root_admin_restores_anyone(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    target = _deleted_user(UserRoleEnum.instructor)
+    db_session.add_all([admin, target])
+    await db_session.commit()
+
+    restored = await activate_user_by_id(db_session, admin, target.id)
+
+    assert restored.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_root_admin_cannot_restore_root_admin(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    other_admin = _deleted_user(UserRoleEnum.root_admin)
+    db_session.add_all([admin, other_admin])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await activate_user_by_id(db_session, admin, other_admin.id)
+
+
+@pytest.mark.asyncio
+async def test_instructor_restores_own_ta(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+    ta = _deleted_user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    db_session.add(ta)
+    await db_session.commit()
+
+    restored = await activate_user_by_id(db_session, instructor, ta.id)
+
+    assert restored.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_restore_unrelated_ta(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    other_instructor_id = uuid.uuid4()
+    ta = _deleted_user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor_id)
+    db_session.add_all([instructor, ta])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await activate_user_by_id(db_session, instructor, ta.id)
+
+
+@pytest.mark.asyncio
+async def test_instructor_cannot_restore_instructor(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _deleted_user(UserRoleEnum.instructor)
+    db_session.add_all([instructor, other_instructor])
+    await db_session.commit()
+
+    with pytest.raises(PermissionError):
+        await activate_user_by_id(db_session, instructor, other_instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_restore_nonexistent_user_returns_none(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    restored = await activate_user_by_id(db_session, admin, uuid.uuid4())
+
+    assert restored is None
+
+
+@pytest.mark.asyncio
+async def test_restore_already_active_user_raises_conflict(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    target = _user(UserRoleEnum.instructor)
+    db_session.add_all([admin, target])
+    await db_session.commit()
+
+    with pytest.raises(UserNotDeletedError):
+        await activate_user_by_id(db_session, admin, target.id)
+
+
+@pytest.mark.asyncio
+async def test_restore_persists_cleared_deleted_at(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    target = _deleted_user(UserRoleEnum.instructor)
+    db_session.add_all([admin, target])
+    await db_session.commit()
+
+    await activate_user_by_id(db_session, admin, target.id)
+
+    result = await db_session.execute(select(User).where(User.id == target.id))
+    assert result.scalar_one().deleted_at is None
