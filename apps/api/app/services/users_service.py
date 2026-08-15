@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exceptions import EmailAlreadyExistsError, UserNotDeletedError
@@ -15,33 +16,40 @@ logger = logging.getLogger(__name__)
 
 
 async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | None:
-    """
-    Called from the callback route after Entra hands back claims.
-
-    There's no self-service signup here, a users row has to already exist
-    for successful login. We try matching on entra_oid first, that's the normal
-    path for every login after the first. If that misses, fall back to matching
-    on email and bind the oid to that row, which is what lets an admin
-    provision someone before they've ever logged in. No match on either one
-    means they're not provisioned, so we return None.
-    """
-    # Authenticated users can not first time logging in
     result = await db.execute(select(User).where(User.entra_oid == oid, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
     if user is not None:
         return user
 
-    # Case where user accounts created but on user's first sign in.
-    result = await db.execute(select(User).where(User.email == email, User.deleted_at.is_(None)))
-    user = result.scalar_one_or_none()
-    if user is None:
+    try:
+        claimed = await db.execute(
+            update(User)
+            .where(User.email == email, User.entra_oid.is_(None), User.deleted_at.is_(None))
+            .values(entra_oid=oid)
+        )
+    except IntegrityError:
+        await db.rollback()
+        logger.warning("Refused to bind an oid already held by a soft-deleted account.")
         return None
 
-    # Bind the entra oid if is the user's first log in.
-    user.entra_oid = oid
-    await db.commit()
-    await db.refresh(user)
-    return user
+    if claimed.rowcount == 1:
+        await db.commit()
+        result = await db.execute(select(User).where(User.email == email, User.deleted_at.is_(None)))
+        return result.scalar_one_or_none()
+
+    await db.rollback()
+
+    result = await db.execute(select(User.entra_oid).where(User.email == email, User.deleted_at.is_(None)))
+    bound_oid = result.scalar_one_or_none()
+    if bound_oid is not None:
+        logger.warning(
+            "Rejected Entra login: claim email %s matches an account already bound to a "
+            "different identity (incoming oid %s, bound oid %s).",
+            email,
+            oid,
+            bound_oid,
+        )
+    return None
 
 
 async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) -> None:
@@ -80,7 +88,6 @@ async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) ->
             )
             raise PermissionError(f"role {actor.role} may not delete user ID: {user_id}")
 
-    # Soft delete the user and their sessions.
     now = datetime.now(UTC)
     await db.execute(update(User).where(User.id == user_id).values(deleted_at=now))
     await db.execute(
@@ -128,8 +135,7 @@ def _can_view_user(actor: User, target: User) -> bool:
     instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin
     rows are never visible to a non-admin.
     """
-    # Can consider changing the TA filtering logic if we eventually implemnet a join table
-    # to better store relationships between instructors and TAs.
+
     if actor.role == UserRoleEnum.root_admin:
         return True
     if actor.id == target.id:

@@ -53,6 +53,29 @@ async def test_callback_redirects_unprovisioned_user(client, db_session):
     assert result.scalars().all() == []
 
 
+@pytest.mark.asyncio
+async def test_callback_issues_no_session_on_attempted_account_takeover(client, db_session):
+    victim = User(
+        id=uuid.uuid4(),
+        email="victim@smu.edu.sg",
+        entra_oid="victim-oid",
+        role=UserRoleEnum.root_admin,
+    )
+    db_session.add(victim)
+    await db_session.commit()
+
+    attacker = {"userinfo": {"oid": "attacker-oid", "email": "victim@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=attacker)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=not_provisioned"
+    assert "__Host-session" not in response.cookies
+    assert (await db_session.execute(select(UserSession))).scalars().all() == []
+    await db_session.refresh(victim)
+    assert victim.entra_oid == "victim-oid"
+
+
 def test_me_without_session_returns_401(client):
     response = client.get("/api/auth/me")
     assert response.status_code == 401

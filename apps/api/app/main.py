@@ -35,6 +35,7 @@ async def lifespan(_app: FastAPI):
     yield
     await engine.dispose()
 
+
 _docs_enabled = ENVIRONMENT == "dev"
 app = FastAPI(
     title="Prompt Patrol API",

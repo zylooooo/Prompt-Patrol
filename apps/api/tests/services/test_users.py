@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import pytest
@@ -103,6 +104,89 @@ async def test_oid_match_wins_over_conflicting_email_match(db_session):
     assert resolved.id == oid_user.id
     await db_session.refresh(email_user)
     assert email_user.entra_oid is None
+
+
+@pytest.mark.asyncio
+async def test_email_fallback_does_not_rebind_an_already_bound_row(db_session):
+    # S0. The email claim is mutable and unverified, so it may claim an unbound
+    # row once and never move one that already belongs to an identity. Before
+    # the fix this returned the victim's row and the callback minted a session
+    # on it, handing over the account and its role.
+    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.root_admin)
+    db_session.add(victim)
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="attacker-oid", email="victim@smu.edu.sg")
+
+    assert resolved is None
+    await db_session.refresh(victim)
+    assert victim.entra_oid == "victim-oid"
+
+
+@pytest.mark.asyncio
+async def test_owner_still_resolves_after_a_rejected_takeover(db_session):
+    # The rejection must not disturb the row: the real owner signs in as normal.
+    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.instructor)
+    db_session.add(victim)
+    await db_session.commit()
+
+    await resolve_or_bind_user(db_session, oid="attacker-oid", email="victim@smu.edu.sg")
+    resolved = await resolve_or_bind_user(db_session, oid="victim-oid", email="victim@smu.edu.sg")
+
+    assert resolved is not None
+    assert resolved.id == victim.id
+
+
+@pytest.mark.asyncio
+async def test_rejected_takeover_is_indistinguishable_from_unprovisioned(db_session):
+    # Both denials return the same value, so the caller cannot use the response
+    # to discover whether an address is provisioned.
+    bound = User(id=uuid.uuid4(), email="bound@smu.edu.sg", entra_oid="someone-oid", role=UserRoleEnum.instructor)
+    db_session.add(bound)
+    await db_session.commit()
+
+    takeover = await resolve_or_bind_user(db_session, oid="attacker-oid", email="bound@smu.edu.sg")
+    unknown = await resolve_or_bind_user(db_session, oid="attacker-oid", email="nobody@smu.edu.sg")
+
+    assert takeover is None and unknown is None
+
+
+@pytest.mark.asyncio
+async def test_rejected_takeover_is_logged_as_a_security_event(db_session, caplog):
+    bound = User(id=uuid.uuid4(), email="bound@smu.edu.sg", entra_oid="someone-oid", role=UserRoleEnum.instructor)
+    db_session.add(bound)
+    await db_session.commit()
+
+    with caplog.at_level(logging.WARNING, logger="services.users_service"):
+        await resolve_or_bind_user(db_session, oid="attacker-oid", email="bound@smu.edu.sg")
+
+    assert any("already bound" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_unknown_email_is_not_logged_as_a_takeover(db_session, caplog):
+    # A routine miss is not a security event; only a collision with a bound row is.
+    with caplog.at_level(logging.WARNING, logger="services.users_service"):
+        await resolve_or_bind_user(db_session, oid="oid-x", email="nobody@smu.edu.sg")
+
+    assert caplog.records == []
+
+
+@pytest.mark.asyncio
+async def test_binding_an_oid_held_by_a_deleted_account_fails_closed(db_session):
+    # entra_oid is unique and the oid lookup only sees live rows, so this would
+    # otherwise surface as an IntegrityError 500 out of the callback.
+    deleted = _deleted_user(UserRoleEnum.instructor, email="old@smu.edu.sg")
+    deleted.entra_oid = "recycled-oid"
+    unbound = User(id=uuid.uuid4(), email="new@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
+    db_session.add_all([deleted, unbound])
+    await db_session.commit()
+
+    resolved = await resolve_or_bind_user(db_session, oid="recycled-oid", email="new@smu.edu.sg")
+
+    assert resolved is None
+    await db_session.refresh(unbound)
+    assert unbound.entra_oid is None
 
 
 @pytest.mark.asyncio
