@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import LoadingState from "./LoadingState";
 import { useMemo, type ReactNode } from "react";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { resolveGridColumnWidth } from "./data-table-columns";
 import { useNarrowContainer } from "../../hooks/useNarrowContainer";
 import { ChevronDown, ChevronsUpDown, ChevronUp } from "lucide-react";
 
@@ -16,10 +17,9 @@ export interface DataTableColumn<T> {
 }
 
 export type DataTableSortOrder = "asc" | "desc";
-
 export const TABLE_ICON_COLUMN_WIDTH = "4.75rem";
-
 export const TABLE_ACTION_COLUMN_WIDTH = "6.5rem";
+export const TABLE_ACTIONS_WIDE_COLUMN_WIDTH = "16.5rem";
 
 interface DataTableProps<T> {
   columns: readonly DataTableColumn<T>[];
@@ -64,16 +64,72 @@ export default function DataTable<T>({
   );
   const compact = isCompact || isNarrowViewport || isNarrowContainer;
   const template = columns
-    .map((c) => (compact && c.hideWhenCompact ? "minmax(0,0fr)" : c.width))
+    .map((c) =>
+      compact && c.hideWhenCompact
+        ? "minmax(0,0fr)"
+        : resolveGridColumnWidth(c.width),
+    )
     .join(" ");
 
   const gridStyle = useMemo(
     () => ({ gridTemplateColumns: template }),
     [template],
   );
+
+  const renderHeaderCell = (c: DataTableColumn<T>) => {
+    const isHidden = compact && c.hideWhenCompact;
+    const isSortable = !!c.sortKey && !!onSort;
+    const isActiveSort = isSortable && c.sortKey === sort;
+    const indicator = isActiveSort ? (
+      order === "asc" ? (
+        <ChevronUp className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+      ) : (
+        <ChevronDown className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+      )
+    ) : isSortable ? (
+      <ChevronsUpDown
+        className="h-3.5 w-3.5 text-disabled-foreground transition-colors group-hover:text-muted-foreground"
+        aria-hidden="true"
+      />
+    ) : null;
+
+    return (
+      <div
+        key={c.id}
+        role="columnheader"
+        aria-sort={
+          isActiveSort
+            ? order === "asc"
+              ? "ascending"
+              : "descending"
+            : isSortable
+              ? "none"
+              : undefined
+        }
+        className={`${HEADER_CLASS}${c.align === "right" ? " justify-end" : ""}`}
+      >
+        {isHidden ? null : isSortable ? (
+          <button
+            type="button"
+            onClick={() => onSort?.(c.sortKey!)}
+            className={`group inline-flex items-center gap-1 text-left uppercase tracking-wide transition-colors hover:text-foreground focus-visible:text-foreground ${
+              isActiveSort ? "text-foreground" : ""
+            }`}
+          >
+            <span>{c.header}</span>
+            {indicator}
+          </button>
+        ) : (
+          c.header
+        )}
+      </div>
+    );
+  };
+
   const rowGridClass =
     "grid w-full transition-[grid-template-columns] duration-300 ease-out";
   const fills = fillHeight && !bodyMaxHeightClass;
+  const isEmpty = rows.length === 0 && (emptyState || isLoading);
 
   return (
     <div
@@ -84,146 +140,104 @@ export default function DataTable<T>({
     >
       <div
         role="table"
-        className={`w-full${
-          fills && rows.length > 0
-            ? " min-h-0 flex-1 overflow-y-auto outline-hidden"
+        className={`w-full overflow-x-auto${
+          fills
+            ? ` outline-hidden${isEmpty ? " shrink-0" : " min-h-0 flex-1 overflow-y-auto"}`
             : ""
         }`}
       >
-        <div
-          role="row"
-          style={gridStyle}
-          className={`${rowGridClass} bg-surface-muted${
-            fills ? " sticky top-0 z-10" : ""
-          }`}
-        >
-          {columns.map((c) => {
-            const isHidden = compact && c.hideWhenCompact;
-            const isSortable = !!c.sortKey && !!onSort;
-            const isActiveSort = isSortable && c.sortKey === sort;
-            const indicator = isActiveSort ? (
-              order === "asc" ? (
-                <ChevronUp
-                  className="h-3.5 w-3.5 text-accent"
-                  aria-hidden="true"
-                />
-              ) : (
-                <ChevronDown
-                  className="h-3.5 w-3.5 text-accent"
-                  aria-hidden="true"
-                />
-              )
-            ) : isSortable ? (
-              <ChevronsUpDown
-                className="h-3.5 w-3.5 text-disabled-foreground transition-colors group-hover:text-muted-foreground"
-                aria-hidden="true"
-              />
-            ) : null;
-            return (
-              <div
-                key={c.id}
-                role="columnheader"
-                aria-sort={
-                  isActiveSort
-                    ? order === "asc"
-                      ? "ascending"
-                      : "descending"
-                    : isSortable
-                      ? "none"
-                      : undefined
-                }
-                className={`${HEADER_CLASS}${
-                  c.align === "right" ? " justify-end" : ""
-                }`}
-              >
-                {isHidden ? null : isSortable ? (
-                  <button
-                    type="button"
-                    onClick={() => onSort?.(c.sortKey!)}
-                    className={`group inline-flex min-w-0 items-center gap-1 text-left uppercase tracking-wide transition-colors hover:text-foreground focus-visible:text-foreground ${
-                      isActiveSort ? "text-foreground" : ""
+        <div className="w-max min-w-full">
+          <div
+            role="row"
+            style={gridStyle}
+            className={`${rowGridClass} bg-surface-muted${
+              fills && !isEmpty ? " sticky top-0 z-10" : ""
+            }`}
+          >
+            {columns.map(renderHeaderCell)}
+          </div>
+          {!isEmpty ? (
+            <div
+              role="rowgroup"
+              className={`divide-y divide-border/60${
+                bodyMaxHeightClass
+                  ? ` ${bodyMaxHeightClass} overflow-y-auto`
+                  : ""
+              }`}
+            >
+              {rows.map((row) => {
+                const id = getRowId(row);
+                const isSelected = id === selectedId;
+                const isExiting = exitingRowIds?.has(id) ?? false;
+                return (
+                  <motion.div
+                    key={id}
+                    role="row"
+                    aria-selected={isSelected}
+                    animate={isExiting ? ROW_EXIT_ANIMATE : ROW_IDLE_ANIMATE}
+                    transition={ROW_TRANSITION}
+                    onClick={
+                      onSelect && !isExiting ? () => onSelect(id) : undefined
+                    }
+                    style={gridStyle}
+                    className={`${rowGridClass} group hover:bg-surface-muted/50 ${
+                      isExiting ? "pointer-events-none overflow-hidden" : ""
+                    } ${onSelect && !isExiting ? "cursor-pointer" : ""} ${
+                      isSelected
+                        ? "bg-primary-soft/40 [&_[role=cell]]:text-accent"
+                        : onSelect
+                          ? "hover:bg-surface-muted/70"
+                          : ""
                     }`}
                   >
-                    <span className="truncate">{c.header}</span>
-                    {indicator}
-                  </button>
-                ) : (
-                  <span className="min-w-0 truncate">{c.header}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <div
-          role="rowgroup"
-          className={`divide-y divide-border/60${
-            bodyMaxHeightClass ? ` ${bodyMaxHeightClass} overflow-y-auto` : ""
-          }`}
-        >
-          {rows.map((row) => {
-            const id = getRowId(row);
-            const isSelected = id === selectedId;
-            const isExiting = exitingRowIds?.has(id) ?? false;
-            return (
-              <motion.div
-                key={id}
-                role="row"
-                aria-selected={isSelected}
-                animate={isExiting ? ROW_EXIT_ANIMATE : ROW_IDLE_ANIMATE}
-                transition={ROW_TRANSITION}
-                onClick={
-                  onSelect && !isExiting ? () => onSelect(id) : undefined
-                }
-                style={gridStyle}
-                className={`${rowGridClass} ${
-                  isExiting ? "pointer-events-none overflow-hidden" : ""
-                } ${onSelect && !isExiting ? "cursor-pointer" : ""} ${
-                  isSelected
-                    ? "bg-primary-soft/40 [&_[role=cell]]:text-accent"
-                    : onSelect
-                      ? "hover:bg-surface-muted/70"
-                      : ""
-                }`}
-              >
-                {columns.map((c, idx) => {
-                  const isHidden = compact && c.hideWhenCompact;
-                  return (
-                    <div
-                      key={c.id}
-                      role="cell"
-                      className={`${CELL_CLASS}${
-                        c.align === "right" ? " justify-end" : ""
-                      }`}
-                    >
-                      {idx === 0 && (
-                        <span
-                          aria-hidden="true"
-                          className={`h-4 shrink-0 rounded-full bg-primary transition-[width,margin-right,opacity] duration-300 ease-out ${
-                            isSelected
-                              ? "mr-2 w-0.5 opacity-100"
-                              : "mr-0 w-0 opacity-0"
+                    {columns.map((c, idx) => {
+                      const isHidden = compact && c.hideWhenCompact;
+                      return (
+                        <div
+                          key={c.id}
+                          role="cell"
+                          className={`${CELL_CLASS}${
+                            c.align === "right" ? " justify-end" : ""
                           }`}
-                        />
-                      )}
-                      {isHidden ? null : c.cell(row)}
-                    </div>
-                  );
-                })}
-              </motion.div>
-            );
-          })}
+                        >
+                          {idx === 0 && (
+                            <span
+                              aria-hidden="true"
+                              className={`h-4 shrink-0 rounded-full bg-primary transition-[width,margin-right,opacity] duration-300 ease-out ${
+                                isSelected
+                                  ? "mr-2 w-0.5 opacity-100"
+                                  : "mr-0 w-0 opacity-0"
+                              }`}
+                            />
+                          )}
+                          {isHidden ? null : c.cell(row)}
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
-      {isLoading && rows.length === 0 && (
-        <LoadingState
-          size="card"
-          label={loadingLabel}
-          className={fills ? "min-h-0 flex-1" : ""}
-        />
-      )}
-      {rows.length === 0 && !isLoading && emptyState && (
-        <div className={fills ? "min-h-0 flex-1" : undefined}>{emptyState}</div>
-      )}
+      {isEmpty ? (
+        isLoading ? (
+          <LoadingState
+            size="card"
+            label={loadingLabel}
+            className={fills ? "min-h-0 flex-1" : ""}
+          />
+        ) : (
+          <div
+            className={`flex w-full items-center justify-center px-4 text-center text-sm text-muted-foreground ${
+              fills ? "min-h-0 flex-1" : "py-12"
+            }`}
+          >
+            {emptyState}
+          </div>
+        )
+      ) : null}
       {footer && (
         <div className="shrink-0 border-t border-border bg-surface-muted/70 px-5 py-2 text-left text-xs text-foreground">
           {footer}
@@ -238,6 +252,6 @@ const ROW_IDLE_ANIMATE = { opacity: 1 };
 const ROW_TRANSITION = { duration: 0.25, ease: [0.4, 0, 0.2, 1] as const };
 const COMPACT_CONTAINER_WIDTH = 640;
 const CELL_CLASS =
-  "flex items-center whitespace-nowrap overflow-hidden px-3 py-4 text-left text-sm font-medium text-foreground sm:px-5 [&>*]:min-w-0 [&>*]:truncate";
+  "flex items-center whitespace-nowrap overflow-hidden px-3 py-4 text-left text-sm font-medium text-foreground sm:px-5";
 const HEADER_CLASS =
   "flex items-center whitespace-nowrap overflow-hidden px-3 py-3 text-left text-xs font-bold uppercase tracking-wide text-muted-foreground sm:px-5";

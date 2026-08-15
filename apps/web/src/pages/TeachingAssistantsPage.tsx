@@ -137,7 +137,7 @@ export default function TeachingAssistantsPage() {
       header: "Name",
       width: "minmax(0,1.2fr)",
       cell: (ta) => (
-        <span className="truncate text-sm font-medium text-foreground">
+        <span className="min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground">
           {displayName(ta)}
         </span>
       ),
@@ -147,7 +147,7 @@ export default function TeachingAssistantsPage() {
       header: "Email",
       width: "minmax(0,1.5fr)",
       cell: (ta) => (
-        <span className="truncate font-mono text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground">
           {ta.email}
         </span>
       ),
@@ -158,7 +158,7 @@ export default function TeachingAssistantsPage() {
       width: "minmax(0,1.3fr)",
       hideWhenCompact: true,
       cell: (ta) => (
-        <span className="truncate text-[13px] text-muted-foreground">
+        <span className="min-w-0 max-w-[11rem] truncate text-[13px] text-muted-foreground">
           {alsoWith(ta)}
         </span>
       ),
@@ -177,7 +177,7 @@ export default function TeachingAssistantsPage() {
     {
       id: "status",
       header: "Status",
-      width: "minmax(0,0.8fr)",
+      width: "7rem",
       cell: (ta) => (
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -257,12 +257,6 @@ export default function TeachingAssistantsPage() {
           </Button>
         </form>
 
-        <p className="mt-4 text-xs leading-relaxed text-disabled-foreground">
-          There is no password to share. The email has to match their SMU
-          account exactly, since that is what links the two together when they
-          first sign in with Microsoft.
-        </p>
-
         {error && (
           <p
             className="mt-4 rounded-md bg-danger-soft px-4 py-3 text-[13px] text-danger"
@@ -302,11 +296,11 @@ export default function TeachingAssistantsPage() {
             isLoading={isPending}
             loadingLabel="Loading teaching assistants…"
             emptyState={
-              <div className="p-12 text-center">
+              <div>
                 <p className="text-lg font-medium text-foreground">
                   No teaching assistants yet
                 </p>
-                <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                <p className="mx-auto mt-2 max-w-sm text-muted-foreground">
                   Add one above. They will be able to screen answers for your
                   courses.
                 </p>

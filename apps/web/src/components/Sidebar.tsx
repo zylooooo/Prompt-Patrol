@@ -170,7 +170,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
             <form method="post" action="/api/auth/logout">
               <button
                 type="submit"
-                className="rounded-sm text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
+                className="-my-1 rounded-sm py-1 text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
               >
                 Sign out
               </button>

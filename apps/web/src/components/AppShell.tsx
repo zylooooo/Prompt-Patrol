@@ -7,13 +7,11 @@ export default function AppShell() {
   const { user } = useAuth();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
-  const firstRender = useRef(true);
+  const lastPath = useRef(location.pathname);
 
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    if (lastPath.current === location.pathname) return;
+    lastPath.current = location.pathname;
     mainRef.current?.focus();
   }, [location.pathname]);
 
