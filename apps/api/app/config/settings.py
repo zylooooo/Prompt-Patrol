@@ -4,6 +4,7 @@ import logging
 import logging.config
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -51,6 +52,45 @@ ENTRA_CLIENT_ID: str = _require_env("ENTRA_CLIENT_ID").strip()
 ENTRA_CLIENT_SECRET: str = _require_env("ENTRA_CLIENT_SECRET").strip()
 ENTRA_REDIRECT_URI: str = _require_env("ENTRA_REDIRECT_URI").strip()
 SESSION_SECRET: str = _require_env("SESSION_SECRET")
+
+# Hosts a browser will accept a Secure cookie from over plain http.
+_TRUSTWORTHY_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+# Refuses to start when the URLs cannot hold a __Host- session cookie.
+def validate_session_cookie_hosts(frontend_url: str, redirect_uri: str) -> None:
+    frontend, redirect = urlparse(frontend_url), urlparse(redirect_uri)
+
+    if not frontend.hostname or not redirect.hostname:
+        raise ValueError(
+            "FRONTEND_URL and ENTRA_REDIRECT_URI must be absolute URLs with a scheme and host - "
+            f"got FRONTEND_URL={frontend_url!r}, ENTRA_REDIRECT_URI={redirect_uri!r}."
+        )
+
+    if frontend.hostname != redirect.hostname:
+        raise ValueError(
+            f"FRONTEND_URL host '{frontend.hostname}' and ENTRA_REDIRECT_URI host "
+            f"'{redirect.hostname}' differ. The session cookie is '__Host-session', and the "
+            "__Host- prefix forbids a Domain attribute, so the cookie is pinned to whichever "
+            "host answers the Entra callback. Split across two hosts, sign-in appears to "
+            "succeed and then every request is 401 with nothing logged anywhere. Serve both "
+            "from one host - see apps/web/nginx.conf. Ports may differ; cookies ignore them."
+        )
+
+    insecure = [
+        name
+        for name, parsed in (("FRONTEND_URL", frontend), ("ENTRA_REDIRECT_URI", redirect))
+        if parsed.scheme != "https"
+    ]
+    if insecure and frontend.hostname not in _TRUSTWORTHY_LOCAL_HOSTS:
+        raise ValueError(
+            f"{' and '.join(insecure)} must use https on host '{frontend.hostname}'. The session "
+            "cookie is set Secure with a __Host- prefix, which browsers accept over plain http "
+            "only for localhost, so here it is dropped silently and nobody can sign in."
+        )
+
+
+validate_session_cookie_hosts(FRONTEND_URL, ENTRA_REDIRECT_URI)
 
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 

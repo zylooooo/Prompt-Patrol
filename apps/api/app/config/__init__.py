@@ -13,6 +13,7 @@ from .settings import (
     SESSION_SECRET,
     configure_logging,
     request_id_ctx_var,
+    validate_session_cookie_hosts,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "LOG_LEVEL",
     "request_id_ctx_var",
     "SESSION_SECRET",
+    "validate_session_cookie_hosts",
 ]
