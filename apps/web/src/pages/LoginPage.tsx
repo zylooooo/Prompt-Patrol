@@ -1,6 +1,6 @@
 import Button from "../components/ui/Button";
+import { LOGIN_HINT_KEY } from "../api/auth";
 import Wordmark from "../components/ui/Wordmark";
-import { LOGIN_HINT_KEY } from "../hooks/useAuth";
 import { useSearchParams } from "react-router-dom";
 
 const HERO_IMAGE_URL =

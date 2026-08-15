@@ -128,6 +128,32 @@ describe("Sidebar — account block", () => {
     expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
   });
 
+  it("wipes browser-local data on the way out, without blocking the POST", () => {
+    // The submit handler is the only moment our JavaScript gets before the
+    // browser leaves the page. It must clear, and must not preventDefault - a
+    // cancelled submit means the session is never revoked server-side.
+    localStorage.setItem("pp.history.v2", '["previous user history"]');
+    localStorage.setItem("pp_login_hint", "ada@smu.edu.sg");
+
+    renderAt(asUser("instructor"));
+    const form = screen
+      .getByRole("button", { name: "Sign out" })
+      .closest("form")!;
+
+    // jsdom does not implement form submission, so the native step is asserted
+    // separately below; here we only need the handler to have run.
+    const submitted = new SubmitEvent("submit", {
+      bubbles: true,
+      cancelable: true,
+    });
+    form.dispatchEvent(submitted);
+
+    expect(localStorage.getItem("pp.history.v2")).toBeNull();
+    expect(localStorage.getItem("pp_login_hint")).toBeNull();
+    expect(submitted.defaultPrevented).toBe(false);
+    localStorage.clear();
+  });
+
   it("signs out through a real form POST, not a fetch", () => {
     // The endpoint answers 303 and the browser must follow it. If this ever
     // becomes an apiRequest, logout silently stops working.

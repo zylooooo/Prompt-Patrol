@@ -559,6 +559,18 @@ function saveSupervision(links: SupervisionLink[]) {
   writeJson(SUPERVISION_KEY, links);
 }
 
+// Drops every key this module owns. Goes away with the rest of the file.
+export function clearStoredData(): void {
+  for (const key of [
+    HISTORY_KEY,
+    USERS_KEY,
+    SUPERVISION_KEY,
+    HISTORY_SEEDED_KEY,
+  ]) {
+    localStorage.removeItem(key);
+  }
+}
+
 export function findUserByEmail(email: string): AppUser | undefined {
   return loadUsers().find((user) => sameEmail(user.email, email));
 }

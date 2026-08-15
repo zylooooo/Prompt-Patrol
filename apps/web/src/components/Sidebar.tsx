@@ -1,10 +1,10 @@
 import Wordmark from "./ui/Wordmark";
 import { Menu, X } from "lucide-react";
-import type { User } from "../api/auth";
 import { atLeastRole, ROLE_TEXT } from "../types";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { NavLink, useLocation } from "react-router-dom";
+import { clearSignedOutState, type User } from "../api/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DESKTOP_QUERY = "(min-width: 48rem)";
@@ -160,7 +160,11 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
               {user ? ROLE_TEXT[user.role] : ""}
             </span>
 
-            <form method="post" action="/api/auth/logout">
+            <form
+              method="post"
+              action="/api/auth/logout"
+              onSubmit={clearSignedOutState}
+            >
               <button
                 type="submit"
                 className="-my-1 rounded-sm py-1 text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
