@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.3 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.5.5 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -14,6 +14,24 @@ openapi: 3.0.3
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
 # CHANGELOG
+#   0.5.5  GET /api/users (list) widened from root_admin-only to delegation-
+#          scoped: root_admin sees everyone, instructor sees only the
+#          teaching_assistant rows they themselves provisioned (`role` query
+#          param is force-scoped for instructor callers, not rejected —
+#          same filter-vs-create asymmetry as everywhere else), TA gets
+#          `403`. This reverses the explicit root_admin-only rationale from
+#          [0.4.0]'s original listUsers text — see DECISION LOG [0.5.5] for
+#          why. Pagination cursor is an opaque base64 encoding of the last
+#          returned `id`, keyset-ordered by `id`.
+#   0.5.4  DELETE /api/users/{id} and POST /api/users/{id}/restore widened
+#          from root_admin-only to the same delegation chain as POST
+#          /api/users: root_admin acts on anyone, instructor acts only on
+#          teaching_assistant rows they themselves provisioned, TA acts on
+#          nobody. Restore now 409s if the target isn't currently deleted
+#          (previously undocumented/unenforced) and always rejects
+#          restoring a root_admin target regardless of actor, mirroring the
+#          same rule already in place on POST /api/users. See DECISION LOG
+#          [0.5.4].
 #   0.5.3  In-app identity resolution redesigned around FastAPI `Depends()`
 #          instead of `BaseHTTPMiddleware`: `get_current_user_id` ->
 #          `get_current_user` -> `require_role`, sharing one request-scoped
@@ -842,13 +860,27 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: users module — require_role('root_admin')
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.5]"
       description: |
-        Administrative directory view. Restricted to `root_admin`, same
-        rationale as `GET /api/admin/sessions` — an instructor enumerating
-        other instructors' accounts is a privilege-escalation-adjacent
-        surface in a tool used for integrity adjudication, even though
-        instructors have narrow delegation authority over TA provisioning.
+        Administrative directory view. Delegation-scoped, not a flat
+        `root_admin` gate — see DECISION LOG [0.5.5] for why this reverses
+        [0.4.0]'s original root_admin-only text:
+          - `root_admin` sees every row, any role, including other
+            `root_admin` rows.
+          - `instructor` sees only `teaching_assistant` rows they themselves
+            provisioned. Never other instructors, never `root_admin`, never
+            TAs provisioned by someone else.
+          - `teaching_assistant` gets `403` — this is a role-level floor
+            gate for TAs, not an object-level scoping question.
+
+        `role` is a *filter* on an already-scoped result set, not an
+        authorization input — same filter-vs-create asymmetry as elsewhere
+        in this contract. For an `instructor` caller, the effective scope is
+        always `role=teaching_assistant AND provisioned_by=<caller>`
+        regardless of what `role` value is passed; requesting a `role` value
+        outside that scope silently returns an empty page rather than
+        `403`, so there's nothing to enumerate about whether e.g. another
+        instructor's account exists.
       parameters:
         - name: role
           in: query
@@ -865,6 +897,9 @@ paths:
         - name: cursor
           in: query
           schema: { type: string }
+          description: |
+            Opaque. Base64 encoding of the last `id` from the previous
+            page. Keyset-paginated ordered by `id` ascending.
       responses:
         '200':
           description: Paginated users.
@@ -934,11 +969,19 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: users module — require_role('root_admin')
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
       description: |
         Sets `deleted_at = now()`. Never a hard delete — the audit trail's
         referential integrity depends on the row surviving, same rationale
         as soft-deleted sessions.
+
+        Delegation-scoped, same chain as `POST /api/users`: `root_admin` may
+        delete anyone; `instructor` may only delete `teaching_assistant`
+        rows they themselves provisioned; `teaching_assistant` may delete
+        no one. Unauthorized attempts return `403`, not `404` — this is a
+        role-level gate, not an object-level visibility check, so there's
+        nothing to hide about the target's existence once the actor is
+        already known to be able to see users of that kind.
 
         **Immediately revokes every active session belonging to this user**,
         not just the profile flag. This is the users module calling back
@@ -1038,12 +1081,25 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: users module — require_role('root_admin')
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
       description: |
         Clears `deleted_at`. Kept as its own endpoint rather than folded into
         `POST /api/users` as upsert-on-conflict — see the 409 note there.
         Provisioning a new account and restoring an existing one are
         different audited actions even though the end state looks similar.
+
+        Delegation-scoped, mirroring `DELETE /api/users/{id}`: `root_admin`
+        may restore anyone except another `root_admin` row; `instructor` may
+        only restore `teaching_assistant` rows they themselves provisioned;
+        `teaching_assistant` may restore no one. A `root_admin` target is
+        always rejected with `403` regardless of actor — there is exactly
+        one `root_admin`, and it is never soft-deleted through this API in
+        the first place, so this is a defensive rejection rather than a
+        reachable path today.
+
+        `409` if the target exists and is visible to the actor's delegation
+        scope but is not currently deleted — restoring an already-active
+        user is a no-op the caller should notice, not silently accept.
 
         Does **not** restore old sessions — all of the user's sessions were
         revoked at deletion time and stay revoked. The user must complete
@@ -2186,6 +2242,65 @@ components:
 #   but low-cost: inference is cheap, duplicates are visible in history, and
 #   the frontend can disable the button. Revisit only if batch retry semantics
 #   force it. Noted so it is a decision, not an oversight.
+#
+# [0.5.5] GET /api/users (list) widened from root_admin-only to
+#   instructor-delegated (own TAs only).
+#
+#   [0.4.0]'s original text explicitly rejected this: "an instructor
+#   enumerating other instructors' accounts is a privilege-escalation-
+#   adjacent surface... even though instructors have narrow delegation
+#   authority over TA provisioning." That reasoning is still correct as far
+#   as it goes — it's about instructors seeing *other instructors*. But it
+#   conflated that with instructors seeing *their own provisioned TAs*,
+#   which is a strictly narrower ask: an instructor can already list any one
+#   of their own TAs individually via `GET /api/users/{id}` (object-level
+#   visibility, [0.5.2]) and can already act on them via `POST /api/users`,
+#   `DELETE /api/users/{id}`, and `POST /api/users/{id}/restore` ([0.5.4]).
+#   Blocking the *list* view of exactly the same rows an instructor can
+#   already see one-by-one and already has delegated authority over doesn't
+#   add a real privacy boundary, it just forces an instructor-facing UI to
+#   fan out N individual `GET /api/users/{id}` calls to reconstruct a list
+#   the API could return directly. The original privilege-escalation concern
+#   is preserved in full: instructors still cannot see other instructors,
+#   root_admin rows, or TAs provisioned by someone else, at any granularity.
+#
+#   `role` filter is force-scoped rather than rejected for instructor
+#   callers, consistent with the filter-vs-create asymmetry already
+#   established for `actor_id` on `GET /api/checks` ([0.3.0] family) — a
+#   `403` on an out-of-scope `role` value would confirm to the caller that
+#   rows of that role/owner exist, which is exactly the enumeration oracle
+#   the asymmetry rule exists to avoid.
+#
+# [0.5.4] DELETE /api/users/{id} and POST /api/users/{id}/restore widened
+#   from root_admin-only to instructor delegation.
+#
+#   Both endpoints originally inherited root_admin-only from the same
+#   copy-paste lineage flagged in DECISION LOG [0.5.2] (see that entry for
+#   the analogous GET /api/users/{id} history). In practice the
+#   already-implemented soft_delete_user service enforced instructor
+#   delegation over the instructor's own teaching_assistant rows from the
+#   start — the root_admin-only text here was already stale against the
+#   shipped code, not a deliberate restriction. Restore is documented as the
+#   mirror of delete (see the module summary in the CHANGELOG), so the two
+#   should not diverge in delegation scope: an instructor who can delete
+#   their own TA can also undo that action. Widening both to the same
+#   delegation chain as POST /api/users keeps create/delete/restore
+#   internally consistent instead of restore/delete being stricter than
+#   provisioning for no stated reason.
+#
+#   A `root_admin` target is rejected on restore regardless of actor. There
+#   is exactly one `root_admin` row (seed-migration-only, per POST
+#   /api/users's existing rule), and DELETE was never restricted from
+#   targeting it — closing that gap here rather than leaving a
+#   theoretically-reachable "restore the one root_admin" path unguarded.
+#
+#   POST, not PATCH: restore has no client-supplied representation to
+#   partially apply — it's a state-transition command ("reactivate"), audited
+#   as its own action the same way DELETE and POST /api/users are, not a
+#   field edit like PATCH .../role's `{new_role}` body. There is no generic
+#   PATCH /api/users/{id} in this contract for arbitrary field updates;
+#   PATCH is reserved for the one endpoint that actually receives a partial
+#   representation to apply.
 #
 # [0.4.0] Deletion is a timestamp, not a status enum.
 #

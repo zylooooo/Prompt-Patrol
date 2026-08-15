@@ -1,24 +1,26 @@
-
-import os
+import contextvars
 import json
 import logging
-import secrets
-import contextvars
 import logging.config
+import os
+import secrets
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Get the API base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Load the .env variables
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / ".env")
+
 
 def _require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise ValueError(f"Failure to load {name} from .env file.")
     return value
+
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"", "0", "false", "no", "off"}
@@ -30,9 +32,8 @@ def _parse_bool(name: str, raw: str | None) -> bool:
         return True
     if normalized in _FALSY:
         return False
-    raise ValueError(
-        f"{name} must be one of {sorted(_TRUTHY | _FALSY - {''})} (or unset), got {raw!r}."
-    )
+    raise ValueError(f"{name} must be one of {sorted(_TRUTHY | _FALSY - {''})} (or unset), got {raw!r}.")
+
 
 API_HOST: str = _require_env("API_HOST")
 API_PORT: int = int(_require_env("API_PORT"))
@@ -40,14 +41,13 @@ DB_URL: str = _require_env("DB_URL")
 
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", 'info')
+LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
 VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 if ENVIRONMENT not in VALID_ENVIRONMENTS:
-    raise ValueError(
-        f"Invalid ENVIRONMENT '{ENVIRONMENT}', expected one of {VALID_ENVIRONMENTS}."
-    )
+    raise ValueError(f"Invalid ENVIRONMENT '{ENVIRONMENT}', expected one of {VALID_ENVIRONMENTS}.")
+
 
 def resolve_dev_auth_enabled(raw: str | None, environment: str) -> bool:
     enabled = _parse_bool("DEV_AUTH_ENABLED", raw)
@@ -58,6 +58,7 @@ def resolve_dev_auth_enabled(raw: str | None, environment: str) -> bool:
             "ENVIRONMENT=dev. Remove DEV_AUTH_ENABLED to start the app."
         )
     return enabled
+
 
 DEV_AUTH_ENABLED: bool = resolve_dev_auth_enabled(os.getenv("DEV_AUTH_ENABLED"), ENVIRONMENT)
 
@@ -91,14 +92,14 @@ if ENTRA_CONFIGURED and not _session_secret:
     raise ValueError("Failure to load SESSION_SECRET from .env file.")
 SESSION_SECRET: str = _session_secret or secrets.token_urlsafe(48)
 
-request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "request_id", default="-"
-)
+request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
 
 class _RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_ctx_var.get()
         return True
+
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -112,6 +113,7 @@ class _JsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload)
+
 
 def configure_logging() -> None:
     logging.config.dictConfig(

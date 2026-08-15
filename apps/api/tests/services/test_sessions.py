@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
-from models import UserRoleEnum, User
+from models import User, UserRoleEnum
 from models.session import UserSession
 from services import authenticate_session, create_session, revoke_session
 
@@ -48,7 +48,7 @@ async def test_expired_session_rejected(db_session):
         id=uuid.uuid4(),
         token_hash=hash_token(raw_token),
         user_id=user.id,
-        absolute_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        absolute_expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     db_session.add(expired)
     await db_session.commit()
@@ -76,7 +76,7 @@ async def test_idle_session_rejected(db_session):
     from auth.tokens import generate_session_token, hash_token
 
     raw_token = generate_session_token()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     idle = UserSession(
         id=uuid.uuid4(),
         token_hash=hash_token(raw_token),

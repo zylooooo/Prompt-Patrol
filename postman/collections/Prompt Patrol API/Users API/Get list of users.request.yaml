@@ -1,0 +1,7 @@
+$kind: http-request
+name: Get list of users
+url: "{{BASE_URL}}/api/users/"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+order: 4457785419271230
