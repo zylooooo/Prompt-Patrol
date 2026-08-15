@@ -177,7 +177,7 @@ export default function DeactivateInstructorDialog({
                   triggerLeading={false}
                   className="w-full"
                   measureTriggerLabels={false}
-                  popoverClassName="w-full"
+                  matchTriggerWidth
                 />
               </span>,
             )}

@@ -1,19 +1,34 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
+  type AriaRole,
+  type HTMLProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import {
+  FloatingFocusManager,
+  FloatingPortal,
+  autoUpdate,
+  flip,
+  offset,
+  shift,
+  size,
+  useClick,
+  useDismiss,
+  useFloating,
+  useInteractions,
+  useListNavigation,
+  useRole,
+  useTransitionStyles,
+  useTypeahead,
+} from "@floating-ui/react";
 import SearchInput from "./SearchInput";
-import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronDown, Filter, Plus } from "lucide-react";
-import { usePopoverPlacement } from "../../hooks/usePopoverPlacement";
 
 export interface DropdownOption<T> {
   value: T;
@@ -40,7 +55,7 @@ interface DropdownProps<T> {
   className?: string;
   triggerClassName?: string;
   popoverClassName?: string;
-  portal?: boolean;
+  matchTriggerWidth?: boolean;
   topAction?: {
     label: string;
     leading?: ReactNode;
@@ -76,13 +91,28 @@ const TRIGGER_SIZE = {
 export type DropdownSize = keyof typeof TRIGGER_SIZE;
 
 const TYPEAHEAD_RESET_MS = 700;
+const TRANSITION_MS = 160;
+const GAP = 8;
+const EDGE = 8;
+const MIN_HEIGHT = 160;
+
+type Row<T> =
+  | { kind: "create"; name: string; disabled: boolean }
+  | { kind: "action"; disabled: boolean }
+  | { kind: "reset"; disabled: false }
+  | {
+      kind: "option";
+      option: DropdownOption<T>;
+      group?: string;
+      disabled: boolean;
+    };
 
 export default function Dropdown<T>({
   value,
   onChange,
   options,
   placeholder,
-  size = "md",
+  size: triggerSize = "md",
   resetLabel,
   triggerLeading,
   ariaLabel,
@@ -95,7 +125,7 @@ export default function Dropdown<T>({
   className,
   triggerClassName,
   popoverClassName,
-  portal = false,
+  matchTriggerWidth = false,
   topAction,
   renderOptionTrailing,
   groups,
@@ -107,185 +137,11 @@ export default function Dropdown<T>({
   measureTriggerLabels = true,
 }: DropdownProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
   const [query, setQuery] = useState("");
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-  const { dropUp, maxHeight: inlineMaxHeight } = usePopoverPlacement(
-    isOpen,
-    triggerRef,
-    popoverRef,
-    { enabled: !portal },
-  );
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [coords, setCoords] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !popoverRef.current?.contains(target)
-      )
-        setIsOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setIsOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    const onScroll = (e: Event) => {
-      if (popoverRef.current?.contains(e.target as Node)) return;
-      setIsOpen(false);
-    };
-    const onResize = () => setIsOpen(false);
-    if (portal) {
-      window.addEventListener("scroll", onScroll, true);
-      window.addEventListener("resize", onResize);
-    }
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-      if (portal) {
-        window.removeEventListener("scroll", onScroll, true);
-        window.removeEventListener("resize", onResize);
-      }
-    };
-  }, [isOpen, portal]);
-
-  const optionElements = useCallback(
-    () =>
-      Array.from(
-        popoverRef.current?.querySelectorAll<HTMLButtonElement>(
-          '[role="option"]:not([disabled])',
-        ) ?? [],
-      ),
-    [],
-  );
-
-  const focusOptionAt = useCallback(
-    (index: number) => {
-      const options = optionElements();
-      if (options.length === 0) return;
-      options[
-        ((index % options.length) + options.length) % options.length
-      ]?.focus();
-    },
-    [optionElements],
-  );
-
-  const moveFocus = useCallback(
-    (delta: number) => {
-      const options = optionElements();
-      if (options.length === 0) return;
-      const current = options.indexOf(
-        document.activeElement as HTMLButtonElement,
-      );
-      focusOptionAt(
-        current === -1 ? (delta > 0 ? 0 : options.length - 1) : current + delta,
-      );
-    },
-    [optionElements, focusOptionAt],
-  );
-
-  const focusOnOpenRef = useRef<"first" | "last" | null>(null);
-  const typeahead = useRef({ buffer: "", at: 0 });
-
-  useLayoutEffect(() => {
-    if (!isOpen) {
-      focusOnOpenRef.current = null;
-      return;
-    }
-    if (searchPlaceholder) {
-      searchInputRef.current?.focus();
-      return;
-    }
-    const pending = focusOnOpenRef.current;
-    focusOnOpenRef.current = null;
-    if (pending) focusOptionAt(pending === "last" ? -1 : 0);
-  }, [isOpen, searchPlaceholder, focusOptionAt]);
-
-  const onTriggerKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    e.preventDefault();
-    if (isOpen) {
-      moveFocus(e.key === "ArrowDown" ? 1 : -1);
-      return;
-    }
-    focusOnOpenRef.current = e.key === "ArrowDown" ? "first" : "last";
-    setQuery("");
-    setIsOpen(true);
-  };
-
-  const onPopoverKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      moveFocus(e.key === "ArrowDown" ? 1 : -1);
-      return;
-    }
-    if (e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      focusOptionAt(e.key === "Home" ? 0 : -1);
-      return;
-    }
-
-    if (
-      searchPlaceholder ||
-      e.key.length !== 1 ||
-      e.altKey ||
-      e.ctrlKey ||
-      e.metaKey
-    )
-      return;
-    const now = Date.now();
-    const state = typeahead.current;
-    state.buffer =
-      now - state.at > TYPEAHEAD_RESET_MS
-        ? e.key.toLowerCase()
-        : state.buffer + e.key.toLowerCase();
-    state.at = now;
-    const match = optionElements().find((el) =>
-      (el.textContent ?? "").trim().toLowerCase().startsWith(state.buffer),
-    );
-    if (match) {
-      e.preventDefault();
-      match.focus();
-    }
-  };
-
-  useLayoutEffect(() => {
-    if (!portal || !isOpen) return;
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    const margin = 8;
-    const popover = popoverRef.current;
-    const popoverH = popover?.offsetHeight ?? 0;
-    const popoverW = Math.max(popover?.offsetWidth ?? 0, rect.width);
-    const below = rect.bottom + margin;
-    const fitsBelow = below + popoverH <= window.innerHeight - margin;
-    let top = fitsBelow ? below : rect.top - margin - popoverH;
-    top = Math.min(
-      Math.max(top, margin),
-      Math.max(margin, window.innerHeight - margin - popoverH),
-    );
-    let left = rect.left;
-    if (left + popoverW > window.innerWidth - margin) {
-      left = rect.right - popoverW;
-    }
-    left = Math.min(
-      Math.max(left, margin),
-      Math.max(margin, window.innerWidth - margin - popoverW),
-    );
-    setCoords({ top, left, width: rect.width });
-  }, [portal, isOpen]);
+  const searchable = Boolean(searchPlaceholder);
 
   const flatOptions = useMemo(
     () => (groups ? groups.flatMap((g) => g.options) : options),
@@ -294,47 +150,6 @@ export default function Dropdown<T>({
   const isEmpty = !isLoading && flatOptions.length === 0;
   const isDisabled = disabled || (isEmpty && !topAction && !createOption);
   const isMulti = multiValues !== undefined;
-  const selected =
-    !isMulti && value !== null
-      ? (flatOptions.find((o) => Object.is(o.value, value)) ?? null)
-      : null;
-  const multiSelected = isMulti
-    ? flatOptions.filter((o) =>
-        (multiValues ?? []).some((v) => Object.is(o.value, v)),
-      )
-    : [];
-  const isOptionSelected = (o: DropdownOption<T>): boolean =>
-    isMulti
-      ? (multiValues ?? []).some((v) => Object.is(o.value, v))
-      : value !== null && Object.is(o.value, value);
-
-  const label = (() => {
-    if (isLoading) return loadingLabel;
-    if (isEmpty && emptyLabel) return emptyLabel;
-    if (isMulti) {
-      return multiSelected.length > 0
-        ? multiSelected.map((o) => o.label).join(", ")
-        : placeholder;
-    }
-    if (selected) return selected.label;
-    return placeholder;
-  })();
-
-  const candidateLabels = useMemo(() => {
-    const labels = new Set<string>([placeholder]);
-    if (resetLabel) labels.add(resetLabel);
-    if (isLoading || loadingLabel) labels.add(loadingLabel);
-    if (emptyLabel) labels.add(emptyLabel);
-    for (const o of flatOptions) labels.add(o.label);
-    return Array.from(labels);
-  }, [
-    placeholder,
-    resetLabel,
-    isLoading,
-    loadingLabel,
-    emptyLabel,
-    flatOptions,
-  ]);
 
   const trimmedQuery = query.trim().toLowerCase();
   const matches = useCallback(
@@ -369,8 +184,211 @@ export default function Dropdown<T>({
     return options.filter((o) => matches(o.label));
   }, [groups, options, trimmedQuery, matches]);
 
-  const hasAnyResults =
-    (filteredGroups?.length ?? 0) > 0 || (filteredOptions?.length ?? 0) > 0;
+  const rows = useMemo<Row<T>[]>(() => {
+    const next: Row<T>[] = [];
+    if (creatableName)
+      next.push({
+        kind: "create",
+        name: creatableName,
+        disabled: Boolean(createOption?.disabled),
+      });
+    if (topAction && !trimmedQuery)
+      next.push({ kind: "action", disabled: Boolean(topAction.disabled) });
+    if (resetLabel && !trimmedQuery)
+      next.push({ kind: "reset", disabled: false });
+    if (filteredGroups) {
+      for (const g of filteredGroups)
+        for (const option of g.options)
+          next.push({
+            kind: "option",
+            option,
+            group: g.label,
+            disabled: Boolean(option.disabled),
+          });
+    } else {
+      for (const option of filteredOptions ?? [])
+        next.push({
+          kind: "option",
+          option,
+          disabled: Boolean(option.disabled),
+        });
+    }
+    return next;
+  }, [
+    creatableName,
+    createOption?.disabled,
+    topAction,
+    trimmedQuery,
+    resetLabel,
+    filteredGroups,
+    filteredOptions,
+  ]);
+
+  const blocks = useMemo(() => {
+    const out: { group?: string; items: { row: Row<T>; index: number }[] }[] =
+      [];
+    rows.forEach((row, index) => {
+      const group = row.kind === "option" ? row.group : undefined;
+      const last = out.at(-1);
+      if (last && last.group === group) last.items.push({ row, index });
+      else out.push({ group, items: [{ row, index }] });
+    });
+    return out;
+  }, [rows]);
+
+  const isOptionSelected = useCallback(
+    (o: DropdownOption<T>): boolean =>
+      isMulti
+        ? (multiValues ?? []).some((v) => Object.is(o.value, v))
+        : value !== null && Object.is(o.value, value),
+    [isMulti, multiValues, value],
+  );
+
+  const selectedIndex = useMemo(() => {
+    if (isMulti) return null;
+    const i = rows.findIndex(
+      (r) => r.kind === "option" && isOptionSelected(r.option),
+    );
+    return i === -1 ? null : i;
+  }, [rows, isMulti, isOptionSelected]);
+
+  const disabledIndices = useMemo(
+    () => rows.flatMap((row, i) => (row.disabled ? [i] : [])),
+    [rows],
+  );
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: isOpen,
+    onOpenChange: (open) => {
+      setIsOpen(open);
+      if (!open) setQuery("");
+    },
+    placement: "bottom-start",
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(GAP),
+      flip({ padding: EDGE }),
+      shift({ padding: EDGE, crossAxis: true }),
+      size({
+        padding: EDGE,
+        apply({ availableHeight, rects, elements }) {
+          Object.assign(elements.floating.style, {
+            maxHeight: `${Math.max(availableHeight, MIN_HEIGHT)}px`,
+            ...(matchTriggerWidth
+              ? { width: `${rects.reference.width}px` }
+              : { minWidth: `${rects.reference.width}px` }),
+          });
+        },
+      }),
+    ],
+  });
+
+  const listRef = useRef<Array<HTMLElement | null>>([]);
+  const labelsRef = useRef<Array<string | null>>([]);
+
+  const rowLabels = useMemo(
+    () =>
+      rows.map((row) => {
+        if (row.kind === "option") return row.option.label;
+        if (row.kind === "reset") return resetLabel ?? null;
+        if (row.kind === "action") return topAction?.label ?? null;
+        return null;
+      }),
+    [rows, resetLabel, topAction],
+  );
+
+  useEffect(() => {
+    labelsRef.current = rowLabels;
+    listRef.current.length = rowLabels.length;
+  }, [rowLabels]);
+
+  const click = useClick(context, { enabled: !isDisabled && !isLoading });
+  const dismiss = useDismiss(context);
+  const role = useRole(context, {
+    role: searchable ? "dialog" : "listbox",
+  });
+  const listNav = useListNavigation(context, {
+    listRef,
+    activeIndex,
+    selectedIndex,
+    onNavigate: setActiveIndex,
+    disabledIndices,
+    loop: true,
+    virtual: searchable,
+    scrollItemIntoView: true,
+  });
+  const typeahead = useTypeahead(context, {
+    listRef: labelsRef,
+    activeIndex,
+    selectedIndex,
+    onMatch: setActiveIndex,
+    onTypingChange: setIsTyping,
+    enabled: !searchable,
+    resetMs: TYPEAHEAD_RESET_MS,
+  });
+
+  const { getReferenceProps, getFloatingProps, getItemProps } = useInteractions(
+    [click, dismiss, role, listNav, typeahead],
+  );
+
+  const { isMounted, styles: transitionStyles } = useTransitionStyles(context, {
+    duration: TRANSITION_MS,
+    initial: ({ side }) => ({
+      opacity: 0,
+      transform: side === "top" ? "translateY(4px)" : "translateY(-4px)",
+    }),
+    common: ({ side }) => ({
+      transformOrigin: side === "top" ? "bottom" : "top",
+    }),
+  });
+
+  const setTriggerRef = useCallback(
+    (node: HTMLButtonElement | null) => refs.setReference(node),
+    [refs],
+  );
+  const setFloatingRef = useCallback(
+    (node: HTMLDivElement | null) => refs.setFloating(node),
+    [refs],
+  );
+
+  const selected =
+    !isMulti && value !== null
+      ? (flatOptions.find((o) => Object.is(o.value, value)) ?? null)
+      : null;
+  const multiSelected = isMulti
+    ? flatOptions.filter((o) =>
+        (multiValues ?? []).some((v) => Object.is(o.value, v)),
+      )
+    : [];
+
+  const label = (() => {
+    if (isLoading) return loadingLabel;
+    if (isEmpty && emptyLabel) return emptyLabel;
+    if (isMulti)
+      return multiSelected.length > 0
+        ? multiSelected.map((o) => o.label).join(", ")
+        : placeholder;
+    if (selected) return selected.label;
+    return placeholder;
+  })();
+
+  const candidateLabels = useMemo(() => {
+    const labels = new Set<string>([placeholder]);
+    if (resetLabel) labels.add(resetLabel);
+    if (isLoading || loadingLabel) labels.add(loadingLabel);
+    if (emptyLabel) labels.add(emptyLabel);
+    for (const o of flatOptions) labels.add(o.label);
+    return Array.from(labels);
+  }, [
+    placeholder,
+    resetLabel,
+    isLoading,
+    loadingLabel,
+    emptyLabel,
+    flatOptions,
+  ]);
+
+  const close = () => setIsOpen(false);
 
   const select = (next: T | null) => {
     if (isMulti && next !== null) {
@@ -379,7 +397,27 @@ export default function Dropdown<T>({
     }
     onChange(next);
     setIsOpen(false);
-    triggerRef.current?.focus();
+  };
+
+  const activateRow = (index: number | null) => {
+    const row = index === null ? undefined : rows[index];
+    if (!row || row.disabled) return;
+    switch (row.kind) {
+      case "create":
+        createOption?.onCreate(row.name);
+        setQuery("");
+        setIsOpen(false);
+        return;
+      case "action":
+        topAction?.onClick();
+        setIsOpen(false);
+        return;
+      case "reset":
+        select(null);
+        return;
+      case "option":
+        select(row.option.value);
+    }
   };
 
   const triggerStateClass = isDisabled
@@ -390,7 +428,7 @@ export default function Dropdown<T>({
 
   const triggerClass = triggerClassName
     ? `${triggerClassName} ${className ?? ""}`.trim()
-    : `${TRIGGER_BASE} ${TRIGGER_SIZE[size]} ${triggerStateClass} ${
+    : `${TRIGGER_BASE} ${TRIGGER_SIZE[triggerSize]} ${triggerStateClass} ${
         className ?? ""
       }`.trim();
 
@@ -400,46 +438,125 @@ export default function Dropdown<T>({
       ? (emptyLabel ?? undefined)
       : undefined;
 
-  const popoverStyle: CSSProperties | undefined = portal
-    ? {
-        position: "fixed",
-        top: coords?.top ?? 0,
-        left: coords?.left ?? 0,
-        minWidth: coords?.width,
-        maxWidth: 360,
-        visibility: coords ? "visible" : "hidden",
-      }
-    : inlineMaxHeight
-      ? { maxHeight: inlineMaxHeight, overflowY: "auto" }
-      : undefined;
+  const hasResults = rows.some((r) => r.kind === "option");
+  const menuLabel = ariaLabel ?? placeholder;
 
-  const popoverClass = portal
-    ? `z-50 origin-top rounded-xl border border-border bg-surface p-2 shadow-lg ${
-        popoverClassName ?? ""
-      }`.trim()
-    : `absolute left-0 z-20 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface p-2 shadow-lg ${
-        dropUp ? "bottom-full mb-2 origin-bottom" : "top-full mt-2 origin-top"
-      } ${popoverClassName ?? "w-60"}`;
+  const emptyMessage =
+    creatableName !== null
+      ? null
+      : trimmedQuery
+        ? hasResults
+          ? null
+          : noResultsLabel
+        : isEmpty
+          ? (emptyLabel ?? null)
+          : null;
 
-  const renderMenu = (menu: ReactNode) =>
-    portal ? createPortal(menu, document.body) : menu;
+  const onCommitKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!isOpen) return;
+    const isSpace = event.key === " " && !searchable && !isTyping;
+    if (event.key !== "Enter" && !isSpace) return;
+    event.preventDefault();
+    if (activeIndex === null) {
+      setIsOpen(false);
+      return;
+    }
+    activateRow(activeIndex);
+  };
+
+  const allFloatingProps = getFloatingProps({ onKeyDown: onCommitKeyDown });
+  const floatingId = allFloatingProps.id as string | undefined;
+  const ownListboxId = useId();
+  const listboxId = searchable ? ownListboxId : floatingId;
+  const floatingProps = {
+    ...allFloatingProps,
+    role: searchable ? (allFloatingProps.role as AriaRole) : undefined,
+    id: searchable ? floatingId : undefined,
+    "aria-label": searchable ? menuLabel : undefined,
+    "aria-orientation": undefined,
+    "aria-activedescendant": undefined,
+  };
+  const optionId = (index: number) => `${ownListboxId}-opt-${index}`;
+  const activeOptionId =
+    activeIndex === null ? undefined : optionId(activeIndex);
+
+  const renderRow = (row: Row<T>, index: number) => {
+    const shared = {
+      ref: (node: HTMLElement | null) => {
+        listRef.current[index] = node;
+        return () => {
+          listRef.current[index] = null;
+        };
+      },
+      active: activeIndex === index,
+      disabled: row.disabled,
+      focusable: !searchable,
+      id: optionId(index),
+      itemProps: getItemProps({ onClick: () => activateRow(index) }),
+    };
+
+    if (row.kind === "create")
+      return (
+        <Row key={`create-${row.name}`} {...shared} className="text-accent">
+          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="flex-1 truncate text-left">
+            {createOption?.label?.(row.name) ?? `Create "${row.name}"`}
+          </span>
+        </Row>
+      );
+
+    if (row.kind === "action")
+      return (
+        <Row key="top-action" {...shared}>
+          {topAction?.leading}
+          <span className="flex-1 truncate text-left">{topAction?.label}</span>
+        </Row>
+      );
+
+    if (row.kind === "reset")
+      return (
+        <Row key="reset" {...shared} selected={value === null}>
+          {triggerLeading ?? (
+            <Filter
+              className="h-3.5 w-3.5 shrink-0 text-foreground"
+              aria-hidden="true"
+            />
+          )}
+          <span className="flex-1 truncate text-left">{resetLabel}</span>
+          {value === null && (
+            <Check className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+          )}
+        </Row>
+      );
+
+    const { option } = row;
+    const isSelected = isOptionSelected(option);
+    return (
+      <Row
+        key={`option-${String(option.value)}`}
+        {...shared}
+        selected={isSelected}
+        trailing={renderOptionTrailing?.(option, isSelected, close)}
+      >
+        {option.leading}
+        <span className="flex-1 truncate text-left">{option.label}</span>
+        {isSelected && (
+          <Check className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+        )}
+      </Row>
+    );
+  };
 
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
-        ref={triggerRef}
+        ref={setTriggerRef}
         type="button"
         disabled={isDisabled || isLoading}
-        onClick={() => {
-          setQuery("");
-          setIsOpen((o) => !o);
-        }}
-        onKeyDown={onTriggerKeyDown}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-label={ariaLabel ?? placeholder}
+        aria-label={menuLabel}
         title={title}
         className={triggerClass}
+        {...getReferenceProps({ onKeyDown: onCommitKeyDown })}
       >
         {selected?.leading ??
           (triggerLeading === false ? null : (
@@ -491,235 +608,156 @@ export default function Dropdown<T>({
         )}
       </button>
 
-      {renderMenu(
-        <AnimatePresence>
-          {isOpen && (
-            <motion.div
-              ref={popoverRef}
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
-              role="listbox"
-              aria-label={ariaLabel ?? placeholder}
-              onKeyDown={onPopoverKeyDown}
-              style={popoverStyle}
-              className={popoverClass}
+      {isMounted && (
+        <FloatingPortal>
+          <FloatingFocusManager
+            context={context}
+            modal={false}
+            initialFocus={searchable ? searchInputRef : -1}
+            returnFocus
+          >
+            <div
+              ref={setFloatingRef}
+              style={floatingStyles}
+              className={`z-50 max-w-[calc(100vw-2rem)] ${
+                popoverClassName ?? (matchTriggerWidth ? "" : "w-60")
+              }`}
+              {...floatingProps}
             >
-              {searchPlaceholder && (
-                <div className="mb-1 pb-1">
-                  <SearchInput
-                    value={query}
-                    onChange={setQuery}
-                    placeholder={searchPlaceholder}
-                    size="sm"
-                    inputRef={searchInputRef}
-                    wrapperClassName="block w-full"
-                  />
-                </div>
-              )}
-              <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-                {creatableName && (
-                  <li>
-                    <button
-                      type="button"
-                      disabled={createOption?.disabled}
-                      onClick={() => {
-                        createOption?.onCreate(creatableName);
-                        setQuery("");
-                        setIsOpen(false);
+              <div
+                style={transitionStyles}
+                className="flex max-h-[inherit] w-full flex-col overflow-hidden rounded-xl border border-border bg-surface p-2 shadow-lg"
+              >
+                {searchPlaceholder !== undefined && (
+                  <div className="mb-1 shrink-0 pb-1">
+                    <SearchInput
+                      value={query}
+                      onChange={setQuery}
+                      placeholder={searchPlaceholder}
+                      size="sm"
+                      inputRef={searchInputRef}
+                      wrapperClassName="block w-full"
+                      combobox={{
+                        controls: listboxId ?? "",
+                        activeOptionId,
                       }}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-accent transition-colors hover:bg-surface-muted focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
-                    >
-                      <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      <span className="flex-1 truncate text-left">
-                        {createOption?.label?.(creatableName) ??
-                          `Create "${creatableName}"`}
-                      </span>
-                    </button>
-                  </li>
+                    />
+                  </div>
                 )}
-                {topAction && !trimmedQuery && (
-                  <li>
-                    <button
-                      type="button"
-                      disabled={topAction.disabled}
-                      onClick={() => {
-                        topAction.onClick();
-                        setIsOpen(false);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent"
-                    >
-                      {topAction.leading}
-                      <span className="flex-1 truncate text-left">
-                        {topAction.label}
-                      </span>
-                    </button>
-                  </li>
-                )}
-                {resetLabel && !trimmedQuery && (
-                  <Row isSelected={value === null} onClick={() => select(null)}>
-                    {triggerLeading ?? (
-                      <Filter
-                        className="h-3.5 w-3.5 shrink-0 text-foreground"
-                        aria-hidden="true"
-                      />
-                    )}
-                    <span className="flex-1 truncate text-left">
-                      {resetLabel}
-                    </span>
-                    {value === null && (
-                      <Check
-                        className="h-3.5 w-3.5 text-accent"
-                        aria-hidden="true"
-                      />
-                    )}
-                  </Row>
-                )}
-                {filteredGroups
-                  ? filteredGroups.map((g, gIdx) => (
-                      <li key={`group-${g.label}-${gIdx}`}>
-                        <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-disabled-foreground uppercase">
-                          {g.label}
-                        </p>
-                        <ul className="flex flex-col gap-1">
-                          {g.options.map((o) => {
-                            const isSelected = isOptionSelected(o);
-                            const trailing = renderOptionTrailing?.(
-                              o,
-                              isSelected,
-                              () => setIsOpen(false),
-                            );
-                            return (
-                              <Row
-                                key={String(o.value)}
-                                isSelected={isSelected}
-                                onClick={() => select(o.value)}
-                                disabled={o.disabled}
-                                trailing={trailing}
-                              >
-                                {o.leading}
-                                <span className="flex-1 truncate text-left">
-                                  {o.label}
-                                </span>
-                                {isSelected && (
-                                  <Check
-                                    className="h-3.5 w-3.5 text-accent"
-                                    aria-hidden="true"
-                                  />
-                                )}
-                              </Row>
-                            );
-                          })}
-                        </ul>
-                      </li>
-                    ))
-                  : (filteredOptions ?? []).map((o) => {
-                      const isSelected = isOptionSelected(o);
-                      const trailing = renderOptionTrailing?.(
-                        o,
-                        isSelected,
-                        () => setIsOpen(false),
-                      );
-                      return (
-                        <Row
-                          key={String(o.value)}
-                          isSelected={isSelected}
-                          onClick={() => select(o.value)}
-                          disabled={o.disabled}
-                          trailing={trailing}
+
+                <div
+                  id={listboxId}
+                  role="listbox"
+                  aria-label={menuLabel}
+                  aria-orientation="vertical"
+                  aria-multiselectable={isMulti || undefined}
+                  className="flex max-h-72 min-h-0 flex-1 flex-col gap-1 overflow-y-auto"
+                >
+                  {blocks.map((block, blockIndex) =>
+                    block.group === undefined ? (
+                      block.items.map(({ row, index }) => renderRow(row, index))
+                    ) : (
+                      <div
+                        key={`group-${block.group}-${blockIndex}`}
+                        role="group"
+                        aria-label={block.group}
+                        className="flex flex-col gap-1"
+                      >
+                        <p
+                          aria-hidden="true"
+                          className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-disabled-foreground uppercase"
                         >
-                          {o.leading}
-                          <span className="flex-1 truncate text-left">
-                            {o.label}
-                          </span>
-                          {isSelected && (
-                            <Check
-                              className="h-3.5 w-3.5 text-accent"
-                              aria-hidden="true"
-                            />
-                          )}
-                        </Row>
-                      );
-                    })}
-                {trimmedQuery && !hasAnyResults && !creatableName && (
-                  <li>
-                    <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      {noResultsLabel}
-                    </p>
-                  </li>
-                )}
-                {!trimmedQuery && isEmpty && !creatableName && emptyLabel && (
-                  <li>
-                    <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      {emptyLabel}
-                    </p>
-                  </li>
-                )}
-              </ul>
-              {footer && (
-                <div className="mt-1 border-t border-border px-3 pt-2 text-xs">
-                  {footer}
+                          {block.group}
+                        </p>
+                        {block.items.map(({ row, index }) =>
+                          renderRow(row, index),
+                        )}
+                      </div>
+                    ),
+                  )}
                 </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>,
+
+                {emptyMessage && (
+                  <p
+                    role="status"
+                    className="shrink-0 px-3 py-6 text-center text-xs text-muted-foreground"
+                  >
+                    {emptyMessage}
+                  </p>
+                )}
+
+                {footer && (
+                  <div className="mt-1 shrink-0 border-t border-border px-3 pt-2 text-xs">
+                    {footer}
+                  </div>
+                )}
+              </div>
+            </div>
+          </FloatingFocusManager>
+        </FloatingPortal>
       )}
     </div>
   );
 }
 
 function Row({
-  isSelected,
-  onClick,
-  disabled,
+  ref,
+  id,
+  active,
+  selected = false,
+  disabled = false,
+  focusable,
+  itemProps,
+  className,
   children,
   trailing,
 }: {
-  isSelected: boolean;
-  onClick: () => void;
+  ref: (node: HTMLElement | null) => void;
+  id: string;
+  active: boolean;
+  selected?: boolean;
   disabled?: boolean;
+  focusable: boolean;
+  itemProps: HTMLProps<HTMLDivElement>;
+  className?: string;
   children: ReactNode;
   trailing?: ReactNode;
 }) {
-  const baseRowClass = `flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground disabled:hover:bg-transparent ${
-    isSelected
-      ? "bg-surface-muted hover:bg-surface-muted"
-      : "hover:bg-surface-muted"
-  }`;
+  const fill = disabled
+    ? ""
+    : active
+      ? "bg-accent-soft"
+      : selected
+        ? "bg-surface-muted"
+        : "hover:bg-surface-muted";
 
-  if (trailing) {
-    return (
-      <li
-        className={`flex items-center rounded-md ${isSelected ? "bg-surface-muted" : "hover:bg-surface-muted"}`}
-      >
-        <button
-          type="button"
-          role="option"
-          aria-selected={isSelected}
-          disabled={disabled}
-          onClick={onClick}
-          className="flex flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:text-disabled-foreground"
-        >
-          {children}
-        </button>
-        <span className="pr-1">{trailing}</span>
-      </li>
-    );
-  }
+  const base = `flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium outline-hidden transition-colors ${
+    disabled
+      ? "cursor-not-allowed text-disabled-foreground"
+      : "cursor-pointer text-foreground"
+  } ${fill} ${className ?? ""}`;
+
+  const row = (
+    <div
+      ref={ref}
+      id={id}
+      role="option"
+      aria-selected={selected}
+      aria-disabled={disabled || undefined}
+      tabIndex={focusable ? (active ? 0 : -1) : undefined}
+      className={trailing ? `flex-1 ${base}` : base}
+      {...itemProps}
+    >
+      {children}
+    </div>
+  );
+
+  if (!trailing) return row;
+
   return (
-    <li>
-      <button
-        type="button"
-        role="option"
-        aria-selected={isSelected}
-        disabled={disabled}
-        onClick={onClick}
-        className={`w-full ${baseRowClass}`}
-      >
-        {children}
-      </button>
-    </li>
+    <div role="presentation" className={`flex items-center rounded-md ${fill}`}>
+      {row}
+      <span className="pr-1">{trailing}</span>
+    </div>
   );
 }

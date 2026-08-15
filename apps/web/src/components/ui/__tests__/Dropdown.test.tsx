@@ -43,7 +43,20 @@ function Harness({
   );
 }
 
-const trigger = () => screen.getByRole("button", { name: "Picker" });
+/**
+ * The trigger is a `<button>` element with `role="combobox"`, not a button role.
+ * That is the ARIA 1.2 select-only combobox pattern: a control that opens a
+ * listbox and holds a value is a combobox, and screen readers announce it as
+ * "combo box, collapsed" rather than as a plain button.
+ */
+const trigger = () => screen.getByRole("combobox", { name: "Picker" });
+/**
+ * A searchable menu is a dialog that contains its own combobox (the filter
+ * field), so its trigger is an ordinary button advertising `haspopup="dialog"`.
+ * Putting `role="combobox"` on a control whose text field lives elsewhere would
+ * claim a relationship the markup cannot honour.
+ */
+const searchTrigger = () => screen.getByRole("button", { name: "Picker" });
 const listbox = () => screen.getByRole("listbox", { name: "Picker" });
 const options = () => within(listbox()).getAllByRole("option");
 
@@ -54,6 +67,14 @@ const options = () => within(listbox()).getAllByRole("option");
  */
 const expectClosed = () =>
   waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+
+/**
+ * List navigation moves DOM focus asynchronously — Floating UI defers it so it
+ * does not fight the browser's own focus handling mid-keystroke. Asserting
+ * synchronously would race that, exactly as `expectClosed` would race the exit.
+ */
+const expectFocused = (target: () => Element | null | undefined) =>
+  waitFor(() => expect(document.activeElement).toBe(target()));
 
 beforeEach(() => installDomStubs());
 afterEach(cleanup);
@@ -88,15 +109,14 @@ describe("Dropdown — opening by keyboard", () => {
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(document.activeElement).toBe(options()[0]);
+    await expectFocused(() => options()[0]);
   });
 
   it("ArrowUp opens the menu focused on the last option", async () => {
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowUp}");
-    const all = options();
-    expect(document.activeElement).toBe(all[all.length - 1]);
+    await expectFocused(() => options().at(-1));
   });
 });
 
@@ -104,28 +124,34 @@ describe("Dropdown — navigating an open menu", () => {
   it("ArrowDown and ArrowUp move focus", async () => {
     render(<Harness />);
     trigger().focus();
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
-    expect(document.activeElement).toBe(options()[1]);
+    // Focus is awaited between steps, not only at the end: `userEvent`
+    // dispatches a whole string within one tick, which outruns the deferred
+    // focus in a way no real keyboard does. Verified against Chromium — two
+    // ArrowDowns with no delay land on the second option there.
+    await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
+    await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[1]);
     await userEvent.keyboard("{ArrowUp}");
-    expect(document.activeElement).toBe(options()[0]);
+    await expectFocused(() => options()[0]);
   });
 
   it("wraps at both ends", async () => {
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}{ArrowUp}");
-    const all = options();
-    expect(document.activeElement).toBe(all[all.length - 1]);
+    await expectFocused(() => options().at(-1));
   });
 
   it("Home and End jump to the ends", async () => {
     render(<Harness />);
     trigger().focus();
-    await userEvent.keyboard("{ArrowDown}{End}");
-    const all = options();
-    expect(document.activeElement).toBe(all[all.length - 1]);
+    await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
+    await userEvent.keyboard("{End}");
+    await expectFocused(() => options().at(-1));
     await userEvent.keyboard("{Home}");
-    expect(document.activeElement).toBe(options()[0]);
+    await expectFocused(() => options()[0]);
   });
 
   it("typeahead jumps to the first option matching the buffer", async () => {
@@ -133,7 +159,9 @@ describe("Dropdown — navigating an open menu", () => {
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
     await userEvent.keyboard("ch");
-    expect(document.activeElement?.textContent).toContain("Charlie");
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toContain("Charlie"),
+    );
   });
 });
 
@@ -142,7 +170,9 @@ describe("Dropdown — selecting and closing", () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     trigger().focus();
-    await userEvent.keyboard("{ArrowDown}{Enter}");
+    await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
+    await userEvent.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("alpha");
     await expectClosed();
   });
@@ -151,7 +181,7 @@ describe("Dropdown — selecting and closing", () => {
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}{Enter}");
-    expect(document.activeElement).toBe(trigger());
+    await expectFocused(trigger);
   });
 
   it("Escape closes and returns focus to the trigger", async () => {
@@ -161,7 +191,7 @@ describe("Dropdown — selecting and closing", () => {
     expect(screen.getByRole("listbox")).toBeDefined();
     await userEvent.keyboard("{Escape}");
     await expectClosed();
-    expect(document.activeElement).toBe(trigger());
+    await expectFocused(trigger);
   });
 
   it("closes on an outside pointerdown", async () => {
@@ -225,7 +255,9 @@ describe("Dropdown — disabled options and dead ends", () => {
     render(<Harness options={withDisabled} />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}{ArrowDown}");
-    expect(document.activeElement?.textContent).toContain("Charlie");
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toContain("Charlie"),
+    );
   });
 
   it("a disabled option cannot be selected by click", async () => {
@@ -243,6 +275,7 @@ describe("Dropdown — disabled options and dead ends", () => {
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
     const before = document.activeElement;
     await userEvent.keyboard("zzzz");
     expect(document.activeElement).toBe(before);
@@ -252,18 +285,25 @@ describe("Dropdown — disabled options and dead ends", () => {
     // Those keystrokes belong to the filter. If typeahead also ran, the first
     // character would yank focus out of the input mid-word.
     render(<Harness searchPlaceholder="Search…" />);
-    await userEvent.click(trigger());
+    await userEvent.click(searchTrigger());
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement).tagName).toBe("INPUT"),
+    );
     await userEvent.keyboard("ch");
-    const active = document.activeElement as HTMLInputElement;
-    expect(active.tagName).toBe("INPUT");
-    expect(active.value).toBe("ch");
+    expect((document.activeElement as HTMLInputElement).value).toBe("ch");
   });
 
   it("shows the no-results message when a search matches nothing", async () => {
     render(<Harness searchPlaceholder="Search…" noResultsLabel="Nothing." />);
-    await userEvent.click(trigger());
+    await userEvent.click(searchTrigger());
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement).tagName).toBe("INPUT"),
+    );
     await userEvent.keyboard("zzzz");
-    expect(within(listbox()).getByText("Nothing.")).toBeDefined();
+    // A listbox may hold only options, so the message sits beside it as a live
+    // status — which also means screen readers hear it, where a presentational
+    // node inside the list would have been silent.
+    expect(screen.getByRole("status").textContent).toBe("Nothing.");
     expect(within(listbox()).queryAllByRole("option")).toHaveLength(0);
   });
 
@@ -287,7 +327,7 @@ describe("Dropdown — disabled options and dead ends", () => {
       />,
     );
     await userEvent.click(trigger());
-    expect(within(listbox()).getByText("No options")).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe("No options");
   });
 
   it("keeps the trigger usable when empty but a topAction exists", () => {
@@ -312,16 +352,22 @@ describe("Dropdown — grouped options", () => {
     render(<Harness options={[]} groups={groups} />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(document.activeElement?.textContent).toContain("Apple");
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toContain("Apple"),
+    );
     await userEvent.keyboard("{ArrowDown}");
-    expect(document.activeElement?.textContent).toContain("Banana");
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toContain("Banana"),
+    );
   });
 
   it("selects a value from a group", async () => {
     const onChange = vi.fn();
     render(<Harness options={[]} groups={groups} onChange={onChange} />);
     trigger().focus();
-    await userEvent.keyboard("{ArrowUp}{Enter}");
+    await userEvent.keyboard("{ArrowUp}");
+    await expectFocused(() => options().at(-1));
+    await userEvent.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("b");
   });
 });

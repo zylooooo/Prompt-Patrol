@@ -214,7 +214,7 @@ export default function RelationshipDialog({
           triggerLeading={false}
           className="flex-1"
           measureTriggerLabels={false}
-          popoverClassName="w-full"
+          matchTriggerWidth
         />
         <Button
           variant="secondary"

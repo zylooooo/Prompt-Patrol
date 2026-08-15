@@ -15,6 +15,10 @@ interface SearchInputProps {
   wrapperStyle?: CSSProperties;
   hideClear?: boolean;
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
+  combobox?: {
+    controls: string;
+    activeOptionId?: string;
+  };
 }
 
 export default function SearchInput({
@@ -29,6 +33,7 @@ export default function SearchInput({
   wrapperStyle,
   hideClear = false,
   onKeyDown,
+  combobox,
 }: SearchInputProps) {
   const filled = value.length > 0;
   const iconClass =
@@ -72,6 +77,13 @@ export default function SearchInput({
         placeholder={placeholder}
         maxLength={maxLength}
         className={inputClass}
+        {...(combobox && {
+          role: "combobox" as const,
+          "aria-expanded": true,
+          "aria-controls": combobox.controls,
+          "aria-autocomplete": "list" as const,
+          "aria-activedescendant": combobox.activeOptionId,
+        })}
       />
       {filled && !hideClear && (
         <button
