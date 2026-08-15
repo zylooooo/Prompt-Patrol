@@ -7,15 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import generate_session_token, hash_token
 from models import User, UserSession
 
-# 30 min sliding idle timeout, 4h hard cap that never gets extended.
 SESSION_ABSOLUTE_TTL = timedelta(hours=4)
 SESSION_IDLE_TTL = timedelta(minutes=30)
 
 
+# Creates a new session and returns its unhashed token to the caller.
 async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
-    # Called from the callback route after Entra login succeeds. Returns the
-    # raw token so the caller can set it as the cookie, only the hash gets
-    # written to the DB.
     raw_token = generate_session_token()
     now = datetime.now(UTC)
     session_row = UserSession(
@@ -31,11 +28,8 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
     return raw_token
 
 
+# Validates a session, refreshes its activity timestamp, and returns its user.
 async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
-    # Called on every reqeust with the dependency. Returns None for any
-    # invalid/expired/revoked/deleted-user case, we don't distinguish which
-    # one it was, there's no reason for a caller to know why a session died.
-    # A successful lookup bumps last_active_at, sliding the idle window.
     token_hash = hash_token(raw_token)
     now = datetime.now(UTC)
     result = await db.execute(
@@ -58,12 +52,20 @@ async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
     return user_row
 
 
-async def revoke_session(db: AsyncSession, raw_token: str) -> None:
-    # Soft delete only, only set the deleted_at.
+# Revokes an active session and returns the user associated with it.
+async def revoke_session(db: AsyncSession, raw_token: str) -> User | None:
     token_hash = hash_token(raw_token)
+    result = await db.execute(
+        select(User)
+        .join(UserSession, UserSession.user_id == User.id)
+        .where(UserSession.token_hash == token_hash, UserSession.deleted_at.is_(None))
+    )
+    user = result.scalar_one_or_none()
+
     await db.execute(
         update(UserSession)
         .where(UserSession.token_hash == token_hash, UserSession.deleted_at.is_(None))
         .values(deleted_at=datetime.now(UTC))
     )
     await db.commit()
+    return user

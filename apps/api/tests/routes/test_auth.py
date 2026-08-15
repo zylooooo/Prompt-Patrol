@@ -1,5 +1,6 @@
 import uuid
 from unittest.mock import AsyncMock, patch
+from urllib.parse import quote
 
 import pytest
 from authlib.integrations.base_client.errors import OAuthError
@@ -10,7 +11,7 @@ from config import FRONTEND_URL
 from db import get_db
 from main import app
 from models import User, UserRoleEnum, UserSession
-from services import create_session
+from services import authenticate_session, create_session
 
 
 @pytest.fixture
@@ -243,3 +244,166 @@ def test_no_password_less_dev_login_exists(client):
     assert not [path for path in app.openapi()["paths"] if "/dev" in path]
     assert client.post("/api/auth/dev/login", json={"email": "a@b.c"}).status_code == 404
     assert client.get("/api/auth/dev/users").status_code == 404
+
+
+# --- sign-out ---------------------------------------------------------------
+# Logout had no tests at all before 2026-08-16, despite being the route with the
+# most side effects: it revokes a row, clears a cookie, and hands the browser to
+# a third party.
+
+END_SESSION = "https://login.microsoftonline.com/tid/oauth2/v2.0/logout"
+
+
+def _discovery(monkeypatch_target="routes.auth_routes.oauth.entra.load_server_metadata"):
+    return patch(monkeypatch_target, new=AsyncMock(return_value={"end_session_endpoint": END_SESSION}))
+
+
+async def _signed_in_client(client, db_session, **user_kwargs):
+    user = User(id=uuid.uuid4(), email="out@smu.edu.sg", role=UserRoleEnum.instructor, **user_kwargs)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+    client.cookies.set("__Host-session", raw_token)
+    return user, raw_token
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_the_session(client, db_session):
+    user, raw_token = await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert await authenticate_session(db_session, raw_token) is None
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_the_cookie_with_matching_attributes(client, db_session):
+    # delete_cookie must repeat path/secure/httponly/samesite or the browser
+    # keeps the original cookie and the user stays signed in locally.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    header = response.headers["set-cookie"]
+    assert "__Host-session=" in header
+    assert "Path=/" in header
+    assert "HttpOnly" in header
+    assert "Secure" in header
+    assert "samesite=strict" in header.lower()
+
+
+@pytest.mark.asyncio
+async def test_logout_uses_the_discovered_end_session_endpoint(client, db_session):
+    # Not a hardcoded login.microsoftonline.com URL - the endpoint comes from the
+    # provider's own metadata, which is what makes non-global Azure clouds work.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    location = response.headers["location"]
+    assert location.startswith(END_SESSION)
+    assert quote(FRONTEND_URL, safe="") in location.replace("%2F", "%2F")
+
+
+@pytest.mark.asyncio
+async def test_logout_sends_logout_hint_when_one_was_captured(client, db_session):
+    # Without this parameter Entra asks "which account do you want to sign out
+    # from?" instead of just signing the user out.
+    await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert "logout_hint=opaque-hint-from-entra" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_logout_omits_logout_hint_when_none_was_captured(client, db_session):
+    # The optional claim may not be enabled on the app registration. That
+    # degrades to the account picker; it must not break sign-out.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "logout_hint" not in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_logout_never_sends_our_own_user_id_as_the_hint(client, db_session):
+    # Entra has never seen this UUID. Passing it looks plausible and silently
+    # produces the account picker, so it must never leak into the URL.
+    user, _ = await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert str(user.id) not in response.headers["location"]
+    assert user.email not in response.headers["location"]
+
+
+def test_logout_without_a_session_still_completes(client):
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(END_SESSION)
+
+
+@pytest.mark.asyncio
+async def test_logout_survives_an_unreachable_discovery_document(client, db_session):
+    # The local session is revoked before the provider URL is built. A provider
+    # outage must not turn that into a 500 that tells the user sign-out failed
+    # when it actually succeeded.
+    user, raw_token = await _signed_in_client(client, db_session)
+
+    with patch(
+        "routes.auth_routes.oauth.entra.load_server_metadata",
+        new=AsyncMock(side_effect=RuntimeError("metadata unreachable")),
+    ):
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login"
+    assert await authenticate_session(db_session, raw_token) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_captures_the_login_hint_claim(client, db_session):
+    user = User(id=uuid.uuid4(), email="hinted@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-h", "email": "hinted@smu.edu.sg", "login_hint": "opaque-hint"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        client.get("/api/auth/callback", follow_redirects=False)
+
+    await db_session.refresh(user)
+    assert user.logout_hint == "opaque-hint"
+
+
+@pytest.mark.asyncio
+async def test_callback_without_the_login_hint_claim_keeps_any_stored_hint(client, db_session):
+    # The claim is optional and can be absent from one login. A usable stored
+    # hint beats overwriting it with NULL.
+    user = User(
+        id=uuid.uuid4(),
+        email="kept@smu.edu.sg",
+        entra_oid="oid-k",
+        role=UserRoleEnum.instructor,
+        logout_hint="previously-captured",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-k", "email": "kept@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        client.get("/api/auth/callback", follow_redirects=False)
+
+    await db_session.refresh(user)
+    assert user.logout_hint == "previously-captured"

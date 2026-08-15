@@ -1,5 +1,5 @@
-from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
 from models import User, UserRoleEnum
@@ -16,6 +16,7 @@ ROLE_ORDER = {
 # Resolves the authenticated user from a valid session cookie.
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     from services.sessions import authenticate_session
+
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
     if raw_token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")

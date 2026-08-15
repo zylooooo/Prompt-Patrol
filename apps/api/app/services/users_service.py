@@ -15,35 +15,13 @@ from models.session import UserSession
 logger = logging.getLogger(__name__)
 
 
+# Normalizes an email address for consistent storage and comparison.
 def normalize_email(email: str) -> str:
-    """
-    The one form an address is stored and matched in: trimmed and lowercased.
-
-    Entra chooses the case of the `email` / `preferred_username` claim it sends;
-    an admin chooses the case they type into the provisioning CLI. When those
-    two disagreed, a correctly provisioned person was told they were not
-    provisioned, and nothing on screen could explain why. Normalising on both
-    write and lookup removes the disagreement.
-
-    It also keeps the existing UNIQUE constraint on `users.email` meaningful:
-    without it, `A@smu.edu.sg` and `a@smu.edu.sg` are two accepted rows that no
-    lookup can tell apart.
-
-    Lowercasing the local part is a deliberate simplification. RFC 5321 permits
-    it to be case-sensitive, but nothing in this system's reach treats it that
-    way and Entra itself does not. Trimming is here because a trailing space
-    pasted into the CLI produced a row no login could ever match.
-
-    Rejected: a Postgres CITEXT column (what `docs/openapi.yaml` calls for) and
-    a functional unique index on `lower(email)`. Both are Postgres-only, and the
-    test suite builds its schema from `Base.metadata` on SQLite — so either
-    would leave the behaviour under test different from the behaviour deployed.
-    """
     return email.strip().lower()
 
 
+# Resolves an Entra user by object ID or safely binds an unclaimed provisioned account.
 async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | None:
-    # Normalised once here, so all three lookups below compare the same form.
     email = normalize_email(email)
     result = await db.execute(select(User).where(User.entra_oid == oid, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
@@ -81,21 +59,16 @@ async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User |
     return None
 
 
+# Stores the latest Entra logout hint when it is present and has changed.
+async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> None:
+    if not hint or user.logout_hint == hint:
+        return
+    user.logout_hint = hint
+    await db.commit()
+
+
+# Soft-deletes an authorized user and revokes all of their active sessions.
 async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) -> None:
-    """
-    Marks the user deleted_at and revokes (soft-deletes) all their
-    sessions in the same operation, so a deactivated account can't keep
-    using a still-live cookie. Root admins can delete any user, instructors can only
-    delete TAs they provisoned, and TAs can't delete anyone.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the deletion, used for authorization checks.
-        user_id (uuid.UUID): The ID of the user to delete.
-
-    Raises:
-        PermissionError: If the actor is not authorized to delete the target user.
-    """
     logger.debug("Attempting to soft delete user with ID: %s by actor: %s", user_id, actor.id)
     if actor.role == UserRoleEnum.teaching_assistant:
         logger.warning("Actor %s attempted to delete a user. Insufficient permissions.", actor.id)
@@ -128,18 +101,8 @@ async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) ->
     logger.info("Successfully deleted user.")
 
 
+# Returns a visible active user when the requesting actor has permission to view them.
 async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
-    """
-    Fetches a user by their ID. Returns None if the user doesn't exist or has been soft-deleted.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (uuid.UUID): The ID of the user making the request, used for authorization.
-        user_id (uuid.UUID): The ID of the user to fetch.
-
-    Returns:
-        User | None: The user object if found and not soft-deleted, otherwise None.
-    """
     logger.debug("Fetching user by ID: %s", user_id)
     result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
@@ -157,14 +120,8 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
     return user
 
 
+# Determines whether an actor is authorized to view a target user.
 def _can_view_user(actor: User, target: User) -> bool:
-    """
-    Helper function to determine visibility of account.
-    root_admin sees everyone, everyone sees themselves, instructors see other
-    instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin
-    rows are never visible to a non-admin.
-    """
-
     if actor.role == UserRoleEnum.root_admin:
         return True
     if actor.id == target.id:
@@ -180,26 +137,8 @@ def _can_view_user(actor: User, target: User) -> bool:
     return False
 
 
+# Provisions a new user when the actor has permission to assign the requested role.
 async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleEnum) -> User:
-    """
-    Creates a new user in the database, per the delegation chain:
-    root_admin -> instructor, instructor -> teaching_assistant, TA -> nobody.
-    `role=root_admin` is rejected regardless of actor - there is exactly one,
-    created only by the seed migration.
-
-    Args:
-        db (AsyncSession): The database session.
-        email (str): The email of the new user.
-        role (UserRoleEnum): The role of the new user.
-        actor (User): The user creating the new user, used for authorization checks.
-
-    Returns:
-        User: The newly created user object.
-
-    Raises:
-        PermissionError: actor's role may not provision the requested role.
-        EmailAlreadyExistsError: a users row already exists for this email.
-    """
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
 
     # Before the duplicate check, so "Ada@smu.edu.sg" cannot be provisioned
@@ -232,25 +171,8 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
     return user
 
 
+# Restores a soft-deleted user when the requesting actor has sufficient permission.
 async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
-    """
-    Restores a soft-deleted user by clearing deleted_at. Same delegation chain
-    as soft_delete_user: root_admin can restore anyone (except root_admin
-    targets), instructor can only restore teaching_assistant rows they
-    themselves provisioned, TA can't restore anyone.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the account restoration, used for authorization checks.
-        user_id (uuid.UUID): The ID of the user to restore.
-
-    Returns:
-        User | None: The restored user object, or None if no user exists with this id.
-
-    Raises:
-        PermissionError: If the actor is not authorized to restore the target user.
-        UserNotDeletedError: If the target user exists but isn't currently deleted.
-    """
     logger.debug("Attempting to restore user with ID: %s requested by actor: %s", user_id, actor.id)
     if actor.role == UserRoleEnum.teaching_assistant:
         logger.warning("Actor %s with role %s cannot restore users. Insufficient permissions.", actor.id, actor.role)
@@ -288,10 +210,12 @@ async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID)
     return target_user
 
 
+# Encodes a user ID as a URL-safe pagination cursor.
 def _encode_cursor(user_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(str(user_id).encode()).decode()
 
 
+# Decodes and validates a URL-safe pagination cursor as a user ID.
 def _decode_cursor(cursor: str) -> uuid.UUID:
     try:
         return uuid.UUID(base64.urlsafe_b64decode(cursor.encode()).decode())
@@ -299,6 +223,7 @@ def _decode_cursor(cursor: str) -> uuid.UUID:
         raise ValueError("Invalid cursor") from exc
 
 
+# Lists users visible to the actor and returns a cursor for the next page.
 async def list_users(
     db: AsyncSession,
     actor: User,
@@ -307,26 +232,6 @@ async def list_users(
     limit: int = 50,
     cursor: str | None = None,
 ) -> tuple[list[User], str | None]:
-    """
-    Delegation-scoped directory listing, keyset-paginated by id ascending.
-    root_admin sees everyone; instructorsees only teaching_assistant rows they themselves provisioned.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the listing, used for authorization/scoping.
-        role (UserRoleEnum | None): Optional role filter.
-        include_deleted (bool): Whether to include soft-deleted rows.
-        limit (int): Max rows to return.
-        cursor (str | None): Opaque cursor from a previous page's next_cursor.
-
-    Returns:
-        tuple[list[User], str | None]: (items, next_cursor). next_cursor is
-        None when there's no further page.
-
-    Raises:
-        PermissionError: actor is a teaching_assistant.
-        ValueError: cursor is malformed.
-    """
     logger.debug("Listing users requested by actor: %s", actor.id)
     if actor.role == UserRoleEnum.teaching_assistant:
         logger.warning("Actor %s with role %s cannot list users.", actor.id, actor.role)

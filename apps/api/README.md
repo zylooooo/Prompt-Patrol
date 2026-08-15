@@ -50,3 +50,28 @@ before the first sign-in.
 
 Use Chrome or Firefox — the session cookie is `Secure` + `__Host-`-prefixed even
 locally, and Safari won't store it over plain HTTP.
+
+## Entra app registration — two settings the code cannot check for you
+
+Sign-out depends on both, and gets them wrong silently rather than loudly.
+
+**1. Register the post-logout redirect URI.** Add every `FRONTEND_URL` you use
+(`http://localhost:5173` for development, plus each deployed origin) to the app
+registration's redirect URIs. If a URI is not registered, Entra **ignores**
+`post_logout_redirect_uri` and leaves the user on a generic Microsoft "you're signed
+out" page instead of returning them to Prompt Patrol. Nothing errors; the user just
+never comes back.
+
+**2. Enable the `login_hint` optional claim** (app registration → Token
+configuration → ID token). `/api/auth/callback` stores that claim in
+`users.logout_hint` and replays it as `logout_hint` at sign-out, which is what stops
+Entra asking *"which account do you want to sign out from?"*.
+
+Without it the column stays `NULL` and sign-out still works — you just get the account
+picker every time. Note that **only that claim works**: `users.id` is a UUID Entra has
+never seen, and Microsoft's documentation warns against passing a UPN or email, so
+either substitution compiles, runs, and silently produces the picker anyway.
+
+One residual to expect and *not* debug: on a domain-joined machine holding a valid
+Primary Refresh Token, the next sign-in can complete silently even after a correct
+sign-out. That is device-level SSO working as designed, not a logout bug.

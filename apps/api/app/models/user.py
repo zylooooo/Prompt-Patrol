@@ -25,6 +25,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     entra_oid: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    logout_hint: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
     provisioned_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
