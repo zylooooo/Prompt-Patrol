@@ -19,6 +19,8 @@ const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
     "Sign-in was cancelled, so you aren't signed in. Use the button below when you're ready to try again.",
   sign_in_failed:
     "We couldn't complete sign-in with Microsoft. This usually means the sign-in page was left open too long. Start again below.",
+  session_expired:
+    "You were signed out because your session timed out. Sign in again to continue.",
 };
 
 function LoginHero() {

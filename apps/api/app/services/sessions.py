@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import generate_session_token, hash_token
 from models import User, UserSession
 
-SESSION_ABSOLUTE_TTL = timedelta(hours=4)
-SESSION_IDLE_TTL = timedelta(minutes=30)
+SESSION_ABSOLUTE_TTL = timedelta(hours=12)
+SESSION_IDLE_TTL = timedelta(minutes=90)
 
 
 # Creates a new session and returns its unhashed token to the caller.

@@ -14,6 +14,11 @@ export const authKeys = {
   session: () => [...authKeys.all, "session"] as const,
 };
 
+// True when a session started in this browser and ended without a sign-out.
+export function hadSignedInSession(): boolean {
+  return localStorage.getItem(LOGIN_HINT_KEY) !== null;
+}
+
 // Drops browser-local data belonging to whoever was signed in before.
 export function clearPreviousUserData(): void {
   clearStoredData();
