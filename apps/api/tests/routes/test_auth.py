@@ -182,6 +182,59 @@ def test_stale_cookie_on_protected_route_returns_401(client):
     assert response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_identity_header_alone_does_not_authenticate(client, db_session):
+    # The gateway-header bypass. get_current_user used to accept X-PP-User-Id as
+    # proof of identity whenever ENVIRONMENT was not "dev", with no cookie and no
+    # session lookup - so any live user id was a full login for that account, and
+    # nginx forwarded the header from the client untouched.
+    user = User(id=uuid.uuid4(), email="target@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add(user)
+    await db_session.commit()
+
+    response = client.get("/api/auth/me", headers={"X-PP-User-Id": str(user.id)})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_identity_header_cannot_override_the_session_cookie(client, db_session):
+    # A valid session plus a header naming someone else must resolve to the
+    # cookie's owner, never the header's.
+    owner = User(id=uuid.uuid4(), email="owner@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
+    other = User(id=uuid.uuid4(), email="other@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add_all([owner, other])
+    await db_session.commit()
+    raw_token = await create_session(db_session, owner.id)
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me", headers={"X-PP-User-Id": str(other.id)})
+
+    assert response.status_code == 200
+    assert response.json() == {"email": "owner@smu.edu.sg", "role": "teaching_assistant"}
+
+
+def test_no_gateway_header_trust_remains_in_the_auth_dependency():
+    # Guards the shape, not just the behaviour: authentication must not branch on
+    # the environment, or the bypass returns the moment ENVIRONMENT changes.
+    # Inspects the executable body only - the docstring deliberately names the
+    # removed header so the next reader knows why it must not come back.
+    import ast
+    import inspect
+    import textwrap
+
+    from auth import dependencies
+
+    function = ast.parse(textwrap.dedent(inspect.getsource(dependencies.get_current_user))).body[0]
+    body = function.body
+    if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    code = "\n".join(ast.unparse(node) for node in body)
+
+    assert "X-PP-User-Id" not in code
+    assert "ENVIRONMENT" not in code
+
+
 def test_entra_routes_are_always_mounted():
     assert {"/api/auth/login", "/api/auth/callback"} <= set(app.openapi()["paths"])
 
