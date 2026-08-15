@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from models import UserRoleEnum, User
 from models.session import UserSession
-from services.sessions import authenticate_session, create_session, revoke_session
+from services import authenticate_session, create_session, revoke_session
 
 
 @pytest.mark.asyncio

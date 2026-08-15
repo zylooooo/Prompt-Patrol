@@ -14,10 +14,8 @@ from db import engine
 from fastapi import FastAPI
 from sqlalchemy import text
 from middleware import RequestIdMiddleware
-from routes.auth import router as auth_router
-from routes.checks import router as checks_router
+from routes import auth_router, checks_router, users_router
 from contextlib import asynccontextmanager
-from auth.middleware import SessionAuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 configure_logging()
@@ -36,13 +34,21 @@ async def lifespan(_app: FastAPI):
     yield
     await engine.dispose()
 
-# Initialize the FastAPI application. 
+# Initialize the FastAPI application.
+# docs/redoc/openapi.json are dev-only, prod shouldn't publicly expose the schema.
+_docs_enabled = ENVIRONMENT == "dev"
 app = FastAPI(
     title="Prompt Patrol API",
     description="API services for Prompt Patrol",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
+# This is Starlette's own signed-cookie session ("ppauthflow"), it only
+# carries the OAuth state + PKCE verifier across the Entra redirect. It's not
+# the same thing as SESSION_COOKIE_NAME, which is our own post-login session.
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -51,10 +57,10 @@ app.add_middleware(
     https_only=ENVIRONMENT != "dev",
     max_age=600,
 )
-app.add_middleware(SessionAuthMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
 app.include_router(checks_router)
+app.include_router(users_router)
 
 if DEV_AUTH_ENABLED:
     from routes.dev_auth import router as dev_auth_router

@@ -33,7 +33,7 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
 
 
 async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
-    # Called on every request by the middleware. Returns None for any
+    # Called on every reqeust with the dependency. Returns None for any
     # invalid/expired/revoked/deleted-user case, we don't distinguish which
     # one it was, there's no reason for a caller to know why a session died.
     # A successful lookup bumps last_active_at, sliding the idle window.
@@ -60,8 +60,7 @@ async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
 
 
 async def revoke_session(db: AsyncSession, raw_token: str) -> None:
-    # Soft delete only, we set deleted_at and keep the row rather than
-    # actually deleting it.
+    # Soft delete only, only set the deleted_at.
     token_hash = hash_token(raw_token)
     await db.execute(
         update(UserSession)
