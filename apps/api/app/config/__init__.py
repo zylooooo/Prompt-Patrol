@@ -11,9 +11,11 @@ from .settings import (
     FRONTEND_URL,
     LOG_LEVEL,
     SESSION_SECRET,
+    SESSION_SECRET_MIN_LENGTH,
     configure_logging,
     request_id_ctx_var,
     validate_session_cookie_hosts,
+    validate_session_secret,
 )
 
 __all__ = [
@@ -31,5 +33,7 @@ __all__ = [
     "LOG_LEVEL",
     "request_id_ctx_var",
     "SESSION_SECRET",
+    "SESSION_SECRET_MIN_LENGTH",
     "validate_session_cookie_hosts",
+    "validate_session_secret",
 ]

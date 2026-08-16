@@ -1,13 +1,6 @@
 import pytest
 
-from config import validate_session_cookie_hosts
-
-# The __Host- cookie prefix forbids a Domain attribute, so the session cookie is
-# pinned to whichever host answered the Entra callback. A host mismatch is not a
-# runtime error anywhere - sign-in completes, the cookie lands on the wrong host,
-# and every later request is 401 with nothing logged. These assert the config is
-# rejected at startup instead.
-
+from config import SESSION_SECRET_MIN_LENGTH, validate_session_cookie_hosts, validate_session_secret
 
 @pytest.mark.parametrize(
     ("frontend", "redirect"),
@@ -77,3 +70,44 @@ def test_the_running_configuration_is_valid():
     from config import ENTRA_REDIRECT_URI, FRONTEND_URL
 
     validate_session_cookie_hosts(FRONTEND_URL, ENTRA_REDIRECT_URI)
+
+
+# SESSION_SECRET signs the 'ppauthflow' cookie carrying OAuth state - the
+# anti-CSRF token for the whole sign-in flow. It was previously only checked for
+# emptiness, so the literal CI value could reach a real deployment unchallenged.
+
+_STRONG_SECRET = "x" * SESSION_SECRET_MIN_LENGTH
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_accepts_a_long_non_placeholder_secret(environment):
+    validate_session_secret(_STRONG_SECRET, environment)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        # The exact value in .github/workflows/ci.yml, and the one most likely
+        # to be copied into a real .env.
+        "ci-dummy-session-secret",
+        "changeme",
+        "  SECRET  ",
+    ],
+)
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_rejects_a_known_placeholder(secret, environment):
+    with pytest.raises(ValueError, match="placeholder"):
+        validate_session_secret(secret, environment)
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_rejects_a_secret_below_the_minimum_length(environment):
+    with pytest.raises(ValueError, match="characters"):
+        validate_session_secret("x" * (SESSION_SECRET_MIN_LENGTH - 1), environment)
+
+
+@pytest.mark.parametrize("secret", ["ci-dummy-session-secret", "short"])
+def test_dev_is_exempt(secret):
+    # Local dev and CI both run with throwaway values on purpose; enforcing here
+    # would only teach people to weaken the check.
+    validate_session_secret(secret, "dev")
