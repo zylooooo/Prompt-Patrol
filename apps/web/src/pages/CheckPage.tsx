@@ -7,6 +7,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageScroll } from "../components/ui/Page";
 import SingleCheckTab from "../components/SingleCheckTab";
 import Tabs, { type TabOption } from "../components/ui/Tabs";
+import UnassignedNotice from "../components/UnassignedNotice";
 import ModelStatusBadge from "../components/ModelStatusBadge";
 
 type TabId = "single" | "batch";
@@ -32,16 +33,7 @@ export default function CheckPage() {
       />
 
       {unassigned ? (
-        <section className="mt-8 shrink-0 rounded-xl bg-surface p-12 text-center shadow-md">
-          <p className="text-lg font-medium text-foreground">
-            You are not assigned to an instructor yet
-          </p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Once an instructor adds you as their teaching assistant, you can
-            screen answers for their courses. Ask them to add you, or contact
-            your course administrator.
-          </p>
-        </section>
+        <UnassignedNotice className="mt-8" />
       ) : (
         <>
           <div className="mt-7 shrink-0">
