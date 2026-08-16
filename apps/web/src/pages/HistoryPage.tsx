@@ -180,7 +180,7 @@ export default function HistoryPage() {
 
       {isPending ? (
         <section
-          className="mt-8 flex shrink-0 flex-col gap-3 rounded-xl border border-border bg-surface p-7"
+          className="mt-8 flex shrink-0 flex-col gap-3 rounded-xl bg-surface p-7 shadow-md"
           aria-busy="true"
           aria-label="Loading history"
         >
@@ -201,7 +201,7 @@ export default function HistoryPage() {
           onRetry={() => void refetch()}
         />
       ) : !hasAny ? (
-        <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-12 text-center">
+        <section className="mt-8 shrink-0 rounded-xl bg-surface p-12 text-center shadow-md">
           <p className="text-lg font-medium text-foreground">No checks yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Checked answers will appear here. Run your first check from the

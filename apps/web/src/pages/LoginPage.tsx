@@ -2,6 +2,7 @@ import Button from "../components/ui/Button";
 import { LOGIN_HINT_KEY } from "../api/auth";
 import Wordmark from "../components/ui/Wordmark";
 import { useSearchParams } from "react-router-dom";
+import { SECTION_LABEL } from "../components/ui/section-label";
 
 const HERO_IMAGE_URL =
   "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?q=75&w=2000&auto=format&fit=crop";
@@ -9,8 +10,7 @@ const HERO_IMAGE_URL =
 const INPUT_CLASS =
   "w-full rounded-lg border border-transparent bg-surface-muted px-3.5 py-3 text-sm text-foreground placeholder:text-disabled-foreground transition-all outline-hidden focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60";
 
-const LABEL_CLASS =
-  "mb-2.5 block text-xs font-bold uppercase tracking-wide text-muted-foreground";
+const LABEL_CLASS = `mb-2.5 block ${SECTION_LABEL}`;
 
 const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   not_provisioned:

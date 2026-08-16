@@ -8,9 +8,7 @@ import Page, { PageScroll } from "../components/ui/Page";
 import BatchResultsTable from "../components/BatchResultsTable";
 
 import { usePageTitle } from "../hooks/usePageTitle";
-
-const SECTION_LABEL =
-  "text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
+import { SECTION_LABEL } from "../components/ui/section-label";
 
 export default function HistoryDetailPage() {
   usePageTitle("Screening Details");
@@ -29,7 +27,7 @@ export default function HistoryDetailPage() {
         {isPending && <LoadingState size="card" label="Loading entry…" />}
 
         {!isPending && !entry && (
-          <section className="mt-6 rounded-xl border border-border bg-surface p-12 text-center">
+          <section className="mt-6 rounded-xl bg-surface p-12 text-center shadow-md">
             <p className="text-lg font-medium text-foreground">
               Entry not found
             </p>
@@ -41,7 +39,7 @@ export default function HistoryDetailPage() {
 
         {entry?.kind === "single" && (
           <div className="mt-6 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-            <section className="rounded-xl border border-border bg-surface p-7">
+            <section className="rounded-xl bg-surface p-7 shadow-md">
               <p className={SECTION_LABEL}>Student answer</p>
               <p className="mt-3 text-sm leading-relaxed text-foreground">
                 {entry.answerText ??

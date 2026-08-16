@@ -28,6 +28,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { displayName, type AppUser } from "../types";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
+import { SECTION_LABEL } from "../components/ui/section-label";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
@@ -210,10 +211,8 @@ export default function TeachingAssistantsPage() {
         subtitle="Accounts you supervise. They can screen answers for your courses."
       />
 
-      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
-        <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-          Add teaching assistant
-        </p>
+      <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
+        <p className={SECTION_LABEL}>Add teaching assistant</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -228,7 +227,7 @@ export default function TeachingAssistantsPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="full name"
+              placeholder="Full name"
               className={`w-56 ${FIELD}`}
             />
           </label>

@@ -1,5 +1,5 @@
 import Wordmark from "./ui/Wordmark";
-import { Menu, X } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import { atLeastRole, ROLE_TEXT } from "../types";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -155,24 +155,24 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
           <p className="text-sm font-semibold break-all text-primary-foreground">
             {user?.email}
           </p>
-          <div className="mt-1 flex items-center gap-3 text-[13px]">
-            <span className="text-primary-foreground/60">
-              {user ? ROLE_TEXT[user.role] : ""}
-            </span>
+          <p className="mt-1 text-[13px] text-primary-foreground/60">
+            {user ? ROLE_TEXT[user.role] : ""}
+          </p>
 
-            <form
-              method="post"
-              action="/api/auth/logout"
-              onSubmit={clearSignedOutState}
+          <form
+            method="post"
+            action="/api/auth/logout"
+            onSubmit={clearSignedOutState}
+            className="mt-3"
+          >
+            <button
+              type="submit"
+              className="-mx-3 flex w-[calc(100%+1.5rem)] items-center gap-2.5 rounded-md bg-danger/20 px-3 py-2 text-sm font-medium text-danger-on-primary transition-colors hover:bg-danger hover:text-danger-foreground focus-visible:bg-danger focus-visible:text-danger-foreground"
             >
-              <button
-                type="submit"
-                className="-my-1 rounded-sm py-1 text-accent-soft transition-colors hover:text-primary-foreground focus-visible:text-primary-foreground focus-visible:underline"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
+              <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate text-left">Sign out</span>
+            </button>
+          </form>
         </div>
       </aside>
     </>

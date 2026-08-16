@@ -5,7 +5,7 @@ export default function UnassignedNotice({
 }) {
   return (
     <section
-      className={`shrink-0 rounded-xl border border-border bg-surface p-12 text-center ${className}`.trimEnd()}
+      className={`shrink-0 rounded-xl bg-surface p-12 text-center shadow-md ${className}`.trimEnd()}
     >
       <p className="text-lg font-medium text-foreground">
         You are not assigned to an instructor yet.

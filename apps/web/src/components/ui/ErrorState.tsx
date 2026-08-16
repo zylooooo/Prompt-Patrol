@@ -5,7 +5,7 @@ export type ErrorStateSize = "page" | "card";
 
 const SIZE = {
   page: "flex min-h-screen items-center justify-center px-6 py-12 text-center",
-  card: "rounded-xl border border-border bg-surface p-12 text-center",
+  card: "rounded-xl bg-surface p-12 text-center shadow-md",
 } as const satisfies Record<ErrorStateSize, string>;
 
 export default function ErrorState({

@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type TabId = "single" | "batch" | "history";
 
 const TABS: TabOption<TabId>[] = [
-  { value: "single", label: "Single answer" },
-  { value: "batch", label: "Batch upload" },
+  { value: "single", label: "Single Answer" },
+  { value: "batch", label: "Batch Upload" },
   { value: "history", label: "History" },
 ];
 
@@ -57,7 +57,7 @@ describe("Tabs — semantics", () => {
     render(<Harness initial="batch" />);
     const selected = screen.getAllByRole("tab", { selected: true });
     expect(selected).toHaveLength(1);
-    expect(selected[0].textContent).toBe("Batch upload");
+    expect(selected[0].textContent).toBe("Batch Upload");
   });
 
   it("wires each tab to its panel through id and aria-controls", () => {
@@ -81,10 +81,10 @@ describe("Tabs — keyboard", () => {
   it("moves and activates with ArrowRight", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    screen.getByRole("tab", { name: "Single answer" }).focus();
+    screen.getByRole("tab", { name: "Single Answer" }).focus();
     await userEvent.keyboard("{ArrowRight}");
     expect(onChange).toHaveBeenCalledWith("batch");
-    expect(document.activeElement?.textContent).toBe("Batch upload");
+    expect(document.activeElement?.textContent).toBe("Batch Upload");
   });
 
   it("wraps in both directions", async () => {
@@ -100,7 +100,7 @@ describe("Tabs — keyboard", () => {
   it("jumps to first and last with Home and End", async () => {
     const onChange = vi.fn();
     render(<Harness initial="batch" onChange={onChange} />);
-    screen.getByRole("tab", { name: "Batch upload" }).focus();
+    screen.getByRole("tab", { name: "Batch Upload" }).focus();
     await userEvent.keyboard("{End}");
     expect(onChange).toHaveBeenLastCalledWith("history");
     await userEvent.keyboard("{Home}");
@@ -162,7 +162,7 @@ describe("Tabs — degenerate input", () => {
   it("ignores keys it does not handle", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    screen.getByRole("tab", { name: "Single answer" }).focus();
+    screen.getByRole("tab", { name: "Single Answer" }).focus();
     await userEvent.keyboard("{ArrowUp}{ArrowDown}{PageUp}x");
     expect(onChange).not.toHaveBeenCalled();
   });

@@ -170,7 +170,7 @@ export default function DeactivateInstructorDialog({
                     value: candidate.id,
                     label: displayName(candidate),
                   }))}
-                  placeholder="choose an instructor"
+                  placeholder="Choose an instructor"
                   ariaLabel="Instructor to reassign to"
                   emptyLabel="No other active instructors"
                   size="lg"

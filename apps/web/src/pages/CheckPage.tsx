@@ -13,8 +13,8 @@ import ModelStatusBadge from "../components/ModelStatusBadge";
 type TabId = "single" | "batch";
 
 const CHECK_TABS: TabOption<TabId>[] = [
-  { value: "single", label: "Single answer" },
-  { value: "batch", label: "Batch upload (CSV)" },
+  { value: "single", label: "Single Answer" },
+  { value: "batch", label: "Batch Upload (CSV)" },
 ];
 
 export default function CheckPage() {

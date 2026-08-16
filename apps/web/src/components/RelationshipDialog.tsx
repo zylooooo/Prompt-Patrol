@@ -4,6 +4,7 @@ import Dropdown from "./ui/Dropdown";
 import RowAction from "./ui/RowAction";
 import { useMemo, useState } from "react";
 import { useToast } from "../hooks/useToast";
+import { SECTION_LABEL } from "./ui/section-label";
 import { displayName, isActive, type AppUser } from "../types";
 import { assistantsOf, linkedAt, supervisorsOf } from "../api/users";
 import { useLinkSupervision, useUnlinkSupervision } from "../hooks/useUsers";
@@ -133,9 +134,7 @@ export default function RelationshipDialog({
         </>
       }
     >
-      <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-        Current
-      </p>
+      <p className={SECTION_LABEL}>Current</p>
 
       <div className="mt-2.5 overflow-hidden rounded-lg border border-border bg-modal-muted">
         {selected.length === 0 && (
@@ -184,7 +183,7 @@ export default function RelationshipDialog({
         })}
       </div>
 
-      <p className="mt-5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
+      <p className={`mt-5 ${SECTION_LABEL}`}>
         {isSupervisors ? "Add an instructor" : "Add a teaching assistant"}
       </p>
       <div className="mt-2.5 flex items-center gap-3">
@@ -197,8 +196,8 @@ export default function RelationshipDialog({
           }))}
           placeholder={
             isSupervisors
-              ? "choose an instructor"
-              : "choose a teaching assistant"
+              ? "Choose an instructor"
+              : "Choose a teaching assistant"
           }
           ariaLabel={
             isSupervisors

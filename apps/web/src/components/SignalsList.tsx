@@ -4,6 +4,7 @@ import {
   type AbstainReason,
   type Explanation,
 } from "../types";
+import { SECTION_LABEL } from "./ui/section-label";
 
 interface SignalsListProps {
   abstainReason: AbstainReason;
@@ -22,9 +23,7 @@ export default function SignalsList({
 
   return (
     <div>
-      <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-        Signals
-      </p>
+      <p className={SECTION_LABEL}>Signals</p>
       <ul className="mt-2.5 flex flex-col gap-2">
         {lines.map((line) => (
           <li

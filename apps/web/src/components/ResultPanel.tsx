@@ -5,6 +5,7 @@ import SignalsList from "./SignalsList";
 import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
+import { SECTION_LABEL } from "./ui/section-label";
 import { STRICTNESS_TEXT, type SingleCheck } from "../types";
 
 interface ResultPanelProps {
@@ -35,9 +36,7 @@ export default function ResultPanel({
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-4">
-        <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-          Result
-        </p>
+        <p className={SECTION_LABEL}>Result</p>
         {status === "success" && result && (
           <VerdictChip verdict={result.verdict} />
         )}

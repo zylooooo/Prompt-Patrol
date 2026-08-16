@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import LoadingState from "./LoadingState";
 import { useMemo, type ReactNode } from "react";
+import { SECTION_LABEL } from "./section-label";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { resolveGridColumnWidth } from "./data-table-columns";
 import { useNarrowContainer } from "../../hooks/useNarrowContainer";
@@ -151,8 +152,8 @@ export default function DataTable<T>({
           <div
             role="row"
             style={gridStyle}
-            className={`${rowGridClass} bg-surface-muted${
-              fills && !isEmpty ? " sticky top-0 z-10" : ""
+            className={`${rowGridClass} bg-table-header ${
+              fills && !isEmpty ? "sticky top-0 z-10" : ""
             }`}
           >
             {columns.map(renderHeaderCell)}
@@ -254,5 +255,4 @@ const ROW_TRANSITION = { duration: 0.25, ease: [0.4, 0, 0.2, 1] as const };
 const COMPACT_CONTAINER_WIDTH = 640;
 const CELL_CLASS =
   "flex items-center whitespace-nowrap overflow-hidden px-3 py-4 text-left text-sm font-medium text-foreground sm:px-5";
-const HEADER_CLASS =
-  "flex items-center whitespace-nowrap overflow-hidden px-3 py-3 text-left text-xs font-bold uppercase tracking-wide text-muted-foreground sm:px-5";
+const HEADER_CLASS = `flex items-center whitespace-nowrap overflow-hidden px-3 py-3 text-left ${SECTION_LABEL} sm:px-5`;

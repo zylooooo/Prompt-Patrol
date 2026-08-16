@@ -30,6 +30,7 @@ import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
+import { SECTION_LABEL } from "../components/ui/section-label";
 import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
@@ -297,10 +298,8 @@ export default function UsersPage() {
         subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
       />
 
-      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
-        <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-          Add account
-        </p>
+      <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
+        <p className={SECTION_LABEL}>Add account</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -313,7 +312,7 @@ export default function UsersPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="full name"
+              placeholder="Full name"
               className={`w-48 ${FIELD}`}
             />
           </label>
@@ -337,7 +336,7 @@ export default function UsersPage() {
                 setSupervisors([]);
               }}
               options={ROLE_OPTIONS}
-              placeholder="choose a role"
+              placeholder="Choose a role"
               ariaLabel="Role"
               size="lg"
               triggerLeading={false}

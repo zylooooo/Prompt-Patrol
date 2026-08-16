@@ -96,7 +96,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
   const expandedRow = run.rows.find((row) => row.checkId === expanded);
 
   return (
-    <section className="rounded-xl border border-border bg-surface p-7">
+    <section className="rounded-xl bg-surface p-7 shadow-md">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-base font-medium text-foreground">{run.fileName}</p>
         <div className="flex items-center gap-5">
