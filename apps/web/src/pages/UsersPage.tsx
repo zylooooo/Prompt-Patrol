@@ -295,7 +295,7 @@ export default function UsersPage() {
     <Page>
       <PageHeader
         title="Manage All Accounts"
-        subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
+        subtitle="Provision accounts for instructors and teaching assistants."
       />
 
       <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">

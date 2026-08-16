@@ -208,7 +208,7 @@ export default function TeachingAssistantsPage() {
     <Page>
       <PageHeader
         title="Manage My Assistants"
-        subtitle="Accounts you supervise. They can screen answers for your courses."
+        subtitle="Accounts you supervise."
       />
 
       <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
