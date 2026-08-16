@@ -4,6 +4,7 @@ import UsersPage from "./pages/UsersPage";
 import AppShell from "./components/AppShell";
 import HistoryPage from "./pages/HistoryPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import { GuestRoute } from "./components/GuestRoute";
 import HistoryDetailPage from "./pages/HistoryDetailPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import TeachingAssistantsPage from "./pages/TeachingAssistantsPage";
@@ -13,7 +14,14 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={
+            <GuestRoute>
+              <LoginPage />
+            </GuestRoute>
+          }
+        />
         <Route
           element={
             <ProtectedRoute>

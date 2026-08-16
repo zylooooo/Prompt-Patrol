@@ -8,8 +8,8 @@
   --color-background: #f9fafc; /* faint indigo-tinted off-white */
   --color-surface: #ffffff;
   --color-surface-muted: #eef0f8; /* faint indigo grey */
-  --color-surface-modal: #e4e7f2; /* modal panel w/ indigo undertone */
-  --color-modal-muted: #f5f6fb; /* lighter muted modal surface */
+  --color-surface-modal: #ffffff; /* modal panel, white like surface */
+  --color-modal-muted: #f5f6fb; /* inset panels within a modal */
   --color-surface-strong: #dee2f0; /* chrome hover step */
   --color-border: #d9ddec; /* soft indigo line */
 
@@ -40,6 +40,7 @@
   --color-danger-soft: #fee2e2;
   --color-danger-border: #fca5a5;
   --color-danger-foreground: #ffffff;
+  --color-danger-on-primary: #ffb3b3; /* red that stays legible on the indigo sidebar */
 
   /* Only the dev-login panel uses these today. Values match the amber-50 /
      amber-300 it previously hardcoded, so this is a token-only change. */
@@ -53,7 +54,7 @@
   --color-unsure: #545a78; /* indigo-grey, matches muted-foreground */
   --color-unsure-soft: #e9ebf3;
 
-  --color-table-header: #eef0f8; /* match surface-muted */
+  --color-table-header: #d8ddf0; /* indigo-grey head, a clear step off the white rows */
   --color-table-row-hover: #f6f7fc;
   --color-table-selected: #e4e4fa; /* primary-soft */
   --color-table-border: #d9ddec; /* match border */

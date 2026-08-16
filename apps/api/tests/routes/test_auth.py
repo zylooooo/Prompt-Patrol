@@ -1,20 +1,19 @@
 import uuid
 from unittest.mock import AsyncMock, patch
+from urllib.parse import quote
 
 import pytest
+from authlib.integrations.base_client.errors import OAuthError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from config import ENTRA_CONFIGURED, FRONTEND_URL
+from auth import SessionFailure
+from config import FRONTEND_URL
 from db import get_db
 from main import app
 from models import User, UserRoleEnum, UserSession
-from services import create_session
-
-needs_entra = pytest.mark.skipif(
-    not ENTRA_CONFIGURED,
-    reason="Entra routes aren't mounted without an app registration configured",
-)
+from services import authenticate_session, create_session
+from services.sessions import SESSION_IDLE_TTL
 
 
 @pytest.fixture
@@ -27,7 +26,6 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
-@needs_entra
 @pytest.mark.asyncio
 async def test_callback_creates_session_for_provisioned_user(client, db_session):
     user = User(id=uuid.uuid4(), email="prov@smu.edu.sg", role=UserRoleEnum.instructor)
@@ -46,7 +44,24 @@ async def test_callback_creates_session_for_provisioned_user(client, db_session)
     assert "samesite=strict" in cookie_header.lower()
 
 
-@needs_entra
+@pytest.mark.asyncio
+async def test_callback_signs_in_when_entra_sends_a_different_email_case(client, db_session):
+    # End to end version of the provisioning-case bug: the row is correct, the
+    # person is real, and the only difference is capitalisation in the claim.
+    # This used to land on /login?error=not_provisioned.
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-ada", "email": "Ada@SMU.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == FRONTEND_URL
+    assert "__Host-session" in response.cookies
+
+
 @pytest.mark.asyncio
 async def test_callback_redirects_unprovisioned_user(client, db_session):
     fake_token = {"userinfo": {"oid": "oid-x", "email": "nobody@smu.edu.sg"}}
@@ -60,6 +75,29 @@ async def test_callback_redirects_unprovisioned_user(client, db_session):
     assert result.scalars().all() == []
 
 
+@pytest.mark.asyncio
+async def test_callback_issues_no_session_on_attempted_account_takeover(client, db_session):
+    victim = User(
+        id=uuid.uuid4(),
+        email="victim@smu.edu.sg",
+        entra_oid="victim-oid",
+        role=UserRoleEnum.root_admin,
+    )
+    db_session.add(victim)
+    await db_session.commit()
+
+    attacker = {"userinfo": {"oid": "attacker-oid", "email": "victim@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=attacker)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=not_provisioned"
+    assert "__Host-session" not in response.cookies
+    assert (await db_session.execute(select(UserSession))).scalars().all() == []
+    await db_session.refresh(victim)
+    assert victim.entra_oid == "victim-oid"
+
+
 def test_me_without_session_returns_401(client):
     response = client.get("/api/auth/me")
     assert response.status_code == 401
@@ -71,22 +109,83 @@ async def test_me_with_valid_session_returns_user(client, db_session):
     db_session.add(user)
     await db_session.commit()
     raw_token = await create_session(db_session, user.id)
-
-    # get_current_user shares the same overridden get_db dependency as the
-    # route handler now, no need to patch a separate module-level session for
-    # it to see the row we just created.
     client.cookies.set("__Host-session", raw_token)
     response = client.get("/api/auth/me")
 
     assert response.status_code == 200
-    assert response.json() == {"email": "loggedin@smu.edu.sg", "role": "instructor"}
+    body = response.json()
+    assert body["email"] == "loggedin@smu.edu.sg"
+    assert body["role"] == "instructor"
+    # The SPA counts down to expires_at to warn before eviction rather than
+    # discover it on the next request, so /me must carry the deadlines.
+    assert set(body["session"]) == {
+        "expires_at",
+        "idle_expires_at",
+        "absolute_expires_at",
+        "expires_in_seconds",
+        "capped",
+        "idle_timeout_seconds",
+    }
+    assert body["session"]["idle_timeout_seconds"] == int(SESSION_IDLE_TTL.total_seconds())
+    assert body["session"]["capped"] is False
+    # Counted from receipt, never subtracted from the browser clock.
+    assert 0 < body["session"]["expires_in_seconds"] <= SESSION_IDLE_TTL.total_seconds()
 
 
-@needs_entra
+def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
+    # Regression: this used to redirect to /api/auth/login, which re-enters the
+    # Entra redirect immediately - a user who cancelled was thrown back at the
+    # prompt they had just dismissed and could never reach our own login page.
+    error = OAuthError(error="access_denied", description="user cancelled")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_cancelled"
+    assert "__Host-session" not in response.cookies
+
+
+def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
+    error = OAuthError(error="mismatching_state", description="CSRF Warning!")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_failed"
+    assert "__Host-session" not in response.cookies
+
+
+def test_callback_never_redirects_back_into_the_entra_flow(client):
+    # The loop guard. No callback failure may point the browser at a URL that
+    # restarts the OIDC redirect - the user must always land somewhere with a
+    # way out.
+    for error in (
+        OAuthError(error="access_denied", description="user cancelled"),
+        OAuthError(error="mismatching_state", description="CSRF Warning!"),
+        OAuthError(description='Missing "state" parameter'),
+    ):
+        with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+            response = client.get("/api/auth/callback", follow_redirects=False)
+
+        assert "/api/auth/login" not in response.headers["location"]
+        assert response.headers["location"].startswith(f"{FRONTEND_URL}/login?error=")
+
+
+def test_callback_does_not_reflect_entra_error_text_into_the_url(client):
+    # error_description is provider-controlled. It must never reach a URL the
+    # browser lands on.
+    error = OAuthError(error="invalid_client", description="<script>alert(1)</script>")
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    location = response.headers["location"]
+    assert "script" not in location
+    assert "invalid_client" not in location
+    assert location == f"{FRONTEND_URL}/login?error=sign_in_failed"
+
+
 @pytest.mark.asyncio
 async def test_callback_ignores_stale_cookie(client, db_session):
-    # /callback doesn't depend on get_current_user at all, so a stale or
-    # invalid session cookie can't affect it, it's simply never looked at.
     fake_token = {"userinfo": {"oid": "oid-stale", "email": "stale@smu.edu.sg"}}
     with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         client.cookies.set("__Host-session", "not-a-real-token")
@@ -102,6 +201,389 @@ def test_stale_cookie_on_protected_route_returns_401(client):
     assert response.status_code == 401
 
 
-def test_entra_routes_mounted_only_when_configured():
-    entra_paths = {"/api/auth/login", "/api/auth/callback"} & set(app.openapi()["paths"])
-    assert entra_paths == ({"/api/auth/login", "/api/auth/callback"} if ENTRA_CONFIGURED else set())
+@pytest.mark.asyncio
+async def test_identity_header_alone_does_not_authenticate(client, db_session):
+    # The gateway-header bypass. get_current_user used to accept X-PP-User-Id as
+    # proof of identity whenever ENVIRONMENT was not "dev", with no cookie and no
+    # session lookup - so any live user id was a full login for that account, and
+    # nginx forwarded the header from the client untouched.
+    user = User(id=uuid.uuid4(), email="target@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add(user)
+    await db_session.commit()
+
+    response = client.get("/api/auth/me", headers={"X-PP-User-Id": str(user.id)})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_identity_header_cannot_override_the_session_cookie(client, db_session):
+    # A valid session plus a header naming someone else must resolve to the
+    # cookie's owner, never the header's.
+    owner = User(id=uuid.uuid4(), email="owner@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
+    other = User(id=uuid.uuid4(), email="other@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add_all([owner, other])
+    await db_session.commit()
+    raw_token = await create_session(db_session, owner.id)
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me", headers={"X-PP-User-Id": str(other.id)})
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "owner@smu.edu.sg"
+    assert response.json()["role"] == "teaching_assistant"
+
+
+def test_no_gateway_header_trust_remains_in_the_auth_dependency():
+    # Guards the shape, not just the behaviour: authentication must not branch on
+    # the environment, or the bypass returns the moment ENVIRONMENT changes.
+    # Inspects the executable body only - the docstring deliberately names the
+    # removed header so the next reader knows why it must not come back.
+    import ast
+    import inspect
+    import textwrap
+
+    from auth import dependencies
+
+    # Both halves: get_current_session reads the cookie, get_current_user is
+    # the thin wrapper over it. Checking only one would let the bypass return
+    # in the other.
+    for target in (dependencies.get_current_session, dependencies.get_current_user):
+        function = ast.parse(textwrap.dedent(inspect.getsource(target))).body[0]
+        body = function.body
+        if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            body = body[1:]
+        code = "\n".join(ast.unparse(node) for node in body)
+
+        assert "X-PP-User-Id" not in code
+        assert "ENVIRONMENT" not in code
+
+
+def test_entra_routes_are_always_mounted():
+    assert {"/api/auth/login", "/api/auth/callback"} <= set(app.openapi()["paths"])
+
+
+def test_no_password_less_dev_login_exists(client):
+    assert not [path for path in app.openapi()["paths"] if "/dev" in path]
+    assert client.post("/api/auth/dev/login", json={"email": "a@b.c"}).status_code == 404
+    assert client.get("/api/auth/dev/users").status_code == 404
+
+
+# --- sign-out ---------------------------------------------------------------
+# Logout had no tests at all before 2026-08-16, despite being the route with the
+# most side effects: it revokes a row, clears a cookie, and hands the browser to
+# a third party.
+
+END_SESSION = "https://login.microsoftonline.com/tid/oauth2/v2.0/logout"
+
+
+def _discovery(monkeypatch_target="routes.auth_routes.oauth.entra.load_server_metadata"):
+    return patch(monkeypatch_target, new=AsyncMock(return_value={"end_session_endpoint": END_SESSION}))
+
+
+async def _signed_in_client(client, db_session, **user_kwargs):
+    user = User(id=uuid.uuid4(), email="out@smu.edu.sg", role=UserRoleEnum.instructor, **user_kwargs)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+    client.cookies.set("__Host-session", raw_token)
+    return user, raw_token
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_the_session(client, db_session):
+    user, raw_token = await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_the_cookie_with_matching_attributes(client, db_session):
+    # delete_cookie must repeat path/secure/httponly/samesite or the browser
+    # keeps the original cookie and the user stays signed in locally.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    header = response.headers["set-cookie"]
+    assert "__Host-session=" in header
+    assert "Path=/" in header
+    assert "HttpOnly" in header
+    assert "Secure" in header
+    assert "samesite=strict" in header.lower()
+
+
+@pytest.mark.asyncio
+async def test_logout_uses_the_discovered_end_session_endpoint(client, db_session):
+    # Not a hardcoded login.microsoftonline.com URL - the endpoint comes from the
+    # provider's own metadata, which is what makes non-global Azure clouds work.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    location = response.headers["location"]
+    assert location.startswith(END_SESSION)
+    assert quote(FRONTEND_URL, safe="") in location.replace("%2F", "%2F")
+
+
+@pytest.mark.asyncio
+async def test_logout_sends_logout_hint_when_one_was_captured(client, db_session):
+    # Without this parameter Entra asks "which account do you want to sign out
+    # from?" instead of just signing the user out.
+    await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert "logout_hint=opaque-hint-from-entra" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_logout_omits_logout_hint_when_none_was_captured(client, db_session):
+    # The optional claim may not be enabled on the app registration. That
+    # degrades to the account picker; it must not break sign-out.
+    await _signed_in_client(client, db_session)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "logout_hint" not in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_logout_never_sends_our_own_user_id_as_the_hint(client, db_session):
+    # Entra has never seen this UUID. Passing it looks plausible and silently
+    # produces the account picker, so it must never leak into the URL.
+    user, _ = await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert str(user.id) not in response.headers["location"]
+    assert user.email not in response.headers["location"]
+
+
+def test_logout_without_a_session_still_completes(client):
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(END_SESSION)
+
+
+@pytest.mark.asyncio
+async def test_logout_survives_an_unreachable_discovery_document(client, db_session):
+    # The local session is revoked before the provider URL is built. A provider
+    # outage must not turn that into a 500 that tells the user sign-out failed
+    # when it actually succeeded.
+    user, raw_token = await _signed_in_client(client, db_session)
+
+    with patch(
+        "routes.auth_routes.oauth.entra.load_server_metadata",
+        new=AsyncMock(side_effect=RuntimeError("metadata unreachable")),
+    ):
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login"
+    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_callback_captures_the_login_hint_claim(client, db_session):
+    user = User(id=uuid.uuid4(), email="hinted@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-h", "email": "hinted@smu.edu.sg", "login_hint": "opaque-hint"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        client.get("/api/auth/callback", follow_redirects=False)
+
+    await db_session.refresh(user)
+    assert user.logout_hint == "opaque-hint"
+
+
+@pytest.mark.asyncio
+async def test_callback_without_the_login_hint_claim_keeps_any_stored_hint(client, db_session):
+    # The claim is optional and can be absent from one login. A usable stored
+    # hint beats overwriting it with NULL.
+    user = User(
+        id=uuid.uuid4(),
+        email="kept@smu.edu.sg",
+        entra_oid="oid-k",
+        role=UserRoleEnum.instructor,
+        logout_hint="previously-captured",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"oid": "oid-k", "email": "kept@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        client.get("/api/auth/callback", follow_redirects=False)
+
+    await db_session.refresh(user)
+    assert user.logout_hint == "previously-captured"
+
+
+@pytest.mark.asyncio
+async def test_a_new_login_leaves_other_sessions_alive(db_session, client):
+    # Signing in on a second device must not sign the first one out. This is
+    # why the callback does not revoke anything, and therefore why sessions
+    # accumulate - see the note on GuestRoute in 08-auth-and-security.md.
+    #
+    # It is also not fixable at the callback: __Host-session is SameSite=strict
+    # and /api/auth/callback is reached by a cross-site redirect from Microsoft,
+    # so the browser withholds the existing cookie and the server has no way to
+    # tell which prior session belonged to this browser.
+    user = User(id=uuid.uuid4(), email="two@smu.edu.sg", entra_oid="oid-two", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    first_device = await create_session(db_session, user.id)
+
+    fake_token = {"userinfo": {"oid": "oid-two", "email": "two@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert not isinstance(await authenticate_session(db_session, first_device), SessionFailure)
+    live = (await db_session.execute(select(UserSession).where(UserSession.deleted_at.is_(None)))).scalars().all()
+    assert len(live) == 2
+
+
+# --- why a 401 happened ----------------------------------------------------
+
+
+def test_a_401_with_no_cookie_says_so(client):
+    # "not_signed_in" is what the login page reads as "say nothing" - a first
+    # visitor has not been signed out of anything and must not be told they were.
+    body = client.get("/api/auth/me").json()
+
+    assert body["detail"]["code"] == SessionFailure.not_signed_in.value
+
+
+def test_a_401_on_an_unrecognised_cookie_says_so(client):
+    client.cookies.set("__Host-session", "not-a-real-token")
+
+    body = client.get("/api/auth/me").json()
+
+    assert body["detail"]["code"] == SessionFailure.session_unknown.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"deleted_at": "now"}, SessionFailure.session_revoked),
+        ({"last_active_at": "long ago"}, SessionFailure.session_expired),
+        ({"absolute_expires_at": "past"}, SessionFailure.session_ended),
+    ],
+    ids=["revoked", "idle", "capped"],
+)
+async def test_a_401_names_which_limit_ended_the_session(client, db_session, overrides, expected):
+    # The whole point of the change: every one of these used to return the same
+    # opaque 401, so the SPA could only ever say "your session timed out" - and
+    # for two of the three that sentence is false.
+    from datetime import UTC, datetime, timedelta
+
+    from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_IDLE_TTL
+
+    user = User(id=uuid.uuid4(), email=f"why-{expected.value}@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    now = datetime.now(UTC)
+    values = {
+        "now": now,
+        "long ago": now - SESSION_IDLE_TTL - timedelta(minutes=1),
+        "past": now - timedelta(seconds=1),
+    }
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    for field, key in overrides.items():
+        setattr(row, field, values[key])
+    if "absolute_expires_at" not in overrides:
+        row.absolute_expires_at = now + SESSION_ABSOLUTE_TTL
+    await db_session.commit()
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == expected.value
+
+
+@pytest.mark.asyncio
+async def test_a_401_after_deactivation_blames_the_account_not_the_session(client, db_session):
+    # Being told the session expired sends this person to sign in again, which
+    # cannot work. They need to be told to talk to an administrator.
+    from models import UserStatusEnum
+
+    user = User(id=uuid.uuid4(), email="turnedoff@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    user.status = UserStatusEnum.deactivated
+    await db_session.commit()
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == SessionFailure.account_deactivated.value
+
+
+@pytest.mark.asyncio
+async def test_a_probe_reads_the_session_without_reviving_it(client, db_session):
+    # Observed live before the fix: the SPA's countdown reached zero, asked
+    # /api/auth/me whether the session had expired, and the asking slid
+    # last_active_at from 179s old back to 3s. An abandoned tab renewed itself
+    # forever and the idle timeout did not exist.
+    from datetime import UTC, datetime, timedelta
+
+    user = User(id=uuid.uuid4(), email="probe@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    row.last_active_at = datetime.now(UTC) - SESSION_IDLE_TTL + timedelta(minutes=1)
+    await db_session.commit()
+    aged = row.last_active_at
+
+    client.cookies.set("__Host-session", raw_token)
+    assert client.get("/api/auth/me?probe=1").status_code == 200
+
+    await db_session.refresh(row)
+    # SQLite drops the offset on the way back out, so both sides are compared naive.
+    assert row.last_active_at.replace(tzinfo=None) == aged.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_request_still_keeps_a_working_user_signed_in(client, db_session):
+    # The other half: without the touch there is no sliding window at all, and
+    # the bug this whole change exists to fix comes straight back.
+    from datetime import UTC, datetime, timedelta
+
+    user = User(id=uuid.uuid4(), email="touch@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    row.last_active_at = datetime.now(UTC) - SESSION_IDLE_TTL + timedelta(minutes=1)
+    await db_session.commit()
+    aged = row.last_active_at
+
+    client.cookies.set("__Host-session", raw_token)
+    assert client.get("/api/auth/me").status_code == 200
+
+    await db_session.refresh(row)
+    assert row.last_active_at.replace(tzinfo=None) > aged.replace(tzinfo=None)

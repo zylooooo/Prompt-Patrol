@@ -4,14 +4,12 @@ import ResultPanel from "./ResultPanel";
 import { wordCount } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import StrictnessField from "./StrictnessField";
+import { SECTION_LABEL } from "./ui/section-label";
 import { useCheckAnswer } from "../hooks/useChecks";
 import { ANSWER_MIN_CHARS, type Strictness } from "../types";
 
 const FIELD_CLASS =
   "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
-
-const LABEL_CLASS =
-  "text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase";
 
 export default function SingleCheckTab() {
   const [answer, setAnswer] = useState("");
@@ -51,7 +49,7 @@ export default function SingleCheckTab() {
         className="rounded-xl bg-surface p-7 shadow-md"
       >
         <div className="flex items-center justify-between">
-          <label htmlFor="answer" className={LABEL_CLASS}>
+          <label htmlFor="answer" className={SECTION_LABEL}>
             Student answer
           </label>
           <span className="font-mono text-xs text-disabled-foreground">
@@ -74,7 +72,7 @@ export default function SingleCheckTab() {
         />
 
         <div className="mt-5">
-          <label htmlFor="context" className={LABEL_CLASS}>
+          <label htmlFor="context" className={SECTION_LABEL}>
             Question context
           </label>
           <input

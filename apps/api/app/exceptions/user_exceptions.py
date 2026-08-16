@@ -1,6 +1,11 @@
 class EmailAlreadyExistsError(Exception):
-    """A `users` row already exists for this email (active or soft-deleted)."""
+    """A live `users` row already exists for this email. Deleted rows do not
+    reserve an address, so the same person can be provisioned again."""
 
 
-class UserNotDeletedError(Exception):
-    """Target user exists and is visible to the actor but isn't soft-deleted."""
+class UserNotFoundError(Exception):
+    """No `users` row with this id, at any lifecycle status."""
+
+
+class InvalidStatusTransitionError(Exception):
+    """The requested lifecycle move is not permitted from the current status."""

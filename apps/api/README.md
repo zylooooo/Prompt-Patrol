@@ -30,19 +30,48 @@ folder on `sys.path` instead of the app root.
 
 ## Signing in
 
-Two paths. Pick one in `.env`; the API refuses to start with neither.
+**Microsoft Entra ID is the only way in**, in every environment including local
+development. Fill in `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`,
+`ENTRA_REDIRECT_URI` and `SESSION_SECRET`. All five are required; a partial fill is a
+startup error rather than a half-working OAuth client, and a blank fill is refused
+outright rather than booting an app nobody can sign into.
 
-**Microsoft Entra ID** — fill in `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_REDIRECT_URI` and `SESSION_SECRET`. All four `ENTRA_*` are required together; a partial fill is a startup error rather than a half-working OAuth client.
+The flow is Authorization Code + PKCE (`S256`) against a tenant-scoped discovery URL,
+so only identities in your own Entra tenant can reach the login form. Roles never come
+from Entra — they are read from the local `users` row, which must be provisioned above
+before the first sign-in.
 
-**Local dev login** — for working without an Entra app registration. Leave all four `ENTRA_*` blank and set `DEV_AUTH_ENABLED=true`. The login page then offers a picker of provisioned accounts and signs you in as one, no Microsoft round trip.
+> **The password-less local dev login has been removed.** `DEV_AUTH_ENABLED` and
+> `/api/auth/dev/*` no longer exist; the flag is ignored if left in a `.env`. It issued
+> a real session to any provisioned email with no identity check, and once Entra was
+> live it was pure attack surface. `tests/routes/test_auth.py` has a regression test
+> asserting those paths stay gone. Recovering an environment now means provisioning
+> through `scripts.provision_user`, not bypassing sign-in.
 
-This skips _authentication_ only. It does not skip _authorization_: the account must still have been provisioned above, must still exist and not be soft-deleted, and the role still comes from the `users` row — nothing in the request can create a user or pick a role. Sessions it issues are ordinary sessions with the same cookie hardening and TTLs.
+Use Chrome or Firefox — the session cookie is `Secure` + `__Host-`-prefixed even
+locally, and Safari won't store it over plain HTTP.
 
-It is confined to a developer's machine by four independent gates:
+## Entra app registration — two settings the code cannot check for you
 
-- `DEV_AUTH_ENABLED` is refused unless `ENVIRONMENT=dev` — the app raises at startup rather than quietly ignoring the flag, so a stray value in a real environment stops a deploy instead of going unnoticed.
-- `/api/auth/dev/*` is only mounted when the flag is set; in staging/prod those paths don't exist, and `routes/dev_auth.py` is never even imported.
-- The router re-checks the flag per request, so mounting it by mistake still yields 404s.
-- The login page's dev panel is behind `import.meta.env.DEV`, so `npm run build` strips it from the production bundle entirely.
+Sign-out depends on both, and gets them wrong silently rather than loudly.
 
-`docker-compose.yml` also publishes the API on `127.0.0.1:8000` rather than every interface, so the dev login isn't reachable from your LAN. Use Chrome or Firefox — the session cookie is `Secure` + `__Host-`-prefixed even locally, and Safari won't store it over plain HTTP.
+**1. Register the post-logout redirect URI.** Add every `FRONTEND_URL` you use
+(`http://localhost:5173` for development, plus each deployed origin) to the app
+registration's redirect URIs. If a URI is not registered, Entra **ignores**
+`post_logout_redirect_uri` and leaves the user on a generic Microsoft "you're signed
+out" page instead of returning them to Prompt Patrol. Nothing errors; the user just
+never comes back.
+
+**2. Enable the `login_hint` optional claim** (app registration → Token
+configuration → ID token). `/api/auth/callback` stores that claim in
+`users.logout_hint` and replays it as `logout_hint` at sign-out, which is what stops
+Entra asking *"which account do you want to sign out from?"*.
+
+Without it the column stays `NULL` and sign-out still works — you just get the account
+picker every time. Note that **only that claim works**: `users.id` is a UUID Entra has
+never seen, and Microsoft's documentation warns against passing a UPN or email, so
+either substitution compiles, runs, and silently produces the picker anyway.
+
+One residual to expect and *not* debug: on a domain-joined machine holding a valid
+Primary Refresh Token, the next sign-in can complete silently even after a correct
+sign-out. That is device-level SSO working as designed, not a logout bug.

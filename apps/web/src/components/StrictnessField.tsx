@@ -1,7 +1,8 @@
-import { STRICTNESS_HINT, STRICTNESS_TEXT, type Strictness } from "../types";
 import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "./ui/SegmentedToggle";
+import { SECTION_LABEL } from "./ui/section-label";
+import { STRICTNESS_HINT, STRICTNESS_TEXT, type Strictness } from "../types";
 
 const LEVELS: SegmentedToggleOption<Strictness>[] = (
   ["lenient", "standard", "strict"] as const
@@ -18,9 +19,7 @@ export default function StrictnessField({
 }: StrictnessFieldProps) {
   return (
     <fieldset>
-      <legend className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-        Flagging Strictness
-      </legend>
+      <legend className={SECTION_LABEL}>Flagging Strictness</legend>
 
       <div className="mt-3">
         <SegmentedToggle

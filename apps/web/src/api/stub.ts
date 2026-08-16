@@ -209,7 +209,10 @@ function analyseAnswer(
 }
 
 const HISTORY_KEY = "pp.history.v2";
-const USERS_KEY = "pp.users.v2";
+// v3 drops rows persisted with the old `deletedAt` field, which read back with
+// no `status` and rendered a blank chip.
+const USERS_KEY = "pp.users.v3";
+const LEGACY_USERS_KEYS = ["pp.users.v2"];
 const SUPERVISION_KEY = "pp.supervision.v2";
 const HISTORY_CAP = 200;
 
@@ -409,7 +412,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Admin",
     role: "root_admin",
     provisionedBy: null,
-    deletedAt: null,
+    status: "active",
     createdAt: T0,
   },
   {
@@ -418,7 +421,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Instructor A",
     role: "instructor",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T0,
   },
   {
@@ -427,7 +430,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Instructor B",
     role: "instructor",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -436,7 +439,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA A",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_A,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -445,7 +448,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA B",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_A,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -454,7 +457,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA C",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_B,
-    deletedAt: null,
+    status: "active",
     createdAt: T2,
   },
   {
@@ -463,7 +466,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA D",
     role: "teaching_assistant",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T2,
   },
 ];
@@ -537,6 +540,7 @@ if (import.meta.env.DEV) assertSeedsConsistent();
 
 function loadUsers(): AppUser[] {
   if (localStorage.getItem(USERS_KEY) === null) {
+    for (const key of LEGACY_USERS_KEYS) localStorage.removeItem(key);
     writeJson(USERS_KEY, SEED_USERS);
     return SEED_USERS;
   }
@@ -557,6 +561,40 @@ function loadSupervision(): SupervisionLink[] {
 
 function saveSupervision(links: SupervisionLink[]) {
   writeJson(SUPERVISION_KEY, links);
+}
+
+// Drops every key this module owns. Goes away with the rest of the file.
+export function clearStoredData(): void {
+  for (const key of [
+    HISTORY_KEY,
+    USERS_KEY,
+    ...LEGACY_USERS_KEYS,
+    SUPERVISION_KEY,
+    HISTORY_SEEDED_KEY,
+  ]) {
+    localStorage.removeItem(key);
+  }
+}
+
+// Terminal removal. Keeps the row for history but frees the email, mirroring the
+// backend's partial unique index, so the same person can be provisioned again.
+export function deleteUser(actor: User, id: string): Promise<AppUser> {
+  const resolved = requireAdmin(actor);
+  const users = loadUsers();
+  const target = users.find((u) => u.id === id);
+  if (!target) throw new ApiError(404, "User not found.");
+  if (target.id === resolved.id) {
+    throw new ApiError(403, "You cannot delete your own account.");
+  }
+  if (target.role === "root_admin") {
+    throw new ApiError(403, "Admin accounts cannot be deleted.");
+  }
+  if (target.status === "deleted") {
+    throw new ApiError(409, "This account is already deleted.");
+  }
+  target.status = "deleted";
+  saveUsers(users);
+  return Promise.resolve({ ...target });
 }
 
 export function findUserByEmail(email: string): AppUser | undefined {
@@ -587,7 +625,7 @@ function requireActor(actor: User): AppUser {
     name: null,
     role: actor.role,
     provisionedBy: null,
-    deletedAt: null,
+    status: "active",
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), adopted]);
@@ -861,7 +899,8 @@ export async function listMyAssistants(
 ): Promise<AppUser[]> {
   await delay(150, signal);
   const resolved = requireActor(actor);
-  return assistantsOf(resolved.id);
+  // The API hides deleted accounts from this list; the link outlives the row.
+  return assistantsOf(resolved.id).filter((ta) => ta.status !== "deleted");
 }
 
 export function lookupForLinking(actor: User, email: string): LookupResult {
@@ -907,7 +946,7 @@ export async function createAccount(
     name: input.name?.trim() || null,
     role: input.role,
     provisionedBy: resolved.id,
-    deletedAt: null,
+    status: "active",
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), user]);
@@ -1004,8 +1043,23 @@ export async function setUserActive(
   const users = loadUsers();
   const user = users.find((candidate) => candidate.id === id);
   if (!user) throw new ApiError(404, "That account no longer exists.");
+  // Mirrors the backend: deleted is terminal, so neither direction may touch it.
+  // The UI hides these actions too, but the rule has to live here as well or the
+  // two layers disagree about what is possible.
+  if (user.status === "deleted") {
+    throw new ApiError(
+      409,
+      "This account has been deleted and cannot be changed.",
+    );
+  }
+  if (active && user.status === "active") {
+    throw new ApiError(409, "This account is already active.");
+  }
+  if (!active && user.status === "deactivated") {
+    throw new ApiError(409, "This account is already deactivated.");
+  }
 
-  user.deletedAt = active ? null : new Date().toISOString();
+  user.status = active ? "active" : "deactivated";
   saveUsers(users);
   return user;
 }
@@ -1046,12 +1100,15 @@ export async function deactivateInstructor(
     saveSupervision(links);
   } else if (plan.mode === "deactivate") {
     const users = loadUsers();
-    const now = new Date().toISOString();
 
     for (const ta of stranded) {
       const account = users.find((candidate) => candidate.id === ta.id);
-      if (account && account.id !== resolved.id) {
-        account.deletedAt = now;
+      if (
+        account &&
+        account.id !== resolved.id &&
+        account.status === "active"
+      ) {
+        account.status = "deactivated";
         outcome.deactivated++;
       }
     }

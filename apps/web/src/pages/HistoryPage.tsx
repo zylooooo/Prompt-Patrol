@@ -6,17 +6,21 @@ import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "../components/ui/SegmentedToggle";
 import { useMemo, useState } from "react";
+import { useAuth } from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useHistory } from "../hooks/useChecks";
+import { hasScreeningAccess } from "../api/checks";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
 import PageHeader from "../components/ui/PageHeader";
 import Pagination from "../components/ui/Pagination";
+import ErrorState from "../components/ui/ErrorState";
 import Page, { PageFill } from "../components/ui/Page";
 import SearchInput from "../components/ui/SearchInput";
 import { fmtDateShort, truncate } from "../lib/format";
 import { RowActionLink } from "../components/ui/RowAction";
 import ModelStatusBadge from "../components/ModelStatusBadge";
+import UnassignedNotice from "../components/UnassignedNotice";
 import { entryId, type HistoryEntry, type Verdict } from "../types";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 
@@ -59,7 +63,9 @@ function matchesDays(entry: HistoryEntry, days: number): boolean {
 export default function HistoryPage() {
   usePageTitle("Screening History");
   const navigate = useNavigate();
-  const { data, isPending } = useHistory();
+  const { user } = useAuth();
+  const { data, isPending, isError, refetch } = useHistory();
+  const unassigned = !user || !hasScreeningAccess(user);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(0);
@@ -169,12 +175,12 @@ export default function HistoryPage() {
       <PageHeader
         title="Screening History"
         subtitle="Every check is stored with its score, verdict, and model version."
-        actions={<ModelStatusBadge />}
+        actions={unassigned ? undefined : <ModelStatusBadge />}
       />
 
       {isPending ? (
         <section
-          className="mt-8 flex shrink-0 flex-col gap-3 rounded-xl border border-border bg-surface p-7"
+          className="mt-8 flex shrink-0 flex-col gap-3 rounded-xl bg-surface p-7 shadow-md"
           aria-busy="true"
           aria-label="Loading history"
         >
@@ -185,8 +191,17 @@ export default function HistoryPage() {
             />
           ))}
         </section>
+      ) : unassigned ? (
+        <UnassignedNotice className="mt-8" />
+      ) : isError ? (
+        <ErrorState
+          className="mt-8"
+          title="Could not load your history"
+          description="Something went wrong reaching the server. Nothing has been lost."
+          onRetry={() => void refetch()}
+        />
       ) : !hasAny ? (
-        <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-12 text-center">
+        <section className="mt-8 shrink-0 rounded-xl bg-surface p-12 text-center shadow-md">
           <p className="text-lg font-medium text-foreground">No checks yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Checked answers will appear here. Run your first check from the

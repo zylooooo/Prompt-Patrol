@@ -1,115 +1,250 @@
 import base64
 import binascii
+import enum
 import logging
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exceptions import EmailAlreadyExistsError, UserNotDeletedError
-from models import User, UserRoleEnum
+from exceptions import EmailAlreadyExistsError, InvalidStatusTransitionError, UserNotFoundError
+from models import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
 from models.session import UserSession
 
 logger = logging.getLogger(__name__)
 
 
-async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | None:
-    """
-    Called from the callback route after Entra hands back claims.
+# Normalizes an email address for consistent storage and comparison.
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
 
-    There's no self-service signup here, a users row has to already exist
-    for successful login. We try matching on entra_oid first, that's the normal
-    path for every login after the first. If that misses, fall back to matching
-    on email and bind the oid to that row, which is what lets an admin
-    provision someone before they've ever logged in. No match on either one
-    means they're not provisioned, so we return None.
-    """
-    # Authenticated users can not first time logging in
-    result = await db.execute(select(User).where(User.entra_oid == oid, User.deleted_at.is_(None)))
+
+class LoginRejection(str, enum.Enum):
+    """Why a validated Entra identity was refused. Distinguishing these lets the
+    login page say something true, and lets a removed person still trying the
+    door show up in the logs."""
+
+    not_provisioned = "not_provisioned"
+    deactivated = "deactivated"
+    deleted = "deleted"
+
+
+# Resolves an Entra user by object ID or safely binds an unclaimed provisioned account.
+async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | LoginRejection:
+    email = normalize_email(email)
+    result = await db.execute(select(User).where(User.entra_oid == oid, User.status == UserStatusEnum.active))
     user = result.scalar_one_or_none()
     if user is not None:
         return user
 
-    # Case where user accounts created but on user's first sign in.
-    result = await db.execute(select(User).where(User.email == email, User.deleted_at.is_(None)))
-    user = result.scalar_one_or_none()
-    if user is None:
-        return None
+    try:
+        claimed = await db.execute(
+            update(User)
+            .where(User.email == email, User.entra_oid.is_(None), User.status == UserStatusEnum.active)
+            .values(entra_oid=oid)
+        )
+    except IntegrityError:
+        await db.rollback()
+        logger.warning("Refused to bind an oid already held by a removed account.")
+        return await _classify_rejection(db, email)
 
-    # Bind the entra oid if is the user's first log in.
-    user.entra_oid = oid
+    if claimed.rowcount == 1:
+        await db.commit()
+        result = await db.execute(select(User).where(User.email == email, User.status == UserStatusEnum.active))
+        return result.scalar_one_or_none()
+
+    await db.rollback()
+
+    result = await db.execute(select(User.entra_oid).where(User.email == email, User.status == UserStatusEnum.active))
+    bound_oid = result.scalar_one_or_none()
+    if bound_oid is not None:
+        logger.warning(
+            "Rejected Entra login: claim email %s matches an account already bound to a "
+            "different identity (incoming oid %s, bound oid %s).",
+            email,
+            oid,
+            bound_oid,
+        )
+    return await _classify_rejection(db, email)
+
+
+async def _classify_rejection(db: AsyncSession, email: str) -> LoginRejection:
+    """Names the reason a login was refused, for the redirect code and the log.
+
+    Safe to report to the user: the address comes from their own validated ID
+    token, so they can only ever learn their own status - there is nothing here
+    to probe with someone else's address.
+    """
+    result = await db.execute(select(User.status).where(User.email == email).order_by(User.created_at.desc()))
+    existing = result.scalars().first()
+    if existing == UserStatusEnum.deactivated:
+        logger.warning("Refused sign-in: %s is deactivated.", email)
+        return LoginRejection.deactivated
+    if existing == UserStatusEnum.deleted:
+        logger.warning("Refused sign-in: %s was deleted.", email)
+        return LoginRejection.deleted
+    logger.info("Refused sign-in: %s is not provisioned.", email)
+    return LoginRejection.not_provisioned
+
+
+# Stores the latest Entra logout hint when it is present and has changed.
+async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> None:
+    if not hint or user.logout_hint == hint:
+        return
+    user.logout_hint = hint
     await db.commit()
-    await db.refresh(user)
-    return user
+
+_ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
+    UserStatusEnum.active: frozenset({UserStatusEnum.deactivated, UserStatusEnum.deleted}),
+    UserStatusEnum.deactivated: frozenset({UserStatusEnum.active, UserStatusEnum.deleted}),
+    UserStatusEnum.deleted: frozenset(),
+}
 
 
-async def soft_delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID) -> None:
-    """
-    Marks the user deleted_at and revokes (soft-deletes) all their
-    sessions in the same operation, so a deactivated account can't keep
-    using a still-live cookie. Root admins can delete any user, instructors can only
-    delete TAs they provisoned, and TAs can't delete anyone.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the deletion, used for authorization checks.
-        user_id (uuid.UUID): The ID of the user to delete.
-
-    Raises:
-        PermissionError: If the actor is not authorized to delete the target user.
-    """
-    logger.debug("Attempting to soft delete user with ID: %s by actor: %s", user_id, actor.id)
-    if actor.role == UserRoleEnum.teaching_assistant:
-        logger.warning("Actor %s attempted to delete a user. Insufficient permissions.", actor.id)
-        raise PermissionError(f"role {actor.role} may not delete any users")
-
-    result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
-    target_user = result.scalar_one_or_none()
-    if target_user is None:
-        logger.info("No target user found for soft deletion")
-        return None
-
+def _may_manage(actor: User, target: User) -> bool:
+    """Delegation chain as a predicate. _assert_may_manage raises on the same rule."""
+    if actor.role == UserRoleEnum.root_admin:
+        return True
     if actor.role == UserRoleEnum.instructor:
-        if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
-            logger.warning(
-                "Actor %s with role %s cannot delete user ID: %s. Insufficient permissions.",
-                actor.id,
-                actor.role,
-                user_id,
-            )
-            raise PermissionError(f"role {actor.role} may not delete user ID: {user_id}")
+        return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.id
+    return False
 
-    # Soft delete the user and their sessions.
-    now = datetime.now(UTC)
-    await db.execute(update(User).where(User.id == user_id).values(deleted_at=now))
-    await db.execute(
-        update(UserSession)
-        .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
-        .values(deleted_at=now)
+
+def _assert_may_manage(actor: User, target: User, verb: str) -> None:
+    """Delegation chain: TAs manage nobody, instructors manage only the TAs they
+    provisioned, root admins manage anyone - but nobody manages themselves."""
+    # Self-transition is refused for everyone. A root admin deactivating their
+    # own account has their sessions revoked immediately and cannot sign back in,
+    # and no one else can reactivate them: instructors may only manage their own
+    # TAs. With a single root admin that is a total lockout recoverable only by
+    # editing the database - the same one-way door that deletion used to be.
+    if actor.id == target.id:
+        logger.warning("Actor %s attempted to %s their own account.", actor.id, verb)
+        raise PermissionError(f"you cannot {verb} your own account")
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s may not %s users.", actor.id, verb)
+        raise PermissionError(f"role {actor.role} may not {verb} any users")
+    if actor.role == UserRoleEnum.instructor:
+        if target.role != UserRoleEnum.teaching_assistant or target.provisioned_by != actor.id:
+            logger.warning("Actor %s may not %s user %s.", actor.id, verb, target.id)
+            raise PermissionError(f"role {actor.role} may not {verb} user ID: {target.id}")
+
+
+async def _transition(
+    db: AsyncSession,
+    actor: User,
+    target: User,
+    to_status: UserStatusEnum,
+    reason: str | None,
+) -> User:
+    """Validates, applies, revokes sessions and records the event in one commit."""
+    # Take the row lock FIRST, and decide the transition from what the locked
+    # read returns - not from the earlier unlocked read used for the permission
+    # check. Two requests racing on the same user serialise here: the second
+    # blocks until the first commits, then sees the status the first left behind
+    # and is refused.
+    #
+    # populate_existing is load-bearing. Without it SQLAlchemy hands back the
+    # instance already in this session's identity map with its stale attributes,
+    # so the locked read would return the pre-lock status and the guard would
+    # pass when it should fail.
+    locked = await db.execute(
+        select(User).where(User.id == target.id).with_for_update().execution_options(populate_existing=True)
+    )
+    current = locked.scalar_one()
+
+    from_status = current.status
+    if to_status not in _ALLOWED_TRANSITIONS[from_status]:
+        raise InvalidStatusTransitionError(f"cannot move a {from_status.value} user to {to_status.value}")
+
+    current.status = to_status
+
+    # Any exit from active must invalidate credentials immediately - a session
+    # issued a second before deactivation must not outlive it.
+    if to_status != UserStatusEnum.active:
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == current.id, UserSession.deleted_at.is_(None))
+            .values(deleted_at=datetime.now(UTC))
+        )
+
+    db.add(
+        UserStatusEvent(
+            user_id=current.id,
+            actor_id=actor.id,
+            from_status=from_status,
+            to_status=to_status,
+            reason=reason,
+        )
     )
     await db.commit()
-    logger.info("Successfully deleted user.")
+    await db.refresh(current)
+    logger.info("User %s moved %s -> %s by %s.", current.id, from_status.value, to_status.value, actor.id)
+    return current
 
 
+async def deactivate_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
+    """Removes operational access while keeping the user part of the system."""
+    target = await _load_manageable(db, user_id)
+    _assert_may_manage(actor, target, "deactivate")
+    return await _transition(db, actor, target, UserStatusEnum.deactivated, reason)
+
+
+async def reactivate_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
+    """Restores access to a deactivated user. Cannot revive a deleted one."""
+    target = await _load_manageable(db, user_id)
+    _assert_may_manage(actor, target, "reactivate")
+    return await _transition(db, actor, target, UserStatusEnum.active, reason)
+
+
+async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
+    """
+    Logically removes a user. Terminal - there is no restore.
+
+    Root admin only, and never another root admin: deleting one used to be a
+    one-way door that no endpoint could undo, and with one root admin it locked
+    the whole system out.
+    """
+    if actor.role != UserRoleEnum.root_admin:
+        logger.warning("Actor %s may not delete users.", actor.id)
+        raise PermissionError(f"role {actor.role} may not delete users")
+
+    target = await _load_manageable(db, user_id)
+    if target.role == UserRoleEnum.root_admin:
+        logger.warning("Actor %s attempted to delete a root_admin.", actor.id)
+        raise PermissionError("root_admin accounts cannot be deleted")
+
+    return await _transition(db, actor, target, UserStatusEnum.deleted, reason)
+
+
+async def _load_manageable(db: AsyncSession, user_id: uuid.UUID) -> User:
+    """Loads any user regardless of status - a deactivated one must stay
+    reachable so it can be reactivated."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if target is None:
+        raise UserNotFoundError(str(user_id))
+    return target
+
+
+# Returns a visible active user when the requesting actor has permission to view them.
 async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
-    """
-    Fetches a user by their ID. Returns None if the user doesn't exist or has been soft-deleted.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (uuid.UUID): The ID of the user making the request, used for authorization.
-        user_id (uuid.UUID): The ID of the user to fetch.
-
-    Returns:
-        User | None: The user object if found and not soft-deleted, otherwise None.
-    """
     logger.debug("Fetching user by ID: %s", user_id)
-    result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None:
-        logger.debug("No user found with ID: %s or user is soft-deleted.", user_id)
+        logger.debug("No user found with ID: %s", user_id)
+        return None
+
+    # A non-active user is visible only to someone who could manage them - an
+    # admin has to be able to open the record they are about to reactivate.
+    # Everyone else gets the same None as a missing row, so an ordinary user
+    # cannot tell "never existed" from "was removed".
+    if user.status != UserStatusEnum.active and not _may_manage(actor, user):
+        logger.debug("Hiding %s user %s from actor %s.", user.status.value, user_id, actor.id)
         return None
 
     logger.debug("Authorizationg check for actor: %s requesting user ID: %s", actor, user_id)
@@ -121,15 +256,8 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
     return user
 
 
+# Determines whether an actor is authorized to view a target user.
 def _can_view_user(actor: User, target: User) -> bool:
-    """
-    Helper function to determine visibility of account.
-    root_admin sees everyone, everyone sees themselves, instructors see other
-    instructors/TAs, TAs see any instructor plus TAs sharing their own provisioned_by. root_admin
-    rows are never visible to a non-admin.
-    """
-    # Can consider changing the TA filtering logic if we eventually implemnet a join table
-    # to better store relationships between instructors and TAs.
     if actor.role == UserRoleEnum.root_admin:
         return True
     if actor.id == target.id:
@@ -145,27 +273,13 @@ def _can_view_user(actor: User, target: User) -> bool:
     return False
 
 
+# Provisions a new user when the actor has permission to assign the requested role.
 async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleEnum) -> User:
-    """
-    Creates a new user in the database, per the delegation chain:
-    root_admin -> instructor, instructor -> teaching_assistant, TA -> nobody.
-    `role=root_admin` is rejected regardless of actor - there is exactly one,
-    created only by the seed migration.
-
-    Args:
-        db (AsyncSession): The database session.
-        email (str): The email of the new user.
-        role (UserRoleEnum): The role of the new user.
-        actor (User): The user creating the new user, used for authorization checks.
-
-    Returns:
-        User: The newly created user object.
-
-    Raises:
-        PermissionError: actor's role may not provision the requested role.
-        EmailAlreadyExistsError: a users row already exists for this email.
-    """
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
+
+    # Before the duplicate check, so "Ada@smu.edu.sg" cannot be provisioned
+    # alongside an existing "ada@smu.edu.sg" and produce two rows for one person.
+    email = normalize_email(email)
 
     if role == UserRoleEnum.root_admin:
         logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor)
@@ -179,7 +293,7 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
         )
         raise PermissionError(f"role {actor.role} may not provision role {role}")
 
-    existing = await db.execute(select(User).where(User.email == email))
+    existing = await db.execute(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
     if existing.scalar_one_or_none() is not None:
         logger.warning("Attempted to provision duplicate email: %s", email)
         raise EmailAlreadyExistsError(email)
@@ -193,66 +307,12 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
     return user
 
 
-async def activate_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User | None:
-    """
-    Restores a soft-deleted user by clearing deleted_at. Same delegation chain
-    as soft_delete_user: root_admin can restore anyone (except root_admin
-    targets), instructor can only restore teaching_assistant rows they
-    themselves provisioned, TA can't restore anyone.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the account restoration, used for authorization checks.
-        user_id (uuid.UUID): The ID of the user to restore.
-
-    Returns:
-        User | None: The restored user object, or None if no user exists with this id.
-
-    Raises:
-        PermissionError: If the actor is not authorized to restore the target user.
-        UserNotDeletedError: If the target user exists but isn't currently deleted.
-    """
-    logger.debug("Attempting to restore user with ID: %s requested by actor: %s", user_id, actor.id)
-    if actor.role == UserRoleEnum.teaching_assistant:
-        logger.warning("Actor %s with role %s cannot restore users. Insufficient permissions.", actor.id, actor.role)
-        raise PermissionError(f"role {actor.role} may not restore any users")
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    target_user = result.scalar_one_or_none()
-    if target_user is None:
-        logger.info("No target user found for restoration")
-        return None
-
-    if target_user.role == UserRoleEnum.root_admin:
-        logger.warning("Actor %s attempted to restore a root_admin user, always rejected.", actor.id)
-        raise PermissionError("root_admin cannot be restored via this endpoint")
-
-    if actor.role == UserRoleEnum.instructor:
-        if target_user.role != UserRoleEnum.teaching_assistant or target_user.provisioned_by != actor.id:
-            logger.warning(
-                "Actor %s with role %s cannot restore user ID: %s. Insufficient permissions.",
-                actor.id,
-                actor.role,
-                user_id,
-            )
-            raise PermissionError(f"role {actor.role} may not restore user ID: {user_id}")
-
-    if target_user.deleted_at is None:
-        logger.info("Target user ID: %s is not currently deleted", user_id)
-        raise UserNotDeletedError(str(user_id))
-
-    target_user.deleted_at = None
-    await db.commit()
-    await db.refresh(target_user)
-    logger.info("User restored successfully")
-
-    return target_user
-
-
+# Encodes a user ID as a URL-safe pagination cursor.
 def _encode_cursor(user_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(str(user_id).encode()).decode()
 
 
+# Decodes and validates a URL-safe pagination cursor as a user ID.
 def _decode_cursor(cursor: str) -> uuid.UUID:
     try:
         return uuid.UUID(base64.urlsafe_b64decode(cursor.encode()).decode())
@@ -260,34 +320,15 @@ def _decode_cursor(cursor: str) -> uuid.UUID:
         raise ValueError("Invalid cursor") from exc
 
 
+# Lists users visible to the actor and returns a cursor for the next page.
 async def list_users(
     db: AsyncSession,
     actor: User,
     role: UserRoleEnum | None = None,
-    include_deleted: bool = False,
+    statuses: frozenset[UserStatusEnum] | None = None,
     limit: int = 50,
     cursor: str | None = None,
 ) -> tuple[list[User], str | None]:
-    """
-    Delegation-scoped directory listing, keyset-paginated by id ascending.
-    root_admin sees everyone; instructorsees only teaching_assistant rows they themselves provisioned.
-
-    Args:
-        db (AsyncSession): The database session.
-        actor (User): The user requesting the listing, used for authorization/scoping.
-        role (UserRoleEnum | None): Optional role filter.
-        include_deleted (bool): Whether to include soft-deleted rows.
-        limit (int): Max rows to return.
-        cursor (str | None): Opaque cursor from a previous page's next_cursor.
-
-    Returns:
-        tuple[list[User], str | None]: (items, next_cursor). next_cursor is
-        None when there's no further page.
-
-    Raises:
-        PermissionError: actor is a teaching_assistant.
-        ValueError: cursor is malformed.
-    """
     logger.debug("Listing users requested by actor: %s", actor.id)
     if actor.role == UserRoleEnum.teaching_assistant:
         logger.warning("Actor %s with role %s cannot list users.", actor.id, actor.role)
@@ -302,8 +343,10 @@ async def list_users(
     elif role is not None:
         query = query.where(User.role == role)
 
-    if not include_deleted:
-        query = query.where(User.deleted_at.is_(None))
+    # Default is operational: active users only. An administrative caller asks
+    # for other statuses explicitly rather than flipping a boolean whose meaning
+    # changed when a third state appeared.
+    query = query.where(User.status.in_(statuses or {UserStatusEnum.active}))
 
     if cursor is not None:
         query = query.where(User.id > _decode_cursor(cursor))

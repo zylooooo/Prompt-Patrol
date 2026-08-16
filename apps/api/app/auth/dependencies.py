@@ -1,17 +1,15 @@
-import uuid
+from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import ENVIRONMENT
 from db import get_db
 from models import User, UserRoleEnum
 
-SESSION_COOKIE_NAME = "__Host-session"
-GATEWAY_USER_ID_HEADER = "X-PP-User-Id"
+from .session_state import ActiveSession, SessionFailure
 
-# Rank the roles so require_role can just compare numbers instead of
-# maintaining an allow-list per endpoint.
+SESSION_COOKIE_NAME = "__Host-session"
+
 ROLE_ORDER = {
     UserRoleEnum.teaching_assistant: 0,
     UserRoleEnum.instructor: 1,
@@ -19,44 +17,49 @@ ROLE_ORDER = {
 }
 
 
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """
-    Environment aware authentication dependency. In staging/prod it trusts
-    the gateway's authentication header completely because of authorizer lambda
-    and SG rules. In dev, it validates the session cookie directly and returns
-    the user object.
-    """
-    from services.sessions import authenticate_session
-    from services.users_service import get_user_by_id
+# Builds the 401 a browser can act on rather than just report.
+def _unauthenticated(failure: SessionFailure) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": failure.value, "message": _FAILURE_SUMMARY[failure]},
+    )
 
-    if ENVIRONMENT != "dev":
-        raw_id = request.headers.get(GATEWAY_USER_ID_HEADER)
-        if raw_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        actor_id = uuid.UUID(raw_id)
-        # Self-lookup: id-equality check in _can_view_user passes regardless
-        # of role, so a bare id stand-in is enough here.
-        user = await get_user_by_id(db, User(id=actor_id), actor_id)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        return user
+
+_FAILURE_SUMMARY = {
+    SessionFailure.not_signed_in: "No session cookie was sent.",
+    SessionFailure.session_unknown: "The session cookie matches no session.",
+    SessionFailure.session_revoked: "This session was signed out.",
+    SessionFailure.session_expired: "This session passed its inactivity limit.",
+    SessionFailure.session_ended: "This session reached its maximum lifetime.",
+    SessionFailure.account_deactivated: "This account is no longer active.",
+}
+
+
+# Resolves the caller's session, or raises a 401 that says which way it failed.
+async def get_current_session(
+    request: Request,
+    probe: Annotated[bool, Query(include_in_schema=False)] = False,
+    db: AsyncSession = Depends(get_db),
+) -> ActiveSession:
+    from services.sessions import authenticate_session
 
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
     if raw_token is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    user = await authenticate_session(db, raw_token)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session invalid or expired")
-    return user
+        raise _unauthenticated(SessionFailure.not_signed_in)
+    outcome = await authenticate_session(db, raw_token, touch=not probe)
+    if isinstance(outcome, SessionFailure):
+        raise _unauthenticated(outcome)
+    return outcome
 
 
+# Resolves the authenticated user from a valid session cookie.
+async def get_current_user(session: ActiveSession = Depends(get_current_session)) -> User:
+    return session.user
+
+
+# Creates a FastAPI dependency that enforces a minimum user role.
 def require_role(min_role: UserRoleEnum):
-    """
-    FastAPI dependency factory: require_role(UserRoleEnum.instructor)
-    yields a dependency that 401s if there's no valid session, 403s if the
-    user's role ranks below min_role, else returns the user.
-    """
-
+    # Rejects authenticated users whose role is below the required level.
     def dependency(user: User = Depends(get_current_user)) -> User:
         if ROLE_ORDER[user.role] < ROLE_ORDER[min_role]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")

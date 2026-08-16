@@ -3,15 +3,13 @@ import json
 import logging
 import logging.config
 import os
-import secrets
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-# Get the API base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Load the .env variables
 load_dotenv(BASE_DIR / ".env")
 
 
@@ -20,19 +18,6 @@ def _require_env(name: str) -> str:
     if not value:
         raise ValueError(f"Failure to load {name} from .env file.")
     return value
-
-
-_TRUTHY = {"1", "true", "yes", "on"}
-_FALSY = {"", "0", "false", "no", "off"}
-
-
-def _parse_bool(name: str, raw: str | None) -> bool:
-    normalized = (raw or "").strip().lower()
-    if normalized in _TRUTHY:
-        return True
-    if normalized in _FALSY:
-        return False
-    raise ValueError(f"{name} must be one of {sorted(_TRUTHY | _FALSY - {''})} (or unset), got {raw!r}.")
 
 
 API_HOST: str = _require_env("API_HOST")
@@ -51,48 +36,61 @@ if ENVIRONMENT not in VALID_ENVIRONMENTS:
     raise ValueError(f"Invalid ENVIRONMENT '{ENVIRONMENT}', expected one of {VALID_ENVIRONMENTS}.")
 
 
-def resolve_dev_auth_enabled(raw: str | None, environment: str) -> bool:
-    enabled = _parse_bool("DEV_AUTH_ENABLED", raw)
-    if enabled and environment != "dev":
-        raise ValueError(
-            f"DEV_AUTH_ENABLED is set but ENVIRONMENT is '{environment}'. The "
-            "password-less local login is only ever allowed under "
-            "ENVIRONMENT=dev. Remove DEV_AUTH_ENABLED to start the app."
-        )
-    return enabled
-
-
-DEV_AUTH_ENABLED: bool = resolve_dev_auth_enabled(os.getenv("DEV_AUTH_ENABLED"), ENVIRONMENT)
-
 _ENTRA_VARS = ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET", "ENTRA_REDIRECT_URI")
-_entra_values = {name: (os.getenv(name) or "").strip() for name in _ENTRA_VARS}
-_entra_missing = sorted(name for name, value in _entra_values.items() if not value)
+_entra_missing = sorted(name for name in _ENTRA_VARS if not (os.getenv(name) or "").strip())
 
-if _entra_missing and len(_entra_missing) != len(_ENTRA_VARS):
+if _entra_missing:
     raise ValueError(
-        f"Partial Entra configuration - {', '.join(_entra_missing)} missing. "
-        "Set all of ENTRA_TENANT_ID/ENTRA_CLIENT_ID/ENTRA_CLIENT_SECRET/"
-        "ENTRA_REDIRECT_URI, or leave all of them blank and use DEV_AUTH_ENABLED."
+        f"Incomplete Entra configuration - {', '.join(_entra_missing)} missing. "
+        "All of ENTRA_TENANT_ID/ENTRA_CLIENT_ID/ENTRA_CLIENT_SECRET/"
+        "ENTRA_REDIRECT_URI must be set. Refusing to start an app nobody can "
+        "sign into."
     )
 
-ENTRA_CONFIGURED: bool = not _entra_missing
-ENTRA_TENANT_ID: str | None = _entra_values["ENTRA_TENANT_ID"] or None
-ENTRA_CLIENT_ID: str | None = _entra_values["ENTRA_CLIENT_ID"] or None
-ENTRA_CLIENT_SECRET: str | None = _entra_values["ENTRA_CLIENT_SECRET"] or None
-ENTRA_REDIRECT_URI: str | None = _entra_values["ENTRA_REDIRECT_URI"] or None
+ENTRA_TENANT_ID: str = _require_env("ENTRA_TENANT_ID").strip()
+ENTRA_CLIENT_ID: str = _require_env("ENTRA_CLIENT_ID").strip()
+ENTRA_CLIENT_SECRET: str = _require_env("ENTRA_CLIENT_SECRET").strip()
+ENTRA_REDIRECT_URI: str = _require_env("ENTRA_REDIRECT_URI").strip()
+SESSION_SECRET: str = _require_env("SESSION_SECRET")
 
-if not ENTRA_CONFIGURED and not DEV_AUTH_ENABLED:
-    raise ValueError(
-        "No login method is configured. Either fill in the four ENTRA_* "
-        "variables, or set DEV_AUTH_ENABLED=true for the local-only dev login "
-        "(requires ENVIRONMENT=dev). Refusing to start an app nobody can sign "
-        "into."
-    )
+# Hosts a browser will accept a Secure cookie from over plain http.
+_TRUSTWORTHY_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-_session_secret = os.getenv("SESSION_SECRET")
-if ENTRA_CONFIGURED and not _session_secret:
-    raise ValueError("Failure to load SESSION_SECRET from .env file.")
-SESSION_SECRET: str = _session_secret or secrets.token_urlsafe(48)
+
+# Refuses to start when the URLs cannot hold a __Host- session cookie.
+def validate_session_cookie_hosts(frontend_url: str, redirect_uri: str) -> None:
+    frontend, redirect = urlparse(frontend_url), urlparse(redirect_uri)
+
+    if not frontend.hostname or not redirect.hostname:
+        raise ValueError(
+            "FRONTEND_URL and ENTRA_REDIRECT_URI must be absolute URLs with a scheme and host - "
+            f"got FRONTEND_URL={frontend_url!r}, ENTRA_REDIRECT_URI={redirect_uri!r}."
+        )
+
+    if frontend.hostname != redirect.hostname:
+        raise ValueError(
+            f"FRONTEND_URL host '{frontend.hostname}' and ENTRA_REDIRECT_URI host "
+            f"'{redirect.hostname}' differ. The session cookie is '__Host-session', and the "
+            "__Host- prefix forbids a Domain attribute, so the cookie is pinned to whichever "
+            "host answers the Entra callback. Split across two hosts, sign-in appears to "
+            "succeed and then every request is 401 with nothing logged anywhere. Serve both "
+            "from one host - see apps/web/nginx.conf. Ports may differ; cookies ignore them."
+        )
+
+    insecure = [
+        name
+        for name, parsed in (("FRONTEND_URL", frontend), ("ENTRA_REDIRECT_URI", redirect))
+        if parsed.scheme != "https"
+    ]
+    if insecure and frontend.hostname not in _TRUSTWORTHY_LOCAL_HOSTS:
+        raise ValueError(
+            f"{' and '.join(insecure)} must use https on host '{frontend.hostname}'. The session "
+            "cookie is set Secure with a __Host- prefix, which browsers accept over plain http "
+            "only for localhost, so here it is dropped silently and nobody can sign in."
+        )
+
+
+validate_session_cookie_hosts(FRONTEND_URL, ENTRA_REDIRECT_URI)
 
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 

@@ -2,6 +2,7 @@ import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "../components/ui/SegmentedToggle";
 import {
+  canReactivate,
   displayName,
   isActive,
   roleLabel,
@@ -10,12 +11,14 @@ import {
 } from "../types";
 import {
   useCreateAccount,
+  useDeleteUser,
   useSetUserActive,
   useSupervision,
   useUsers,
 } from "../hooks/useUsers";
 import DataTable, {
   TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
+  TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import { useMemo, useState } from "react";
@@ -26,8 +29,11 @@ import RowAction from "../components/ui/RowAction";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
+import UserStatusChip from "../components/ui/UserStatusChip";
+import { SECTION_LABEL } from "../components/ui/section-label";
 import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
+import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
@@ -36,7 +42,7 @@ type Filter = "all" | "instructors" | "assistants" | "unassigned";
 const FILTERS: SegmentedToggleOption<Filter>[] = [
   { value: "all", label: "All" },
   { value: "instructors", label: "Instructors" },
-  { value: "assistants", label: "Teaching assistants" },
+  { value: "assistants", label: "Teaching Assistants" },
   { value: "unassigned", label: "Unassigned" },
 ];
 
@@ -45,7 +51,7 @@ const FIELD =
 
 const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
   { value: "instructor", label: "Instructor" },
-  { value: "teaching_assistant", label: "Teaching assistant" },
+  { value: "teaching_assistant", label: "Teaching Assistant" },
 ];
 
 export default function UsersPage() {
@@ -56,6 +62,8 @@ export default function UsersPage() {
   const { data: links } = useSupervision();
   const createAccount = useCreateAccount();
   const setActive = useSetUserActive();
+  const removeUser = useDeleteUser();
+  const isRootAdmin = actor?.role === "root_admin";
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -67,6 +75,7 @@ export default function UsersPage() {
     message: string;
   } | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<AppUser | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [relationship, setRelationship] = useState<{
     subject: AppUser;
@@ -222,22 +231,12 @@ export default function UsersPage() {
     {
       id: "status",
       header: "Status",
-      width: "7rem",
-      cell: (u) => (
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            isActive(u)
-              ? "bg-human-soft text-human"
-              : "bg-unsure-soft text-unsure"
-          }`}
-        >
-          {isActive(u) ? "Active" : "Deactivated"}
-        </span>
-      ),
+      width: TABLE_STATUS_COLUMN_WIDTH,
+      cell: (u) => <UserStatusChip status={u.status} />,
     },
     {
       id: "actions",
-      header: "",
+      header: "Actions",
       width: TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
       align: "right",
       cell: (u) => {
@@ -245,8 +244,8 @@ export default function UsersPage() {
         const busy = pending === u.id;
         if (isSelf) {
           return (
-            <span className="pr-2.5 text-[13px] text-disabled-foreground">
-              Your account
+            <span className="pr-2.5 text-[13px] text-disabled-foreground font-bold">
+              You
             </span>
           );
         }
@@ -269,12 +268,19 @@ export default function UsersPage() {
                 }
                 disabled={busy}
               >
-                Teaching assistants
+                Assistants
               </RowAction>
             )}
-            <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
-              {isActive(u) ? "Deactivate" : "Reactivate"}
-            </RowAction>
+            {u.status !== "deleted" && (
+              <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
+                {canReactivate(u) ? "Reactivate" : "Deactivate"}
+              </RowAction>
+            )}
+            {isRootAdmin && u.status !== "deleted" && (
+              <RowAction onClick={() => setDeleting(u)} disabled={busy}>
+                Delete
+              </RowAction>
+            )}
           </span>
         );
       },
@@ -289,13 +295,11 @@ export default function UsersPage() {
     <Page>
       <PageHeader
         title="Manage All Accounts"
-        subtitle="Provision accounts for instructors and teaching assistants. There is no self-registration."
+        subtitle="Provision accounts for instructors and teaching assistants."
       />
 
-      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
-        <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-          Add account
-        </p>
+      <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
+        <p className={SECTION_LABEL}>Add account</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -308,7 +312,7 @@ export default function UsersPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="full name"
+              placeholder="Full name"
               className={`w-48 ${FIELD}`}
             />
           </label>
@@ -332,7 +336,7 @@ export default function UsersPage() {
                 setSupervisors([]);
               }}
               options={ROLE_OPTIONS}
-              placeholder="choose a role"
+              placeholder="Choose a role"
               ariaLabel="Role"
               size="lg"
               triggerLeading={false}
@@ -421,6 +425,28 @@ export default function UsersPage() {
           onClose={() => setDeactivating(null)}
         />
       )}
+
+      <ConfirmDeleteDialog
+        user={deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={(target) => {
+          setDeleting(null);
+          setPending(target.id);
+          void removeUser
+            .mutateAsync(target.id)
+            .then(() => showToast(`${displayName(target)} deleted.`))
+            .catch((err: unknown) =>
+              setRowError({
+                id: target.id,
+                message:
+                  err instanceof Error
+                    ? err.message
+                    : "Could not delete the account.",
+              }),
+            )
+            .finally(() => setPending(null));
+        }}
+      />
     </Page>
   );
 }

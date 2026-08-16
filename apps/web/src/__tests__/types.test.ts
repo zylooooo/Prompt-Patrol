@@ -1,5 +1,6 @@
 import {
   atLeastRole,
+  canReactivate,
   displayName,
   entryId,
   isActive,
@@ -31,7 +32,7 @@ const user = (over: Partial<AppUser> = {}): AppUser => ({
   name: "Ada Lovelace",
   role: "instructor",
   provisionedBy: null,
-  deletedAt: null,
+  status: "active",
   createdAt: "2026-01-01T00:00:00Z",
   ...over,
 });
@@ -68,16 +69,26 @@ describe("atLeastRole", () => {
 });
 
 describe("isActive", () => {
-  it("is true only when deletedAt is exactly null", () => {
+  it("is true only for the active status", () => {
     expect(isActive(user())).toBe(true);
-    expect(isActive(user({ deletedAt: "2026-02-01T00:00:00Z" }))).toBe(false);
+    expect(isActive(user({ status: "deactivated" }))).toBe(false);
+    expect(isActive(user({ status: "deleted" }))).toBe(false);
   });
 
-  it("treats an empty-string deletedAt as deleted, not as active", () => {
-    // `=== null`, not a truthiness check. If the stub or a future API ever
-    // serialises "no timestamp" as "", the account reads as deactivated —
-    // failing closed, which is the safe direction.
-    expect(isActive(user({ deletedAt: "" }))).toBe(false);
+  it("excludes deleted users, so selectors cannot offer them", () => {
+    // Both non-active states fail the check. A deleted user must never be
+    // selectable for a new assignment, and neither must a deactivated one.
+    expect(isActive(user({ status: "deleted" }))).toBe(false);
+  });
+});
+
+describe("canReactivate", () => {
+  it("is true only for a deactivated user", () => {
+    // Deletion is terminal: re-granting access means provisioning a fresh
+    // account, not reviving a removed one.
+    expect(canReactivate(user({ status: "deactivated" }))).toBe(true);
+    expect(canReactivate(user({ status: "active" }))).toBe(false);
+    expect(canReactivate(user({ status: "deleted" }))).toBe(false);
   });
 });
 

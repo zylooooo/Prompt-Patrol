@@ -1,6 +1,7 @@
 import Sidebar from "./Sidebar";
 import { useEffect, useRef } from "react";
 import { useAuth } from "../hooks/useAuth";
+import SessionSentinel from "./SessionSentinel";
 import { Outlet, useLocation } from "react-router-dom";
 
 export default function AppShell() {
@@ -34,6 +35,8 @@ export default function AppShell() {
       >
         <Outlet />
       </main>
+
+      <SessionSentinel />
     </div>
   );
 }

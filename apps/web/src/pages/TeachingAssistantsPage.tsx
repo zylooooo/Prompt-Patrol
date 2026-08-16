@@ -1,5 +1,6 @@
 import DataTable, {
   TABLE_ACTION_COLUMN_WIDTH,
+  TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
@@ -21,10 +22,13 @@ import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
 import RowAction from "../components/ui/RowAction";
+import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { displayName, type AppUser } from "../types";
 import Page, { PageFill } from "../components/ui/Page";
-import { displayName, isActive, type AppUser } from "../types";
+import UserStatusChip from "../components/ui/UserStatusChip";
+import { SECTION_LABEL } from "../components/ui/section-label";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
@@ -177,18 +181,8 @@ export default function TeachingAssistantsPage() {
     {
       id: "status",
       header: "Status",
-      width: "7rem",
-      cell: (ta) => (
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            isActive(ta)
-              ? "bg-human-soft text-human"
-              : "bg-unsure-soft text-unsure"
-          }`}
-        >
-          {isActive(ta) ? "Active" : "Deactivated"}
-        </span>
-      ),
+      width: TABLE_STATUS_COLUMN_WIDTH,
+      cell: (ta) => <UserStatusChip status={ta.status} />,
     },
     {
       id: "actions",
@@ -214,13 +208,11 @@ export default function TeachingAssistantsPage() {
     <Page>
       <PageHeader
         title="Manage My Assistants"
-        subtitle="Accounts you supervise. They can screen answers for your courses."
+        subtitle="Accounts you supervise."
       />
 
-      <section className="mt-8 shrink-0 rounded-xl border border-border bg-surface p-7">
-        <p className="text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase">
-          Add teaching assistant
-        </p>
+      <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
+        <p className={SECTION_LABEL}>Add teaching assistant</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -235,7 +227,7 @@ export default function TeachingAssistantsPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="full name"
+              placeholder="Full name"
               className={`w-56 ${FIELD}`}
             />
           </label>
@@ -268,24 +260,12 @@ export default function TeachingAssistantsPage() {
       </section>
 
       {isError ? (
-        <section
-          className="mt-6 rounded-xl border border-border bg-surface p-12 text-center"
-          role="alert"
-        >
-          <p className="text-lg font-medium text-foreground">
-            Could not load your list
-          </p>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Something went wrong reaching the server. Nothing has changed.
-          </p>
-          <Button
-            variant="secondary"
-            className="mt-5"
-            onClick={() => void refetch()}
-          >
-            Try again
-          </Button>
-        </section>
+        <ErrorState
+          className="mt-6"
+          title="Could not load your list"
+          description="Something went wrong reaching the server. Nothing has changed."
+          onRetry={() => void refetch()}
+        />
       ) : (
         <PageFill className="mt-6">
           <DataTable<AppUser>
