@@ -409,7 +409,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Admin",
     role: "root_admin",
     provisionedBy: null,
-    deletedAt: null,
+    status: "active",
     createdAt: T0,
   },
   {
@@ -418,7 +418,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Instructor A",
     role: "instructor",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T0,
   },
   {
@@ -427,7 +427,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo Instructor B",
     role: "instructor",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -436,7 +436,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA A",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_A,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -445,7 +445,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA B",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_A,
-    deletedAt: null,
+    status: "active",
     createdAt: T1,
   },
   {
@@ -454,7 +454,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA C",
     role: "teaching_assistant",
     provisionedBy: ID_INSTRUCTOR_B,
-    deletedAt: null,
+    status: "active",
     createdAt: T2,
   },
   {
@@ -463,7 +463,7 @@ const SEED_USERS: AppUser[] = [
     name: "Demo TA D",
     role: "teaching_assistant",
     provisionedBy: ID_ADMIN,
-    deletedAt: null,
+    status: "active",
     createdAt: T2,
   },
 ];
@@ -571,6 +571,27 @@ export function clearStoredData(): void {
   }
 }
 
+// Terminal removal. Keeps the row for history but frees the email, mirroring the
+// backend's partial unique index, so the same person can be provisioned again.
+export function deleteUser(actor: User, id: string): Promise<AppUser> {
+  const resolved = requireAdmin(actor);
+  const users = loadUsers();
+  const target = users.find((u) => u.id === id);
+  if (!target) throw new ApiError(404, "User not found.");
+  if (target.id === resolved.id) {
+    throw new ApiError(403, "You cannot delete your own account.");
+  }
+  if (target.role === "root_admin") {
+    throw new ApiError(403, "Admin accounts cannot be deleted.");
+  }
+  if (target.status === "deleted") {
+    throw new ApiError(409, "This account is already deleted.");
+  }
+  target.status = "deleted";
+  saveUsers(users);
+  return Promise.resolve({ ...target });
+}
+
 export function findUserByEmail(email: string): AppUser | undefined {
   return loadUsers().find((user) => sameEmail(user.email, email));
 }
@@ -599,7 +620,7 @@ function requireActor(actor: User): AppUser {
     name: null,
     role: actor.role,
     provisionedBy: null,
-    deletedAt: null,
+    status: "active",
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), adopted]);
@@ -919,7 +940,7 @@ export async function createAccount(
     name: input.name?.trim() || null,
     role: input.role,
     provisionedBy: resolved.id,
-    deletedAt: null,
+    status: "active",
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), user]);
@@ -1016,8 +1037,23 @@ export async function setUserActive(
   const users = loadUsers();
   const user = users.find((candidate) => candidate.id === id);
   if (!user) throw new ApiError(404, "That account no longer exists.");
+  // Mirrors the backend: deleted is terminal, so neither direction may touch it.
+  // The UI hides these actions too, but the rule has to live here as well or the
+  // two layers disagree about what is possible.
+  if (user.status === "deleted") {
+    throw new ApiError(
+      409,
+      "This account has been deleted and cannot be changed.",
+    );
+  }
+  if (active && user.status === "active") {
+    throw new ApiError(409, "This account is already active.");
+  }
+  if (!active && user.status === "deactivated") {
+    throw new ApiError(409, "This account is already deactivated.");
+  }
 
-  user.deletedAt = active ? null : new Date().toISOString();
+  user.status = active ? "active" : "deactivated";
   saveUsers(users);
   return user;
 }
@@ -1058,12 +1094,15 @@ export async function deactivateInstructor(
     saveSupervision(links);
   } else if (plan.mode === "deactivate") {
     const users = loadUsers();
-    const now = new Date().toISOString();
 
     for (const ta of stranded) {
       const account = users.find((candidate) => candidate.id === ta.id);
-      if (account && account.id !== resolved.id) {
-        account.deletedAt = now;
+      if (
+        account &&
+        account.id !== resolved.id &&
+        account.status === "active"
+      ) {
+        account.status = "deactivated";
         outcome.deactivated++;
       }
     }

@@ -75,6 +75,10 @@ export function deactivateInstructor(
   return stub.deactivateInstructor(actor, id, plan);
 }
 
+export function deleteUser(actor: User, id: string): Promise<AppUser> {
+  return stub.deleteUser(actor, id);
+}
+
 export function resendInvite(actor: User, id: string): Promise<void> {
   return stub.resendInvite(actor, id);
 }

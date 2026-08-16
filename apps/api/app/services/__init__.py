@@ -1,25 +1,27 @@
 from .sessions import authenticate_session, create_session, revoke_session
 from .users_service import (
-    activate_user_by_id,
     create_user,
+    deactivate_user,
+    delete_user,
     get_user_by_id,
     list_users,
     normalize_email,
+    reactivate_user,
     record_logout_hint,
     resolve_or_bind_user,
-    soft_delete_user,
 )
 
 __all__ = [
     "create_session",
     "authenticate_session",
     "revoke_session",
-    "normalize_email",
-    "record_logout_hint",
     "resolve_or_bind_user",
-    "soft_delete_user",
+    "record_logout_hint",
+    "normalize_email",
+    "deactivate_user",
+    "reactivate_user",
+    "delete_user",
     "get_user_by_id",
     "create_user",
-    "activate_user_by_id",
     "list_users",
 ]

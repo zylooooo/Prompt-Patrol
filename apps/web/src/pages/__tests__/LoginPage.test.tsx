@@ -36,6 +36,8 @@ describe("LoginPage — redirect reasons", () => {
     ["?error=not_provisioned", "isn't set up"],
     ["?error=sign_in_cancelled", "cancelled"],
     ["?error=sign_in_failed", "couldn't complete sign-in"],
+    ["?error=deactivated", "turned off"],
+    ["?error=deleted", "has been removed"],
   ])("explains %s", (search, expected) => {
     renderAt(search);
     expect(alertText()).toContain(expected);

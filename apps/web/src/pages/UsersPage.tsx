@@ -2,14 +2,18 @@ import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "../components/ui/SegmentedToggle";
 import {
+  canReactivate,
   displayName,
   isActive,
   roleLabel,
+  statusLabel,
   type AppUser,
   type UserRole,
+  type UserStatus,
 } from "../types";
 import {
   useCreateAccount,
+  useDeleteUser,
   useSetUserActive,
   useSupervision,
   useUsers,
@@ -28,6 +32,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
 import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
+import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 
@@ -43,6 +48,12 @@ const FILTERS: SegmentedToggleOption<Filter>[] = [
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
+const STATUS_CHIP_CLASS: Record<UserStatus, string> = {
+  active: "bg-human-soft text-human",
+  deactivated: "bg-unsure-soft text-unsure",
+  deleted: "bg-surface-muted text-disabled-foreground",
+};
+
 const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
   { value: "instructor", label: "Instructor" },
   { value: "teaching_assistant", label: "Teaching assistant" },
@@ -56,6 +67,8 @@ export default function UsersPage() {
   const { data: links } = useSupervision();
   const createAccount = useCreateAccount();
   const setActive = useSetUserActive();
+  const removeUser = useDeleteUser();
+  const isRootAdmin = actor?.role === "root_admin";
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -67,6 +80,7 @@ export default function UsersPage() {
     message: string;
   } | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<AppUser | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [relationship, setRelationship] = useState<{
     subject: AppUser;
@@ -226,12 +240,10 @@ export default function UsersPage() {
       cell: (u) => (
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            isActive(u)
-              ? "bg-human-soft text-human"
-              : "bg-unsure-soft text-unsure"
+            STATUS_CHIP_CLASS[u.status]
           }`}
         >
-          {isActive(u) ? "Active" : "Deactivated"}
+          {statusLabel(u)}
         </span>
       ),
     },
@@ -272,9 +284,16 @@ export default function UsersPage() {
                 Teaching assistants
               </RowAction>
             )}
-            <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
-              {isActive(u) ? "Deactivate" : "Reactivate"}
-            </RowAction>
+            {u.status !== "deleted" && (
+              <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
+                {canReactivate(u) ? "Reactivate" : "Deactivate"}
+              </RowAction>
+            )}
+            {isRootAdmin && u.status !== "deleted" && (
+              <RowAction onClick={() => setDeleting(u)} disabled={busy}>
+                Delete
+              </RowAction>
+            )}
           </span>
         );
       },
@@ -421,6 +440,28 @@ export default function UsersPage() {
           onClose={() => setDeactivating(null)}
         />
       )}
+
+      <ConfirmDeleteDialog
+        user={deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={(target) => {
+          setDeleting(null);
+          setPending(target.id);
+          void removeUser
+            .mutateAsync(target.id)
+            .then(() => showToast(`${displayName(target)} deleted.`))
+            .catch((err: unknown) =>
+              setRowError({
+                id: target.id,
+                message:
+                  err instanceof Error
+                    ? err.message
+                    : "Could not delete the account.",
+              }),
+            )
+            .finally(() => setPending(null));
+        }}
+      />
     </Page>
   );
 }

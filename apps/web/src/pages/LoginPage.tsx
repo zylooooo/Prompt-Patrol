@@ -19,6 +19,10 @@ const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
     "Sign-in was cancelled, so you aren't signed in. Use the button below when you're ready to try again.",
   sign_in_failed:
     "We couldn't complete sign-in with Microsoft. This usually means the sign-in page was left open too long. Start again below.",
+  deactivated:
+    "Your access to Prompt Patrol has been turned off. If you think this is a mistake, contact your course administrator.",
+  deleted:
+    "This account has been removed from Prompt Patrol. If you need access again, ask an admin to set you up.",
   session_expired:
     "You were signed out because your session timed out. Sign in again to continue.",
 };

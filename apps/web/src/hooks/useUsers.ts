@@ -1,6 +1,7 @@
 import {
   createAccount,
   deactivateInstructor,
+  deleteUser,
   linkSupervision,
   listMyAssistants,
   listSupervision,
@@ -88,6 +89,11 @@ export function useSetUserActive() {
   return useRosterMutation(({ id, active }: { id: string; active: boolean }) =>
     setUserActive(requireActor(actor), id, active),
   );
+}
+
+export function useDeleteUser() {
+  const actor = useActor();
+  return useRosterMutation((id: string) => deleteUser(requireActor(actor), id));
 }
 
 export function useDeactivateInstructor() {

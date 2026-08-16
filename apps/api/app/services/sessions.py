@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import generate_session_token, hash_token
-from models import User, UserSession
+from models import User, UserSession, UserStatusEnum
 
 SESSION_ABSOLUTE_TTL = timedelta(hours=12)
 SESSION_IDLE_TTL = timedelta(minutes=90)
@@ -40,7 +40,7 @@ async def authenticate_session(db: AsyncSession, raw_token: str) -> User | None:
             UserSession.deleted_at.is_(None),
             UserSession.absolute_expires_at > now,
             UserSession.last_active_at > now - SESSION_IDLE_TTL,
-            User.deleted_at.is_(None),
+            User.status == UserStatusEnum.active,
         )
     )
     row = result.first()

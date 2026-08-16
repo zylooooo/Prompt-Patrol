@@ -141,18 +141,34 @@ export function atLeastRole(role: UserRole, min: UserRole): boolean {
   return ROLE_ORDER[role] >= ROLE_ORDER[min];
 }
 
+export type UserStatus = "active" | "deactivated" | "deleted";
+
+export const USER_STATUS_TEXT: Record<UserStatus, string> = {
+  active: "Active",
+  deactivated: "Deactivated",
+  deleted: "Deleted",
+};
+
 export interface AppUser {
   id: string;
   email: string;
   name: string | null;
   role: UserRole;
+  status: UserStatus;
   provisionedBy: string | null;
-  deletedAt: string | null;
   createdAt: string;
 }
 
 export function isActive(user: AppUser): boolean {
-  return user.deletedAt === null;
+  return user.status === "active";
+}
+
+export function canReactivate(user: AppUser): boolean {
+  return user.status === "deactivated";
+}
+
+export function statusLabel(user: AppUser): string {
+  return USER_STATUS_TEXT[user.status];
 }
 
 export function displayName(user: AppUser): string {

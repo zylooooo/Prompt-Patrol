@@ -68,7 +68,7 @@ describe("HistoryPage — teaching assistant with no instructor", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("You are not assigned to an instructor yet"),
+        screen.getByText("You are not assigned to an instructor yet."),
       ).toBeDefined(),
     );
     expect(screen.queryByText("No checks yet")).toBeNull();
@@ -82,7 +82,7 @@ describe("HistoryPage — teaching assistant with no instructor", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("You are not assigned to an instructor yet"),
+        screen.getByText("You are not assigned to an instructor yet."),
       ).toBeDefined(),
     );
     expect(screen.queryByText(/Run your first check/)).toBeNull();
@@ -98,7 +98,7 @@ describe("HistoryPage — teaching assistant with no instructor", () => {
       expect(screen.getByText("No checks yet")).toBeDefined(),
     );
     expect(
-      screen.queryByText("You are not assigned to an instructor yet"),
+      screen.queryByText("You are not assigned to an instructor yet."),
     ).toBeNull();
   });
 

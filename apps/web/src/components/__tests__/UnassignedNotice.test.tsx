@@ -16,7 +16,7 @@ describe("UnassignedNotice", () => {
     render(<UnassignedNotice />);
 
     expect(
-      screen.getByText("You are not assigned to an instructor yet"),
+      screen.getByText("You are not assigned to an instructor yet."),
     ).toBeDefined();
     expect(screen.getByText(/Ask them to add you/)).toBeDefined();
   });

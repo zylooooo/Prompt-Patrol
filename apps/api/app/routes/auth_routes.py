@@ -10,6 +10,7 @@ from config import ENTRA_REDIRECT_URI, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
 from services import create_session, record_logout_hint, resolve_or_bind_user, revoke_session
+from services.users_service import LoginRejection
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,11 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     claims = token["userinfo"]
     email = claims.get("email") or claims["preferred_username"]
 
-    user = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
-    if user is None:
-        return _login_redirect("not_provisioned")
+    resolved = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
+    if isinstance(resolved, LoginRejection):
+        # The codes match REDIRECT_ERROR_MESSAGES in pages/LoginPage.tsx.
+        return _login_redirect(resolved.value)
+    user = resolved
     await record_logout_hint(db, user, claims.get("login_hint"))
 
     raw_token = await create_session(db, user.id)
