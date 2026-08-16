@@ -50,9 +50,7 @@ async def authenticate_session(
     now = datetime.now(UTC)
 
     result = await db.execute(
-        select(UserSession, User)
-        .join(User, UserSession.user_id == User.id)
-        .where(UserSession.token_hash == token_hash)
+        select(UserSession, User).join(User, UserSession.user_id == User.id).where(UserSession.token_hash == token_hash)
     )
     row = result.first()
     if row is None:

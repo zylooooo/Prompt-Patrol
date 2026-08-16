@@ -24,7 +24,9 @@ function shared(): BroadcastChannel | null {
 export function publishAuthEvent(message: AuthBroadcast): void {
   try {
     shared()?.postMessage(message);
-  } catch {}
+  } catch {
+    // A tab mid-navigation has its channel torn down; the local effect still happened.
+  }
 }
 
 export function subscribeToAuthEvents(

@@ -78,9 +78,7 @@ async def test_authenticate_skips_the_write_for_a_session_touched_moments_ago(db
 @pytest.mark.asyncio
 async def test_expired_session_reports_the_absolute_cap(db_session):
     user = await _user(db_session, "e@smu.edu.sg", "oid-e")
-    raw_token = await _session_row(
-        db_session, user, absolute_expires_at=datetime.now(UTC) - timedelta(seconds=1)
-    )
+    raw_token = await _session_row(db_session, user, absolute_expires_at=datetime.now(UTC) - timedelta(seconds=1))
 
     assert await authenticate_session(db_session, raw_token) is SessionFailure.session_ended
 
@@ -174,9 +172,7 @@ async def test_a_session_near_its_cap_reports_itself_as_capped(db_session):
     # Past this point activity cannot help, so the SPA must stop offering to
     # extend and tell the user they will have to sign in again.
     user = await _user(db_session, "l@smu.edu.sg", "oid-l")
-    raw_token = await _session_row(
-        db_session, user, absolute_expires_at=datetime.now(UTC) + SESSION_IDLE_TTL / 2
-    )
+    raw_token = await _session_row(db_session, user, absolute_expires_at=datetime.now(UTC) + SESSION_IDLE_TTL / 2)
 
     resolved = await authenticate_session(db_session, raw_token)
 

@@ -51,7 +51,9 @@ export function beginSignOut(): void {
   clearSignedOutState();
   try {
     sessionStorage.setItem(SIGNED_OUT_KEY, "1");
-  } catch {}
+  } catch {
+    // Private-mode quota. The sign-out itself must still go through.
+  }
 }
 
 export function consumeSignOutMarker(): boolean {
