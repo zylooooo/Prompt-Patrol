@@ -607,20 +607,24 @@ async def test_transition_on_unknown_user_raises_not_found(db_session):
 
 @pytest.mark.asyncio
 async def test_deactivation_revokes_live_sessions(db_session):
+    from auth import SessionFailure
     from services import authenticate_session, create_session
 
     admin, ta = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.teaching_assistant)
     await _seed(db_session, admin, ta)
     token = await create_session(db_session, ta.id)
-    assert await authenticate_session(db_session, token) is not None
+    assert not isinstance(await authenticate_session(db_session, token), SessionFailure)
 
     await deactivate_user(db_session, admin, ta.id)
 
-    assert await authenticate_session(db_session, token) is None
+    # Not session_revoked: the account status is the reason the person can act
+    # on, and it outranks the revocation it caused.
+    assert await authenticate_session(db_session, token) is SessionFailure.account_deactivated
 
 
 @pytest.mark.asyncio
 async def test_deletion_revokes_live_sessions(db_session):
+    from auth import SessionFailure
     from services import authenticate_session, create_session
 
     admin, ta = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.teaching_assistant)
@@ -629,13 +633,14 @@ async def test_deletion_revokes_live_sessions(db_session):
 
     await delete_user(db_session, admin, ta.id)
 
-    assert await authenticate_session(db_session, token) is None
+    assert await authenticate_session(db_session, token) is SessionFailure.account_deactivated
 
 
 @pytest.mark.asyncio
 async def test_reactivation_does_not_resurrect_old_sessions(db_session):
     # Revocation is permanent. Coming back means signing in again, not having a
     # token from before the deactivation quietly start working.
+    from auth import SessionFailure
     from services import authenticate_session, create_session
 
     admin, ta = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.teaching_assistant)
@@ -645,7 +650,8 @@ async def test_reactivation_does_not_resurrect_old_sessions(db_session):
 
     await reactivate_user(db_session, admin, ta.id)
 
-    assert await authenticate_session(db_session, token) is None
+    # The account is active again, so the surviving reason is the revocation.
+    assert await authenticate_session(db_session, token) is SessionFailure.session_revoked
 
 
 # --- who may do what -------------------------------------------------------

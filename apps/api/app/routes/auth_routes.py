@@ -1,15 +1,18 @@
 import logging
+from datetime import UTC, datetime
 
 from authlib.integrations.base_client.errors import OAuthError
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import SESSION_COOKIE_NAME, oauth, require_role
+from auth import SESSION_COOKIE_NAME, ActiveSession, get_current_session, oauth, require_role
 from config import ENTRA_REDIRECT_URI, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
+from schemas import MeResponse, SessionResponse
 from services import create_session, record_logout_hint, resolve_or_bind_user, revoke_session
+from services.sessions import SESSION_IDLE_TTL
 from services.users_service import LoginRejection
 
 logger = logging.getLogger(__name__)
@@ -106,7 +109,21 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)):
     return response
 
 
-# Returns the authenticated user's email address and role.
-@router.get("/me")
-async def me(user: User = Depends(require_role(UserRoleEnum.teaching_assistant))):
-    return {"email": user.email, "role": user.role}
+# Returns the authenticated user's identity and when their session expires.
+@router.get("/me", response_model=MeResponse)
+async def me(
+    user: User = Depends(require_role(UserRoleEnum.teaching_assistant)),
+    session: ActiveSession = Depends(get_current_session),
+):
+    return MeResponse(
+        email=user.email,
+        role=user.role,
+        session=SessionResponse(
+            expires_at=session.expires_at,
+            idle_expires_at=session.idle_expires_at,
+            absolute_expires_at=session.absolute_expires_at,
+            expires_in_seconds=max(0, int((session.expires_at - datetime.now(UTC)).total_seconds())),
+            capped=session.capped,
+            idle_timeout_seconds=int(SESSION_IDLE_TTL.total_seconds()),
+        ),
+    )

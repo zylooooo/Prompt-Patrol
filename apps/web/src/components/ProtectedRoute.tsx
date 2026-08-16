@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import ErrorState from "./ui/ErrorState";
+import { ApiError } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { Navigate } from "react-router-dom";
 import LoadingState from "./ui/LoadingState";
-import { hadSignedInSession } from "../api/auth";
 import { useShowAfter } from "../hooks/useShowAfter";
 import { atLeastRole, type UserRole } from "../types";
 
@@ -15,7 +15,7 @@ interface ProtectedRouteProps {
 const SPINNER_DELAY_MS = 250;
 
 export function ProtectedRoute({ children, minRole }: ProtectedRouteProps) {
-  const { user, isPending, isError, refetch } = useAuth();
+  const { user, reason, isPending, isError, error, refetch } = useAuth();
   const showSpinner = useShowAfter(isPending, SPINNER_DELAY_MS);
 
   if (isPending) {
@@ -28,23 +28,29 @@ export function ProtectedRoute({ children, minRole }: ProtectedRouteProps) {
   }
 
   if (isError) {
+    const unreachable = error instanceof ApiError && error.isUnreachable;
     return (
       <ErrorState
         size="page"
-        title="Can't reach Prompt Patrol"
-        description="We couldn't check your sign-in because the server didn't respond. You have not been signed out - this is usually temporary."
+        title={
+          unreachable
+            ? "Can't reach Prompt Patrol"
+            : "Prompt Patrol is having a problem"
+        }
+        description={
+          unreachable
+            ? "We couldn't check your sign-in because the server didn't answer. You have not been signed out - check your connection, then try again."
+            : "The server answered with an error, so we couldn't check your sign-in. This is on our side, not yours, and you have not been signed out. Try again in a moment, and tell your administrator if it keeps happening."
+        }
         onRetry={() => void refetch()}
       />
     );
   }
 
   if (!user) {
-    const expired = hadSignedInSession();
+    const explained = reason && reason !== "not_signed_in";
     return (
-      <Navigate
-        to={expired ? "/login?error=session_expired" : "/login"}
-        replace
-      />
+      <Navigate to={explained ? `/login?error=${reason}` : "/login"} replace />
     );
   }
 

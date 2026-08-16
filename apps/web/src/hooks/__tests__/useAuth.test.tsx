@@ -16,11 +16,11 @@ const STUB_KEY = "pp.history.v2";
 vi.mock("../../api/auth", async () => {
   const actual =
     await vi.importActual<typeof import("../../api/auth")>("../../api/auth");
-  return { ...actual, getCurrentUser: vi.fn() };
+  return { ...actual, getSession: vi.fn() };
 });
 
-const { getCurrentUser } = await import("../../api/auth");
-const mockedGetCurrentUser = vi.mocked(getCurrentUser);
+const { getSession } = await import("../../api/auth");
+const mockedGetSession = vi.mocked(getSession);
 
 const wrapper = ({ children }: { children: ReactNode }) => {
   const client = new QueryClient({
@@ -30,7 +30,15 @@ const wrapper = ({ children }: { children: ReactNode }) => {
 };
 
 const signedInAs = (email: string) =>
-  mockedGetCurrentUser.mockResolvedValue({ email, role: "instructor" });
+  mockedGetSession.mockResolvedValue({
+    status: "authenticated",
+    user: { email, role: "instructor" },
+    session: {
+      expiresAt: Date.now() + 90 * 60_000,
+      capped: false,
+      idleTimeoutSeconds: 5400,
+    },
+  });
 
 beforeEach(() => {
   localStorage.clear();
@@ -76,12 +84,42 @@ describe("useAuth — browser-local data ownership", () => {
   it("leaves storage untouched while signed out", async () => {
     localStorage.setItem(LOGIN_HINT_KEY, "ada@smu.edu.sg");
     localStorage.setItem(STUB_KEY, '["ada history"]');
-    mockedGetCurrentUser.mockResolvedValue(null);
+    mockedGetSession.mockResolvedValue({
+      status: "anonymous",
+      reason: "session_expired",
+    });
 
     const { result } = renderHook(() => useAuth(), { wrapper });
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(localStorage.getItem(STUB_KEY)).toBe('["ada history"]');
     expect(localStorage.getItem(LOGIN_HINT_KEY)).toBe("ada@smu.edu.sg");
+  });
+});
+
+describe("useAuth — what it reports", () => {
+  it("carries the session deadline alongside the user", async () => {
+    signedInAs("ada@smu.edu.sg");
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.user).not.toBeNull());
+
+    expect(result.current.session?.expiresAt).toBeGreaterThan(Date.now());
+    expect(result.current.reason).toBeNull();
+  });
+
+  it("surfaces why nobody is signed in", async () => {
+    // Without this the app can only ever guess, and it used to guess
+    // "your session timed out" for every cause including a deactivated account.
+    mockedGetSession.mockResolvedValue({
+      status: "anonymous",
+      reason: "account_deactivated",
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.reason).toBe("account_deactivated");
   });
 });

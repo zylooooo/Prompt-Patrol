@@ -19,10 +19,14 @@ const renderAt = (search = "") =>
 
 const alertText = () => screen.queryByRole("alert")?.textContent ?? null;
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe("LoginPage — redirect reasons", () => {
@@ -32,7 +36,12 @@ describe("LoginPage — redirect reasons", () => {
   });
 
   it.each([
-    ["?error=session_expired", "timed out"],
+    ["?error=session_expired", "90 minutes without activity"],
+    ["?error=session_ended", "maximum of 12 hours"],
+    ["?error=session_revoked", "ended, either by signing out"],
+    ["?error=session_unknown", "couldn't recognise your session"],
+    ["?error=account_deactivated", "turned off while you were signed in"],
+    ["?error=signed_out", "You're signed out"],
     ["?error=not_provisioned", "isn't set up"],
     ["?error=sign_in_cancelled", "cancelled"],
     ["?error=sign_in_failed", "couldn't complete sign-in"],
@@ -43,9 +52,9 @@ describe("LoginPage — redirect reasons", () => {
     expect(alertText()).toContain(expected);
   });
 
-  it("falls back to a generic message for an unknown code", () => {
+  it("admits it has no specific reason rather than inventing one", () => {
     renderAt("?error=something_new");
-    expect(alertText()).toContain("Sign-in failed");
+    expect(alertText()).toContain("don't have a more specific reason");
   });
 
   it("prefills the email field from the stored hint", () => {
@@ -56,5 +65,43 @@ describe("LoginPage — redirect reasons", () => {
     expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe(
       "ada@smu.edu.sg",
     );
+  });
+});
+
+describe("LoginPage — after a deliberate sign-out", () => {
+  it("acknowledges the sign-out rather than saying nothing", () => {
+    // The trip out goes through Entra and lands back on a bare URL, so without
+    // the marker the person who just pressed Sign out arrives at a blank login
+    // page with no confirmation that it worked.
+    sessionStorage.setItem("pp_signed_out", "1");
+
+    renderAt();
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "You've been signed out",
+    );
+    expect(alertText()).toBeNull();
+  });
+
+  it("is a status, not an alarm, and shows only once", () => {
+    sessionStorage.setItem("pp_signed_out", "1");
+
+    const first = renderAt();
+    expect(screen.getByRole("status")).toBeDefined();
+    first.unmount();
+
+    renderAt();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("lets a real failure win over the sign-out acknowledgement", () => {
+    // Arriving with both means the sign-out completed and the next sign-in
+    // failed. The failure is the part that needs explaining.
+    sessionStorage.setItem("pp_signed_out", "1");
+
+    renderAt("?error=not_provisioned");
+
+    expect(alertText()).toContain("isn't set up");
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

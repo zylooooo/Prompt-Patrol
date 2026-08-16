@@ -7,11 +7,13 @@ from authlib.integrations.base_client.errors import OAuthError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from auth import SessionFailure
 from config import FRONTEND_URL
 from db import get_db
 from main import app
 from models import User, UserRoleEnum, UserSession
 from services import authenticate_session, create_session
+from services.sessions import SESSION_IDLE_TTL
 
 
 @pytest.fixture
@@ -111,7 +113,23 @@ async def test_me_with_valid_session_returns_user(client, db_session):
     response = client.get("/api/auth/me")
 
     assert response.status_code == 200
-    assert response.json() == {"email": "loggedin@smu.edu.sg", "role": "instructor"}
+    body = response.json()
+    assert body["email"] == "loggedin@smu.edu.sg"
+    assert body["role"] == "instructor"
+    # The SPA counts down to expires_at to warn before eviction rather than
+    # discover it on the next request, so /me must carry the deadlines.
+    assert set(body["session"]) == {
+        "expires_at",
+        "idle_expires_at",
+        "absolute_expires_at",
+        "expires_in_seconds",
+        "capped",
+        "idle_timeout_seconds",
+    }
+    assert body["session"]["idle_timeout_seconds"] == int(SESSION_IDLE_TTL.total_seconds())
+    assert body["session"]["capped"] is False
+    # Counted from receipt, never subtracted from the browser clock.
+    assert 0 < body["session"]["expires_in_seconds"] <= SESSION_IDLE_TTL.total_seconds()
 
 
 def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
@@ -212,7 +230,8 @@ async def test_identity_header_cannot_override_the_session_cookie(client, db_ses
     response = client.get("/api/auth/me", headers={"X-PP-User-Id": str(other.id)})
 
     assert response.status_code == 200
-    assert response.json() == {"email": "owner@smu.edu.sg", "role": "teaching_assistant"}
+    assert response.json()["email"] == "owner@smu.edu.sg"
+    assert response.json()["role"] == "teaching_assistant"
 
 
 def test_no_gateway_header_trust_remains_in_the_auth_dependency():
@@ -226,14 +245,18 @@ def test_no_gateway_header_trust_remains_in_the_auth_dependency():
 
     from auth import dependencies
 
-    function = ast.parse(textwrap.dedent(inspect.getsource(dependencies.get_current_user))).body[0]
-    body = function.body
-    if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        body = body[1:]
-    code = "\n".join(ast.unparse(node) for node in body)
+    # Both halves: get_current_session reads the cookie, get_current_user is
+    # the thin wrapper over it. Checking only one would let the bypass return
+    # in the other.
+    for target in (dependencies.get_current_session, dependencies.get_current_user):
+        function = ast.parse(textwrap.dedent(inspect.getsource(target))).body[0]
+        body = function.body
+        if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            body = body[1:]
+        code = "\n".join(ast.unparse(node) for node in body)
 
-    assert "X-PP-User-Id" not in code
-    assert "ENVIRONMENT" not in code
+        assert "X-PP-User-Id" not in code
+        assert "ENVIRONMENT" not in code
 
 
 def test_entra_routes_are_always_mounted():
@@ -275,7 +298,7 @@ async def test_logout_revokes_the_session(client, db_session):
         response = client.post("/api/auth/logout", follow_redirects=False)
 
     assert response.status_code == 303
-    assert await authenticate_session(db_session, raw_token) is None
+    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
 
 
 @pytest.mark.asyncio
@@ -370,7 +393,7 @@ async def test_logout_survives_an_unreachable_discovery_document(client, db_sess
 
     assert response.status_code == 303
     assert response.headers["location"] == f"{FRONTEND_URL}/login"
-    assert await authenticate_session(db_session, raw_token) is None
+    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
 
 
 @pytest.mark.asyncio
@@ -429,6 +452,138 @@ async def test_a_new_login_leaves_other_sessions_alive(db_session, client):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
-    assert await authenticate_session(db_session, first_device) is not None
+    assert not isinstance(await authenticate_session(db_session, first_device), SessionFailure)
     live = (await db_session.execute(select(UserSession).where(UserSession.deleted_at.is_(None)))).scalars().all()
     assert len(live) == 2
+
+
+# --- why a 401 happened ----------------------------------------------------
+
+
+def test_a_401_with_no_cookie_says_so(client):
+    # "not_signed_in" is what the login page reads as "say nothing" - a first
+    # visitor has not been signed out of anything and must not be told they were.
+    body = client.get("/api/auth/me").json()
+
+    assert body["detail"]["code"] == SessionFailure.not_signed_in.value
+
+
+def test_a_401_on_an_unrecognised_cookie_says_so(client):
+    client.cookies.set("__Host-session", "not-a-real-token")
+
+    body = client.get("/api/auth/me").json()
+
+    assert body["detail"]["code"] == SessionFailure.session_unknown.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"deleted_at": "now"}, SessionFailure.session_revoked),
+        ({"last_active_at": "long ago"}, SessionFailure.session_expired),
+        ({"absolute_expires_at": "past"}, SessionFailure.session_ended),
+    ],
+    ids=["revoked", "idle", "capped"],
+)
+async def test_a_401_names_which_limit_ended_the_session(client, db_session, overrides, expected):
+    # The whole point of the change: every one of these used to return the same
+    # opaque 401, so the SPA could only ever say "your session timed out" - and
+    # for two of the three that sentence is false.
+    from datetime import UTC, datetime, timedelta
+
+    from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_IDLE_TTL
+
+    user = User(id=uuid.uuid4(), email=f"why-{expected.value}@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    now = datetime.now(UTC)
+    values = {
+        "now": now,
+        "long ago": now - SESSION_IDLE_TTL - timedelta(minutes=1),
+        "past": now - timedelta(seconds=1),
+    }
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    for field, key in overrides.items():
+        setattr(row, field, values[key])
+    if "absolute_expires_at" not in overrides:
+        row.absolute_expires_at = now + SESSION_ABSOLUTE_TTL
+    await db_session.commit()
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == expected.value
+
+
+@pytest.mark.asyncio
+async def test_a_401_after_deactivation_blames_the_account_not_the_session(client, db_session):
+    # Being told the session expired sends this person to sign in again, which
+    # cannot work. They need to be told to talk to an administrator.
+    from models import UserStatusEnum
+
+    user = User(id=uuid.uuid4(), email="turnedoff@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    user.status = UserStatusEnum.deactivated
+    await db_session.commit()
+
+    client.cookies.set("__Host-session", raw_token)
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == SessionFailure.account_deactivated.value
+
+
+@pytest.mark.asyncio
+async def test_a_probe_reads_the_session_without_reviving_it(client, db_session):
+    # Observed live before the fix: the SPA's countdown reached zero, asked
+    # /api/auth/me whether the session had expired, and the asking slid
+    # last_active_at from 179s old back to 3s. An abandoned tab renewed itself
+    # forever and the idle timeout did not exist.
+    from datetime import UTC, datetime, timedelta
+
+    user = User(id=uuid.uuid4(), email="probe@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    row.last_active_at = datetime.now(UTC) - SESSION_IDLE_TTL + timedelta(minutes=1)
+    await db_session.commit()
+    aged = row.last_active_at
+
+    client.cookies.set("__Host-session", raw_token)
+    assert client.get("/api/auth/me?probe=1").status_code == 200
+
+    await db_session.refresh(row)
+    # SQLite drops the offset on the way back out, so both sides are compared naive.
+    assert row.last_active_at.replace(tzinfo=None) == aged.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_request_still_keeps_a_working_user_signed_in(client, db_session):
+    # The other half: without the touch there is no sliding window at all, and
+    # the bug this whole change exists to fix comes straight back.
+    from datetime import UTC, datetime, timedelta
+
+    user = User(id=uuid.uuid4(), email="touch@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    raw_token = await create_session(db_session, user.id)
+
+    row = (await db_session.execute(select(UserSession))).scalars().one()
+    row.last_active_at = datetime.now(UTC) - SESSION_IDLE_TTL + timedelta(minutes=1)
+    await db_session.commit()
+    aged = row.last_active_at
+
+    client.cookies.set("__Host-session", raw_token)
+    assert client.get("/api/auth/me").status_code == 200
+
+    await db_session.refresh(row)
+    assert row.last_active_at.replace(tzinfo=None) > aged.replace(tzinfo=None)

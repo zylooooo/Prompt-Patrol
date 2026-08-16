@@ -1,8 +1,9 @@
+import { useState } from "react";
 import Button from "../components/ui/Button";
-import { LOGIN_HINT_KEY } from "../api/auth";
 import Wordmark from "../components/ui/Wordmark";
 import { useSearchParams } from "react-router-dom";
 import { SECTION_LABEL } from "../components/ui/section-label";
+import { consumeSignOutMarker, LOGIN_HINT_KEY } from "../api/auth";
 
 const HERO_IMAGE_URL =
   "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?q=75&w=2000&auto=format&fit=crop";
@@ -24,7 +25,16 @@ const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   deleted:
     "This account has been removed from Prompt Patrol. If you need access again, ask an admin to set you up.",
   session_expired:
-    "You were signed out because your session timed out. Sign in again to continue.",
+    "You were signed out after 90 minutes without activity. Sign in again to pick up where you left off.",
+  session_ended:
+    "You were signed out because a session lasts a maximum of 12 hours. Nothing is wrong with your account — sign in again to carry on.",
+  session_revoked:
+    "This session was ended, either by signing out in another tab or by an administrator. Sign in again to continue.",
+  session_unknown:
+    "We couldn't recognise your session, so we signed you out to be safe. Signing in again will fix it.",
+  account_deactivated:
+    "Your access to Prompt Patrol was turned off while you were signed in, so we signed you out. Contact your course administrator if you think this is a mistake.",
+  signed_out: "You're signed out. Sign in again to continue.",
 };
 
 function LoginHero() {
@@ -52,8 +62,12 @@ export default function LoginPage() {
   const redirectError = searchParams.get("error");
   const redirectErrorMessage = redirectError
     ? (REDIRECT_ERROR_MESSAGES[redirectError] ??
-      "Sign-in failed. Please try again.")
+      "We couldn't sign you in, and we don't have a more specific reason to give you. Try again, and tell your administrator if it keeps happening.")
     : null;
+
+  const [signedOut] = useState(() =>
+    redirectError ? false : consumeSignOutMarker(),
+  );
 
   return (
     <div className="flex min-h-screen">
@@ -77,6 +91,15 @@ export default function LoginPage() {
               className="mb-5 rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
             >
               {redirectErrorMessage}
+            </div>
+          )}
+
+          {signedOut && (
+            <div
+              role="status"
+              className="mb-5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm leading-5 text-muted-foreground"
+            >
+              You've been signed out. Sign in again whenever you're ready.
             </div>
           )}
 

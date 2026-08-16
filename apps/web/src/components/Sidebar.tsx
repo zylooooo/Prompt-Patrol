@@ -1,10 +1,11 @@
 import Wordmark from "./ui/Wordmark";
+import SignOutForm from "./SignOutForm";
+import type { User } from "../api/auth";
 import { LogOut, Menu, X } from "lucide-react";
 import { atLeastRole, ROLE_TEXT } from "../types";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { NavLink, useLocation } from "react-router-dom";
-import { clearSignedOutState, type User } from "../api/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DESKTOP_QUERY = "(min-width: 48rem)";
@@ -159,12 +160,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
             {user ? ROLE_TEXT[user.role] : ""}
           </p>
 
-          <form
-            method="post"
-            action="/api/auth/logout"
-            onSubmit={clearSignedOutState}
-            className="mt-3"
-          >
+          <SignOutForm className="mt-3">
             <button
               type="submit"
               className="-mx-3 flex w-[calc(100%+1.5rem)] items-center gap-2.5 rounded-md bg-danger/20 px-3 py-2 text-sm font-medium text-danger-on-primary transition-colors hover:bg-danger hover:text-danger-foreground focus-visible:bg-danger focus-visible:text-danger-foreground"
@@ -172,7 +168,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
               <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate text-left">Sign out</span>
             </button>
-          </form>
+          </SignOutForm>
         </div>
       </aside>
     </>
