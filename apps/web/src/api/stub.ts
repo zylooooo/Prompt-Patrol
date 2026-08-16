@@ -209,7 +209,10 @@ function analyseAnswer(
 }
 
 const HISTORY_KEY = "pp.history.v2";
-const USERS_KEY = "pp.users.v2";
+// v3 drops rows persisted with the old `deletedAt` field, which read back with
+// no `status` and rendered a blank chip.
+const USERS_KEY = "pp.users.v3";
+const LEGACY_USERS_KEYS = ["pp.users.v2"];
 const SUPERVISION_KEY = "pp.supervision.v2";
 const HISTORY_CAP = 200;
 
@@ -537,6 +540,7 @@ if (import.meta.env.DEV) assertSeedsConsistent();
 
 function loadUsers(): AppUser[] {
   if (localStorage.getItem(USERS_KEY) === null) {
+    for (const key of LEGACY_USERS_KEYS) localStorage.removeItem(key);
     writeJson(USERS_KEY, SEED_USERS);
     return SEED_USERS;
   }
@@ -564,6 +568,7 @@ export function clearStoredData(): void {
   for (const key of [
     HISTORY_KEY,
     USERS_KEY,
+    ...LEGACY_USERS_KEYS,
     SUPERVISION_KEY,
     HISTORY_SEEDED_KEY,
   ]) {
@@ -894,7 +899,8 @@ export async function listMyAssistants(
 ): Promise<AppUser[]> {
   await delay(150, signal);
   const resolved = requireActor(actor);
-  return assistantsOf(resolved.id);
+  // The API hides deleted accounts from this list; the link outlives the row.
+  return assistantsOf(resolved.id).filter((ta) => ta.status !== "deleted");
 }
 
 export function lookupForLinking(actor: User, email: string): LookupResult {

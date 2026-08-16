@@ -6,10 +6,8 @@ import {
   displayName,
   isActive,
   roleLabel,
-  statusLabel,
   type AppUser,
   type UserRole,
-  type UserStatus,
 } from "../types";
 import {
   useCreateAccount,
@@ -20,6 +18,7 @@ import {
 } from "../hooks/useUsers";
 import DataTable, {
   TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
+  TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import { useMemo, useState } from "react";
@@ -30,6 +29,7 @@ import RowAction from "../components/ui/RowAction";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
+import UserStatusChip from "../components/ui/UserStatusChip";
 import TokenMultiSelect from "../components/ui/TokenMultiSelect";
 import RelationshipDialog from "../components/RelationshipDialog";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
@@ -41,22 +41,16 @@ type Filter = "all" | "instructors" | "assistants" | "unassigned";
 const FILTERS: SegmentedToggleOption<Filter>[] = [
   { value: "all", label: "All" },
   { value: "instructors", label: "Instructors" },
-  { value: "assistants", label: "Teaching assistants" },
+  { value: "assistants", label: "Teaching Assistants" },
   { value: "unassigned", label: "Unassigned" },
 ];
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
-const STATUS_CHIP_CLASS: Record<UserStatus, string> = {
-  active: "bg-human-soft text-human",
-  deactivated: "bg-unsure-soft text-unsure",
-  deleted: "bg-surface-muted text-disabled-foreground",
-};
-
 const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
   { value: "instructor", label: "Instructor" },
-  { value: "teaching_assistant", label: "Teaching assistant" },
+  { value: "teaching_assistant", label: "Teaching Assistant" },
 ];
 
 export default function UsersPage() {
@@ -236,20 +230,12 @@ export default function UsersPage() {
     {
       id: "status",
       header: "Status",
-      width: "7rem",
-      cell: (u) => (
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            STATUS_CHIP_CLASS[u.status]
-          }`}
-        >
-          {statusLabel(u)}
-        </span>
-      ),
+      width: TABLE_STATUS_COLUMN_WIDTH,
+      cell: (u) => <UserStatusChip status={u.status} />,
     },
     {
       id: "actions",
-      header: "",
+      header: "Actions",
       width: TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
       align: "right",
       cell: (u) => {
@@ -257,8 +243,8 @@ export default function UsersPage() {
         const busy = pending === u.id;
         if (isSelf) {
           return (
-            <span className="pr-2.5 text-[13px] text-disabled-foreground">
-              Your account
+            <span className="pr-2.5 text-[13px] text-disabled-foreground font-bold">
+              You
             </span>
           );
         }
@@ -281,7 +267,7 @@ export default function UsersPage() {
                 }
                 disabled={busy}
               >
-                Teaching assistants
+                Assistants
               </RowAction>
             )}
             {u.status !== "deleted" && (

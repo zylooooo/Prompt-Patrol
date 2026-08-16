@@ -128,7 +128,7 @@ export type UserRole = "root_admin" | "instructor" | "teaching_assistant";
 export const ROLE_TEXT: Record<UserRole, string> = {
   root_admin: "Admin",
   instructor: "Instructor",
-  teaching_assistant: "Teaching assistant",
+  teaching_assistant: "Teaching Assistant",
 };
 
 const ROLE_ORDER: Record<UserRole, number> = {

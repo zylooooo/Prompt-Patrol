@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const STUB_KEYS = [
   "pp.history.v2",
+  "pp.users.v3",
   "pp.users.v2",
   "pp.supervision.v2",
   "pp.history.seeded.v2",

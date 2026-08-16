@@ -1,5 +1,6 @@
 import DataTable, {
   TABLE_ACTION_COLUMN_WIDTH,
+  TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
@@ -24,8 +25,9 @@ import RowAction from "../components/ui/RowAction";
 import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { displayName, type AppUser } from "../types";
 import Page, { PageFill } from "../components/ui/Page";
-import { displayName, isActive, type AppUser } from "../types";
+import UserStatusChip from "../components/ui/UserStatusChip";
 
 const FIELD =
   "h-11 rounded-md border border-input-border bg-input-bg px-3.5 text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
@@ -178,18 +180,8 @@ export default function TeachingAssistantsPage() {
     {
       id: "status",
       header: "Status",
-      width: "7rem",
-      cell: (ta) => (
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            isActive(ta)
-              ? "bg-human-soft text-human"
-              : "bg-unsure-soft text-unsure"
-          }`}
-        >
-          {isActive(ta) ? "Active" : "Deactivated"}
-        </span>
-      ),
+      width: TABLE_STATUS_COLUMN_WIDTH,
+      cell: (ta) => <UserStatusChip status={ta.status} />,
     },
     {
       id: "actions",
