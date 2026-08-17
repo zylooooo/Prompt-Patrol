@@ -103,6 +103,7 @@ async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> 
     user.logout_hint = hint
     await db.commit()
 
+
 _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
     UserStatusEnum.active: frozenset({UserStatusEnum.deactivated, UserStatusEnum.deleted}),
     UserStatusEnum.deactivated: frozenset({UserStatusEnum.active, UserStatusEnum.deleted}),

@@ -323,9 +323,7 @@ async def test_create_user_stores_a_display_name(db_session):
     db_session.add(admin)
     await db_session.commit()
 
-    created = await create_user(
-        db_session, admin, "named@smu.edu.sg", UserRoleEnum.instructor, "  Amirah Rahman  "
-    )
+    created = await create_user(db_session, admin, "named@smu.edu.sg", UserRoleEnum.instructor, "  Amirah Rahman  ")
 
     assert created.display_name == "Amirah Rahman"
 
