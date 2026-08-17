@@ -752,9 +752,10 @@ async def test_ta_cannot_change_anyone(db_session):
 @pytest.mark.asyncio
 async def test_instructor_may_deactivate_only_their_own_ta(db_session):
     instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _user(UserRoleEnum.instructor)
     own = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
-    other = _user(UserRoleEnum.teaching_assistant, provisioned_by=uuid.uuid4())
-    await _seed(db_session, instructor, own, other)
+    other = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor.id)
+    await _seed(db_session, instructor, other_instructor, own, other)
 
     assert (await deactivate_user(db_session, instructor, own.id)).status == UserStatusEnum.deactivated
     with pytest.raises(PermissionError):
@@ -938,9 +939,10 @@ async def test_a_deactivated_user_is_hidden_from_someone_who_cannot_manage_them(
 @pytest.mark.asyncio
 async def test_an_instructor_can_open_their_own_deactivated_ta(db_session):
     instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _user(UserRoleEnum.instructor)
     own = _deactivated_user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
-    other = _deactivated_user(UserRoleEnum.teaching_assistant, provisioned_by=uuid.uuid4())
-    await _seed(db_session, instructor, own, other)
+    other = _deactivated_user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor.id)
+    await _seed(db_session, instructor, other_instructor, own, other)
 
     assert (await get_user_by_id(db_session, instructor, own.id)) is not None
     assert (await get_user_by_id(db_session, instructor, other.id)) is None

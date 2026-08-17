@@ -214,8 +214,8 @@ async def test_reading_a_user_outside_the_delegation_chain_is_404(client, db_ses
     yours" answer 404, so the endpoint cannot be used to enumerate accounts."""
     instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
     own = await _target(db_session, provisioned_by=instructor.id)
-    someone_elses = await _target(db_session, provisioned_by=uuid.uuid4())
     another_instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    someone_elses = await _target(db_session, provisioned_by=another_instructor.id)
 
     assert client.get(f"/api/users/{own.id}").status_code == 200
     assert client.get(f"/api/users/{someone_elses.id}").status_code == 404
