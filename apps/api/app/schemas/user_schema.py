@@ -11,6 +11,7 @@ class UserResponse(BaseModel):
 
     id: uuid.UUID
     email: str
+    display_name: str | None
     role: UserRoleEnum
     status: UserStatusEnum
     provisioned_by: uuid.UUID | None
@@ -22,6 +23,9 @@ class UserCreateRequest(BaseModel):
 
     email: str
     role: UserRoleEnum
+    display_name: str | None = Field(default=None, max_length=200)
+    """Optional placeholder shown before first login; Entra's `name` claim
+    overwrites it thereafter, so it is never authoritative."""
 
 
 class StatusChangeRequest(BaseModel):

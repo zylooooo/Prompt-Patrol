@@ -290,8 +290,9 @@ x-gateway-configuration:
     type: REQUEST
     identity_sources:
       - $request.header.Cookie
-    result_ttl_seconds: 0   # MUST be 0. Caching reintroduces a revocation
-                            # window and defeats the server-side session store.
+    result_ttl_seconds:
+      0 # MUST be 0. Caching reintroduces a revocation
+      # window and defeats the server-side session store.
     responsibilities:
       - Parse the `__Host-pp_session` cookie.
       - Look up the session row; reject if absent, revoked, past absolute
@@ -394,14 +395,13 @@ tags:
 # PATHS
 # =============================================================================
 paths:
-
   # ---------------------------------------------------------------------------
   /api/auth/login:
     get:
       tags: [auth]
       operationId: initiateLogin
       summary: Begin the OIDC Authorization Code flow
-      x-auth-enforcement: NONE   # API Gateway: authorizationType = NONE
+      x-auth-enforcement: NONE # API Gateway: authorizationType = NONE
       x-browser-navigation-only: true
       description: |
         Generates `state`, `nonce`, and a PKCE `code_verifier`, persists them
@@ -435,7 +435,7 @@ paths:
             maxLength: 512
             example: /history?page=2
       responses:
-        '302':
+        "302":
           description: Redirect to the Entra ID authorization endpoint.
           headers:
             Location:
@@ -443,8 +443,8 @@ paths:
                 type: string
                 format: uri
                 example: https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?client_id=...&response_type=code&code_challenge=...
-        '400':
-          $ref: '#/components/responses/BadRequest'
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   # ---------------------------------------------------------------------------
   /api/auth/callback:
@@ -522,7 +522,7 @@ paths:
           in: query
           schema: { type: string }
       responses:
-        '302':
+        "302":
           description: |
             On success: session cookie set, redirect to the SPA (to `returnTo`
             if supplied and validated, else `/`).
@@ -540,19 +540,19 @@ paths:
                 example: __Host-pp_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400
             Location:
               schema: { type: string, format: uri }
-        '403':
+        "403":
           description: |
             `state` mismatch, missing, or expired, or `tid` is not the
             configured tenant. Indicates CSRF against the redirect URI, a stale
             browser tab, or a cross-tenant attempt. Logged as a security event.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '502':
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
           description: Entra token endpoint unreachable or returned an error.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------------------------------------------------------------------
   /api/auth/session:
@@ -578,13 +578,13 @@ paths:
         > Replaces `GET /api/auth/me` from v0.1.0, which leaked `email`,
         > `display_name`, and `role` into the auth module.
       responses:
-        '200':
+        "200":
           description: Active session.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SessionState' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+              schema: { $ref: "#/components/schemas/SessionState" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   # ---------------------------------------------------------------------------
   /api/auth/logout:
@@ -605,23 +605,29 @@ paths:
         Sessions are soft-deleted (`revoked_at = now()`), never hard-deleted,
         preserving referential integrity with audit entries.
 
-        Idempotent: a second call returns 204.
+        Idempotent: repeating it with a token whose session is already revoked
+        revokes nothing further and still completes. The caller is resolved
+        through a **live** session only — otherwise a copied cookie would stay
+        usable indefinitely as a "sign this person out everywhere" primitive.
 
-        ### Two-step logout — the SPA must complete it
-        Revoking the local session is not sufficient. The Entra SSO session
+        ### Two-step logout — the server completes it
+        Revoking the local sessions is not sufficient. The Entra SSO session
         survives, so the user can click "log in" and be silently readmitted.
         This looks like a logout bug and is not.
 
-        The response carries `X-Entra-Logout-Url`. The SPA **must** navigate
-        to it:
+        **Implemented as a redirect, not a header (corrected 2026-08-17).**
+        This endpoint answers `303` straight to the Entra sign-out URL, and
+        `SignOutForm.tsx` submits a native form POST rather than an XHR.
 
-        ```ts
-        const res = await api.post('/api/auth/logout');
-        window.location.href = res.headers['x-entra-logout-url'];
-        ```
+        The originally specified shape — `204` plus an `X-Entra-Logout-Url`
+        header for the SPA to follow in JavaScript — was **not** built, on
+        purpose. The full document navigation is what discards the in-memory
+        query cache, and the redirect works with no JavaScript at all. The
+        implementation is the better design; this text was corrected to match
+        it rather than the reverse.
 
-        The URL is built server-side so tenant configuration never enters the
-        frontend bundle and does not vary between environments.
+        Either way the URL is built server-side, so tenant configuration never
+        enters the frontend bundle and does not vary between environments.
 
         ### On `logout_hint`
         The URL includes `logout_hint` when available, suppressing Entra's
@@ -642,14 +648,16 @@ paths:
         `end_session_endpoint` redirect. That is device SSO working as
         designed. Note it in the test plan so nobody spends a day on it.
       responses:
-        '204':
-          description: All sessions for this user revoked; cookie cleared.
+        "303":
+          description: |
+            All live sessions for this user revoked; cookie cleared; browser
+            redirected onward to Entra sign-out.
+
+            Returned even when the cookie is absent or already revoked — the
+            endpoint never reports whether a session existed, and the user ends
+            up signed out of Entra either way.
           headers:
-            Set-Cookie:
-              schema:
-                type: string
-                example: __Host-pp_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
-            X-Entra-Logout-Url:
+            Location:
               required: true
               schema:
                 type: string
@@ -660,8 +668,13 @@ paths:
                 registration, or Entra silently ignores it and strands the user
                 on a generic Microsoft page. Register production and
                 `http://localhost:5173` for development.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+
+                Falls back to `{FRONTEND_URL}/login` if the discovery document
+                cannot be reached — the local sessions are revoked regardless.
+            Set-Cookie:
+              schema:
+                type: string
+                example: __Host-session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
 
   # ---------------------------------------------------------------------------
   # ADMIN — BLOCKED ON USERS MODULE
@@ -673,7 +686,7 @@ paths:
       summary: List active sessions across users
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY          # authentication only
+      x-auth-enforcement: GATEWAY # authentication only
       x-authorization: users module — require_role('root_admin')
       description: |
         Administrative visibility into active sessions. This is the compensating
@@ -702,7 +715,7 @@ paths:
           in: query
           schema: { type: string }
       responses:
-        '200':
+        "200":
           description: Active sessions.
           content:
             application/json:
@@ -712,14 +725,14 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/SessionSummary' }
+                    items: { $ref: "#/components/schemas/SessionSummary" }
                   next_cursor:
                     type: string
                     nullable: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/admin/sessions/{session_id}:
     delete:
@@ -728,7 +741,7 @@ paths:
       summary: Revoke a single session
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY          # authentication only
+      x-auth-enforcement: GATEWAY # authentication only
       x-authorization: users module — require_role('root_admin')
       description: |
         Soft-delete. Takes effect on the very next request, because the gateway
@@ -747,14 +760,14 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '204':
+        "204":
           description: Revoked. Idempotent — an already-revoked session returns 204.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
   # USERS — provisioning, roles, RBAC primitives
@@ -773,13 +786,13 @@ paths:
         — see the module boundary table in `info.description`. This is the
         endpoint that v0.1.0's `GET /api/auth/me` was split into.
       responses:
-        '200':
+        "200":
           description: Current user's profile.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/users:
     post:
@@ -788,7 +801,7 @@ paths:
       summary: Provision a new user record (invite-first)
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY          # authentication only
+      x-auth-enforcement: GATEWAY # authentication only
       x-authorization: |
         users module — delegation-scoped, see table below. Not a single
         require_role() call.
@@ -824,25 +837,25 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UserCreateRequest' }
+            schema: { $ref: "#/components/schemas/UserCreateRequest" }
       responses:
-        '201':
+        "201":
           description: User provisioned. `first_login_at` is null until they sign in.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
           description: |
             Caller's role may not provision the requested role (see
             delegation table), or the request named `root_admin`.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '409':
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
           description: |
             `email` already has a `users` row. If that row is soft-deleted,
             use `POST /api/users/{id}/restore` instead — restoring an
@@ -851,7 +864,7 @@ paths:
             would blur that distinction in the audit trail.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
     get:
       tags: [users]
@@ -901,7 +914,7 @@ paths:
             Opaque. Base64 encoding of the last `id` from the previous
             page. Keyset-paginated ordered by `id` ascending.
       responses:
-        '200':
+        "200":
           description: Paginated users.
           content:
             application/json:
@@ -911,14 +924,14 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/User' }
+                    items: { $ref: "#/components/schemas/User" }
                   next_cursor:
                     type: string
                     nullable: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/users/{id}:
     get:
@@ -952,15 +965,15 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200':
+        "200":
           description: User record.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
     delete:
       tags: [users]
@@ -1012,16 +1025,16 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '204':
+        "204":
           description: |
             Deleted; all sessions for this user revoked. Idempotent — an
             already-deleted user returns 204.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/users/{id}/role:
     patch:
@@ -1057,21 +1070,21 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UserRolePatchRequest' }
+            schema: { $ref: "#/components/schemas/UserRolePatchRequest" }
       responses:
-        '200':
+        "200":
           description: Updated user.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/users/{id}/restore:
     post:
@@ -1113,22 +1126,22 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200':
+        "200":
           description: Restored user.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: User is not currently deleted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------------------------------------------------------------------
   # CHECKS — single-answer detection
@@ -1157,21 +1170,21 @@ paths:
         engineering for — the values change on deploy, and the 4-hour absolute
         session cap bounds staleness.
       responses:
-        '200':
+        "200":
           description: Current detector capabilities.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DetectorCapabilities' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '503':
+              schema: { $ref: "#/components/schemas/DetectorCapabilities" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
           description: |
             Detector service unreachable. The SPA should disable submission
             rather than let an instructor type an answer into a form that
             cannot be submitted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/checks:
     post:
@@ -1237,9 +1250,9 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CheckCreateRequest' }
+            schema: { $ref: "#/components/schemas/CheckCreateRequest" }
       responses:
-        '201':
+        "201":
           description: |
             Detection complete. A `201` does **not** mean the answer is
             AI-generated, nor that the detector was confident — check `verdict`,
@@ -1251,8 +1264,8 @@ paths:
                 example: "/api/checks/3f9a1c20-5b8e-4a11-9d3c-7e2f6b0a4c88"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CheckResult' }
-        '400':
+              schema: { $ref: "#/components/schemas/CheckResult" }
+        "400":
           description: |
             Malformed body, unknown field (notably `instructor_id`,
             `threshold`, or `model_version` — all removed in 0.5.0), or
@@ -1265,27 +1278,27 @@ paths:
             input is a validation error.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '413':
-          description: '`answer_text` exceeds 10,000 characters.'
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: "`answer_text` exceeds 10,000 characters."
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '503':
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
           description: |
             Detector service unavailable. Distinct from `500` — this is
             retryable by the client and should render as "try again shortly",
             not as a failed check. Nothing is persisted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '504':
+              schema: { $ref: "#/components/schemas/Error" }
+        "504":
           description: Detector exceeded the 10s budget. Nothing is persisted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
     get:
       tags: [checks]
@@ -1324,7 +1337,7 @@ paths:
             own `user_id` for every other role. Do not rely on it in the SPA.
         - name: verdict
           in: query
-          schema: { $ref: '#/components/schemas/Verdict' }
+          schema: { $ref: "#/components/schemas/Verdict" }
         - name: batch_id
           in: query
           schema: { type: string, format: uuid }
@@ -1344,7 +1357,7 @@ paths:
           in: query
           schema: { type: string }
       responses:
-        '200':
+        "200":
           description: Paginated checks, newest first.
           content:
             application/json:
@@ -1354,12 +1367,12 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/CheckSummary' }
+                    items: { $ref: "#/components/schemas/CheckSummary" }
                   next_cursor:
                     type: string
                     nullable: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/checks/{id}:
     get:
@@ -1386,21 +1399,20 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200':
+        "200":
           description: The check.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CheckResult' }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+              schema: { $ref: "#/components/schemas/CheckResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 # =============================================================================
 # COMPONENTS
 # =============================================================================
 components:
-
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -1419,7 +1431,6 @@ components:
         users module.
 
   schemas:
-
     SessionState:
       type: object
       required: [user_id, session_expires_at, idle_expires_at]
@@ -1614,7 +1625,7 @@ components:
             table) applied. NULL before E2 calibration exists. Correlates with
             the MLflow run.
         strictness_applied:
-          $ref: '#/components/schemas/Strictness'
+          $ref: "#/components/schemas/Strictness"
         threshold_applied:
           type: number
           format: float
@@ -1647,8 +1658,9 @@ components:
     CheckCreateRequest:
       type: object
       required: [answer_text]
-      additionalProperties: false   # rejects instructor_id / threshold /
-                                    # model_version with 400. Deliberate.
+      additionalProperties:
+        false # rejects instructor_id / threshold /
+        # model_version with 400. Deliberate.
       properties:
         answer_text:
           type: string
@@ -1717,7 +1729,7 @@ components:
             instructor would not otherwise store here — documented in the UI,
             not enforceable in the contract.
         strictness:
-          $ref: '#/components/schemas/Strictness'
+          $ref: "#/components/schemas/Strictness"
         retain_answer:
           type: boolean
           default: true
@@ -1735,8 +1747,7 @@ components:
 
     CheckResult:
       type: object
-      required:
-        [check_id, verdict, raw_score, detector, created_at, actor_id]
+      required: [check_id, verdict, raw_score, detector, created_at, actor_id]
       description: |
         **Shared schema.** A single check and a batch result row are the same
         object — the SPA renders both with one component. Requires ML team
@@ -1771,7 +1782,7 @@ components:
           type: string
           nullable: true
         verdict:
-          $ref: '#/components/schemas/Verdict'
+          $ref: "#/components/schemas/Verdict"
         raw_score:
           type: number
           format: float
@@ -1804,7 +1815,7 @@ components:
             NULL until E2 calibration lands. The SPA must handle NULL from day
             one; this field is the reason the tier system exists.
         abstain_reason:
-          $ref: '#/components/schemas/AbstainReason'
+          $ref: "#/components/schemas/AbstainReason"
         truncated:
           type: boolean
           nullable: true
@@ -1814,7 +1825,7 @@ components:
             truncated answer is a verdict on a different text than the
             instructor submitted.
         detector:
-          $ref: '#/components/schemas/DetectorInfo'
+          $ref: "#/components/schemas/DetectorInfo"
         answer_text:
           type: string
           nullable: true
@@ -1872,11 +1883,11 @@ components:
         and `spans` — a history list should not ship every stored student answer
         to the browser to render a table. Drill down via `GET /api/checks/{id}`.
       properties:
-        check_id:   { type: string, format: uuid }
-        actor_id:   { type: string, format: uuid }
-        batch_id:   { type: string, format: uuid, nullable: true }
+        check_id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid }
+        batch_id: { type: string, format: uuid, nullable: true }
         external_ref: { type: string, nullable: true }
-        verdict:    { $ref: '#/components/schemas/Verdict' }
+        verdict: { $ref: "#/components/schemas/Verdict" }
         confidence: { type: number, format: float, nullable: true }
         model_version: { type: string }
         answer_preview:
@@ -1891,9 +1902,15 @@ components:
     DetectorCapabilities:
       type: object
       required:
-        [model_version, requires_question_text, max_answer_chars,
-         min_answer_chars, strictness_levels, supports_explanation,
-         supports_spans]
+        [
+          model_version,
+          requires_question_text,
+          max_answer_chars,
+          min_answer_chars,
+          strictness_levels,
+          supports_explanation,
+          supports_spans,
+        ]
       description: |
         What the currently served detector requires and provides. Server-owned,
         read-only, changes on deploy.
@@ -1944,7 +1961,7 @@ components:
             type: object
             required: [level]
             properties:
-              level: { $ref: '#/components/schemas/Strictness' }
+              level: { $ref: "#/components/schemas/Strictness" }
               target_fpr:
                 type: number
                 format: float
@@ -1974,23 +1991,23 @@ components:
           description: Stable machine-readable code. Safe to branch on.
           enum:
             - invalid_request
-            - unauthenticated      # 401 — no valid session (auth, gateway)
-            - session_expired      # 401 — session existed, clock fired (auth)
-            - not_provisioned      # authenticated at Entra, no user record (users)
-            - deactivated          # authenticated at Entra, user record exists
-                                    # but soft-deleted (users)
-            - forbidden            # 403 — valid session, insufficient role (users)
+            - unauthenticated # 401 — no valid session (auth, gateway)
+            - session_expired # 401 — session existed, clock fired (auth)
+            - not_provisioned # authenticated at Entra, no user record (users)
+            - deactivated # authenticated at Entra, user record exists
+              # but soft-deleted (users)
+            - forbidden # 403 — valid session, insufficient role (users)
             - not_found
-            - conflict              # 409 — duplicate email, or invalid state
-                                     # transition e.g. restoring a non-deleted user (users)
+            - conflict # 409 — duplicate email, or invalid state
+              # transition e.g. restoring a non-deleted user (users)
             - state_mismatch
             - upstream_idp_error
-            - payload_too_large     # 413 — answer_text over 10,000 chars (checks)
+            - payload_too_large # 413 — answer_text over 10,000 chars (checks)
             - question_text_required # 400 — served detector scores on
-                                     # (question, answer) pairs and question_text
-                                     # was omitted. See GET /api/detector. (checks)
-            - detector_unavailable  # 503 — detector service down (checks)
-            - detector_timeout      # 504 — detector exceeded 10s budget (checks)
+              # (question, answer) pairs and question_text
+              # was omitted. See GET /api/detector. (checks)
+            - detector_unavailable # 503 — detector service down (checks)
+            - detector_timeout # 504 — detector exceeded 10s budget (checks)
             - internal_error
         message:
           type: string
@@ -2006,7 +2023,7 @@ components:
       description: Malformed or invalid request.
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
 
     Unauthorized:
       description: |
@@ -2020,7 +2037,7 @@ components:
         ends up parsing both defensively. Fix in Terraform.
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
 
     Forbidden:
       description: |
@@ -2029,7 +2046,7 @@ components:
         gateway. See DECISION LOG [0.3.0].
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
 
     NotFound:
       description: |
@@ -2042,7 +2059,7 @@ components:
         caller's role is not secret; other people's records are.
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
 
 # =============================================================================
 # DECISION LOG

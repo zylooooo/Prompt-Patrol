@@ -53,6 +53,38 @@ ENTRA_CLIENT_SECRET: str = _require_env("ENTRA_CLIENT_SECRET").strip()
 ENTRA_REDIRECT_URI: str = _require_env("ENTRA_REDIRECT_URI").strip()
 SESSION_SECRET: str = _require_env("SESSION_SECRET")
 
+SESSION_SECRET_MIN_LENGTH = 32
+
+# Values that appear in this repo's own docs, CI and examples, so they are the
+# ones most likely to be copied into a real deployment by accident.
+_PLACEHOLDER_SECRETS = frozenset(
+    {"ci-dummy-session-secret", "changeme", "change-me", "secret", "dev", "test", "password"}
+)
+
+
+# Refuses to start outside dev on a session secret that is a known placeholder or too short.
+def validate_session_secret(secret: str, environment: str) -> None:
+    if environment == "dev":
+        return
+
+    if secret.strip().lower() in _PLACEHOLDER_SECRETS:
+        raise ValueError(
+            "SESSION_SECRET is a known placeholder value. It signs the 'ppauthflow' cookie "
+            "carrying OAuth state, which is the anti-CSRF token for the entire sign-in flow - "
+            "a guessable value lets an attacker forge that state. Generate a real one with "
+            "`python -c 'import secrets; print(secrets.token_urlsafe(48))'`."
+        )
+
+    if len(secret) < SESSION_SECRET_MIN_LENGTH:
+        raise ValueError(
+            f"SESSION_SECRET is {len(secret)} characters; at least {SESSION_SECRET_MIN_LENGTH} are "
+            "required outside dev. It signs the OAuth state cookie, so its strength is the "
+            "strength of the sign-in flow's CSRF protection."
+        )
+
+
+validate_session_secret(SESSION_SECRET, ENVIRONMENT)
+
 # Hosts a browser will accept a Secure cookie from over plain http.
 _TRUSTWORTHY_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 

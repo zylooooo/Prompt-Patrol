@@ -7,7 +7,7 @@ from sqlalchemy import select
 from auth import SessionFailure
 from models import User, UserRoleEnum, UserStatusEnum
 from models.session import UserSession
-from services import authenticate_session, create_session, revoke_session
+from services import authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
 from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_ACTIVITY_RESOLUTION, SESSION_IDLE_TTL
 
 
@@ -88,9 +88,33 @@ async def test_revoked_session_reports_a_revocation(db_session):
     user = await _user(db_session, "f@smu.edu.sg", "oid-f")
     raw_token = await create_session(db_session, user.id)
 
-    await revoke_session(db_session, raw_token)
+    await sign_out_everywhere(db_session, raw_token)
 
     assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_revoke_all_for_user_counts_only_the_live_sessions(db_session):
+    user = await _user(db_session, "many@smu.edu.sg", "oid-many")
+    tokens = [await create_session(db_session, user.id) for _ in range(3)]
+
+    assert await revoke_all_for_user(db_session, user.id) == 3
+    # Idempotent: a second sweep finds nothing left to end, and does not rewrite
+    # the timestamps recording when the first three actually stopped.
+    assert await revoke_all_for_user(db_session, user.id) == 0
+    for token in tokens:
+        assert await authenticate_session(db_session, token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_sign_out_everywhere_ignores_a_token_with_no_live_session(db_session):
+    user = await _user(db_session, "stale@smu.edu.sg", "oid-stale")
+    raw_token = await create_session(db_session, user.id)
+    await sign_out_everywhere(db_session, raw_token)
+    still_valid = await create_session(db_session, user.id)
+
+    assert await sign_out_everywhere(db_session, raw_token) is None
+    assert not isinstance(await authenticate_session(db_session, still_valid), SessionFailure)
 
 
 @pytest.mark.asyncio

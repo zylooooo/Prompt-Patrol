@@ -21,6 +21,13 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+# Normalizes a display label; whitespace-only collapses to NULL, never a blank name.
+def normalize_display_name(display_name: str | None) -> str | None:
+    if display_name is None:
+        return None
+    return display_name.strip() or None
+
+
 class LoginRejection(str, enum.Enum):
     """Why a validated Entra identity was refused. Distinguishing these lets the
     login page say something true, and lets a removed person still trying the
@@ -95,6 +102,7 @@ async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> 
         return
     user.logout_hint = hint
     await db.commit()
+
 
 _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
     UserStatusEnum.active: frozenset({UserStatusEnum.deactivated, UserStatusEnum.deleted}),
@@ -274,7 +282,9 @@ def _can_view_user(actor: User, target: User) -> bool:
 
 
 # Provisions a new user when the actor has permission to assign the requested role.
-async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleEnum) -> User:
+async def create_user(
+    db: AsyncSession, actor: User, email: str, role: UserRoleEnum, display_name: str | None = None
+) -> User:
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
 
     # Before the duplicate check, so "Ada@smu.edu.sg" cannot be provisioned
@@ -298,7 +308,7 @@ async def create_user(db: AsyncSession, actor: User, email: str, role: UserRoleE
         logger.warning("Attempted to provision duplicate email: %s", email)
         raise EmailAlreadyExistsError(email)
 
-    user = User(email=email, role=role, provisioned_by=actor.id)
+    user = User(email=email, role=role, display_name=normalize_display_name(display_name), provisioned_by=actor.id)
     db.add(user)
     await db.commit()
     await db.refresh(user)

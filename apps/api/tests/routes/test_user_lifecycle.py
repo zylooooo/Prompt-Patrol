@@ -116,6 +116,60 @@ async def test_listing_hides_deleted_users_unless_asked(client, db_session):
     assert str(gone.id) in [u["id"] for u in widened]
 
 
+# --- display_name -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provisioning_round_trips_a_display_name(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    created = client.post(
+        "/api/users/",
+        json={"email": "new@smu.edu.sg", "role": "instructor", "display_name": "Amirah Rahman"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["display_name"] == "Amirah Rahman"
+    assert client.get(f"/api/users/{created.json()['id']}").json()["display_name"] == "Amirah Rahman"
+
+
+@pytest.mark.asyncio
+async def test_display_name_is_optional(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    created = client.post("/api/users/", json={"email": "plain@smu.edu.sg", "role": "instructor"})
+
+    assert created.status_code == 201
+    assert created.json()["display_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_over_long_display_name_is_rejected(client, db_session):
+    # Bounded at the schema so a pasted document cannot become a name.
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(
+        "/api/users/",
+        json={"email": "long@smu.edu.sg", "role": "instructor", "display_name": "x" * 201},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_provisioning_still_rejects_unknown_fields(client, db_session):
+    # extra="forbid" is what keeps the request from carrying its own status or
+    # provisioned_by. Adding display_name must not have loosened it.
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(
+        "/api/users/",
+        json={"email": "sneaky@smu.edu.sg", "role": "instructor", "status": "active"},
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.asyncio
 async def test_a_deactivated_user_cannot_use_an_existing_session(client, db_session):
     # End to end: the session is live, the status changes, the very next request
