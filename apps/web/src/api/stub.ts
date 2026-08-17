@@ -41,8 +41,6 @@ import {
   type Verdict,
   type CheckInput,
   type CreateAccountInput,
-  type DeactivationOutcome,
-  type DeactivationPlan,
   type LookupResult,
 } from "../types";
 import type { User } from "./auth";
@@ -563,6 +561,44 @@ function saveSupervision(links: SupervisionLink[]) {
   writeJson(SUPERVISION_KEY, links);
 }
 
+// --- Bridge to the real API ------------------------------------------------
+// ./users reads accounts from the server now, but the supervision helpers here
+// still resolve ids through this store. These three keep the two halves talking
+// about the same people: server rows are mirrored in, so a link written locally
+// points at an account that actually exists. They go away with the file.
+//
+// The mirror is a cache of identity, not of state. Nothing reads a status back
+// out of it to decide anything - the roster answers that, and it comes from the
+// server.
+
+export function rememberUsers(users: AppUser[]): void {
+  const merged = new Map(loadUsers().map((user) => [user.id, user]));
+  for (const user of users) merged.set(user.id, user);
+  saveUsers([...merged.values()]);
+}
+
+export function rememberSupervision(
+  instructorIds: string[],
+  taId: string,
+): void {
+  const links = loadSupervision();
+  const now = new Date().toISOString();
+  for (const instructorId of instructorIds) {
+    const already = links.some(
+      (link) => link.instructorId === instructorId && link.taId === taId,
+    );
+    if (already) continue;
+    links.push({ instructorId, taId, createdAt: now });
+  }
+  saveSupervision(links);
+}
+
+export function forgetSupervisionBy(instructorId: string): void {
+  saveSupervision(
+    loadSupervision().filter((link) => link.instructorId !== instructorId),
+  );
+}
+
 // Drops every key this module owns. Goes away with the rest of the file.
 export function clearStoredData(): void {
   for (const key of [
@@ -913,8 +949,6 @@ export function lookupForLinking(actor: User, email: string): LookupResult {
   return { kind: "linkable", user: match };
 }
 
-const SMU_EMAIL = /^[^@\s]+@([a-z]+\.)?smu\.edu\.sg$/i;
-
 export async function createAccount(
   actor: User,
   input: CreateAccountInput,
@@ -933,9 +967,9 @@ export async function createAccount(
   }
 
   const email = input.email.trim();
-  if (!SMU_EMAIL.test(email)) {
-    throw new ApiError(400, "Use an SMU email address.");
-  }
+  // if (!isSmuEmail(email)) {
+  //   throw new ApiError(400, "Use an SMU email address.");
+  // }
   if (findUserByEmail(email)) {
     throw new ApiError(409, "An account already exists for this email.");
   }
@@ -1071,56 +1105,9 @@ export function strandedBy(instructorId: string): AppUser[] {
   );
 }
 
-export async function deactivateInstructor(
-  actor: User,
-  id: string,
-  plan: DeactivationPlan,
-): Promise<DeactivationOutcome> {
-  await delay(300);
-  const resolved = requireAdmin(actor);
-
-  if (resolved.id === id) {
-    throw new ApiError(403, "You cannot deactivate your own account.");
-  }
-
-  const stranded = strandedBy(id);
-  const outcome: DeactivationOutcome = {
-    reassigned: 0,
-    deactivated: 0,
-    leftUnassigned: 0,
-  };
-
-  if (plan.mode === "reassign") {
-    const links = loadSupervision();
-    const now = new Date().toISOString();
-    for (const ta of stranded) {
-      links.push({ instructorId: plan.toId, taId: ta.id, createdAt: now });
-      outcome.reassigned++;
-    }
-    saveSupervision(links);
-  } else if (plan.mode === "deactivate") {
-    const users = loadUsers();
-
-    for (const ta of stranded) {
-      const account = users.find((candidate) => candidate.id === ta.id);
-      if (
-        account &&
-        account.id !== resolved.id &&
-        account.status === "active"
-      ) {
-        account.status = "deactivated";
-        outcome.deactivated++;
-      }
-    }
-    saveUsers(users);
-  } else {
-    outcome.leftUnassigned = stranded.length;
-  }
-
-  saveSupervision(loadSupervision().filter((link) => link.instructorId !== id));
-  await setUserActive(actor, id, false);
-  return outcome;
-}
+// Instructor deactivation lives in ./users now: the status half of it is a real
+// endpoint and the link half is not, so the orchestration has to sit where both
+// are reachable. Keeping a second copy here would let the two drift.
 
 export async function resendInvite(actor: User, id: string): Promise<void> {
   await delay(200);
