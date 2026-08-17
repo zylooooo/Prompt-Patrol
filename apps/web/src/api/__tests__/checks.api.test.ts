@@ -157,8 +157,8 @@ describe("checkAnswer", () => {
     expect(mock.mock.calls[0][1]).toMatchObject({ method: "POST" });
   });
 
-  it("sends exactly the five keys the request model allows", async () => {
-    // CheckCreateRequest is `extra="forbid"`. A sixth key, or a camelCase one,
+  it("sends exactly the keys the request model allows", async () => {
+    // CheckCreateRequest is `extra="forbid"`. An extra key, or a camelCase one,
     // is a 422 the screen has no sentence for.
     const mock = route(() => CHECK);
 
@@ -176,6 +176,10 @@ describe("checkAnswer", () => {
       external_ref: "ECON101-Q3",
       strictness: "strict",
       retain_answer: false,
+      // A single check belongs to no batch, and says so rather than omitting
+      // the keys - the server distinguishes null from absent.
+      batch_id: null,
+      batch_file_name: null,
     });
   });
 
@@ -233,18 +237,15 @@ describe("checkAnswer", () => {
       checkId?: string;
     }[];
 
-  it("records the result so History still shows it", async () => {
-    // The server computes a check and stores nothing. This mirror is the only
-    // writer of screening history until it does — drop it and the History page
-    // silently stops listing new checks, without erroring anywhere.
+  it("writes nothing to localStorage — the server stores the check now", async () => {
+    // Until 2026-08-18 this mirrored every result into `pp.history.v2` because
+    // the server computed and forgot. It persists now, so a local copy would be
+    // a second, diverging record of the same screening.
     route(() => CHECK);
 
     await checkAnswer(INSTRUCTOR, { answerText: ANSWER });
 
-    expect(storedHistory()[0]).toMatchObject({
-      kind: "single",
-      checkId: "check-1",
-    });
+    expect(storedHistory().some((e) => e.checkId === "check-1")).toBe(false);
   });
 
   it("does not record anything when the detector fails", async () => {
@@ -470,28 +471,30 @@ describe("runBatch", () => {
     expect(Math.max(...seen)).toBe(3);
   });
 
-  it("groups the rows under one batch id and records one history entry", async () => {
-    // Not 500 loose checks: the rows belong to the run, and the stub's history
-    // cap would evict real history if each were written separately.
-    vi.stubGlobal("fetch", batchRoute());
+  it("tags every row with one batch id and the file name, server-side", async () => {
+    // The grouping is the client's to assign - the server has no batch concept
+    // - but it is stored, so a reload can reconstruct the run.
+    const mock = batchRoute();
+    vi.stubGlobal("fetch", mock);
 
     const run = await runBatch(INSTRUCTOR, "answers.csv", [
       input("A"),
       input("B"),
     ]);
 
-    expect(run.rows.every((row) => row.batchId === run.id)).toBe(true);
+    const bodies = mock.mock.calls.map(
+      (call) => JSON.parse(call[1]?.body as string) as Record<string, unknown>,
+    );
+    expect(new Set(bodies.map((b) => b.batch_id)).size).toBe(1);
+    expect(bodies.every((b) => b.batch_file_name === "answers.csv")).toBe(true);
+    expect(bodies[0].batch_id).toBe(run.id);
 
+    // Nothing from this run is written locally. (What is in there is the demo
+    // history that resolving an actor still seeds - see the note below.)
     const stored = JSON.parse(
       localStorage.getItem("pp.history.v2") ?? "[]",
-    ) as { kind?: string; id?: string; checkId?: string }[];
-
-    // Only the run itself is added. The other entries are the demo rows that
-    // resolving an actor seeds — none of them is a row from this batch.
-    expect(stored[0]).toMatchObject({ kind: "batch", id: run.id });
-    expect(
-      stored.filter((e) => e.checkId === "check-A" || e.checkId === "check-B"),
-    ).toHaveLength(0);
+    ) as { id?: string }[];
+    expect(stored.some((e) => e.id === run.id)).toBe(false);
   });
 
   it("puts flagged rows first", async () => {

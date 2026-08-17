@@ -231,10 +231,10 @@ function loadHistory(): HistoryEntry[] {
   return readJson<HistoryEntry[]>(HISTORY_KEY, []);
 }
 
-// Exported because `api/checks.ts` calls the real endpoint and then records the
-// result here: the server computes a check but stores nothing, so this is still
-// the only writer of screening history. Goes away when checks are persisted.
-export function rememberCheck(entry: HistoryEntry) {
+// Internal again: checks are persisted server-side since 2026-08-18, so
+// `api/checks.ts` no longer mirrors anything here. Only the stub's own
+// (now unused by the app) check functions still write history.
+function rememberCheck(entry: HistoryEntry) {
   let list = [entry, ...loadHistory()].slice(0, HISTORY_CAP);
   for (;;) {
     try {

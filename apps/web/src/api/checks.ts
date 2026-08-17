@@ -31,6 +31,7 @@ export const checkKeys = {
 };
 
 const DETECTOR_PATH = "/api/detector";
+const CHECKS_PATH = "/api/checks";
 
 interface StrictnessLevelResponse {
   level: string;
@@ -73,22 +74,112 @@ export async function getCapabilities(
   );
 }
 
-export function listHistory(
-  actor: User,
-  signal?: AbortSignal,
-): Promise<HistoryEntry[]> {
-  return stub.listHistory(actor, signal);
+interface CheckListResponse {
+  items: CheckResponse[];
+  next_cursor: string | null;
 }
 
-export function getEntry(
+const HISTORY_PAGE_LIMIT = 100;
+
+function toBatchRun(rows: SingleCheck[], fileName: string): BatchRun {
+  const counts: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 0,
+    human_written: 0,
+  };
+  for (const row of rows) counts[row.verdict]++;
+
+  const order: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 1,
+    human_written: 2,
+  };
+  const sorted = [...rows].sort(
+    (a, b) => order[a.verdict] - order[b.verdict] || b.rawScore - a.rawScore,
+  );
+
+  return {
+    id: rows[0].batchId as string,
+    kind: "batch",
+    fileName,
+    createdAt: rows.reduce(
+      (earliest, row) => (row.createdAt < earliest ? row.createdAt : earliest),
+      rows[0].createdAt,
+    ),
+    strictness: rows[0].detector.strictnessApplied,
+    rows: sorted,
+    counts,
+  };
+}
+
+function toHistory(rows: CheckResponse[]): HistoryEntry[] {
+  const entries: HistoryEntry[] = [];
+  const batches = new Map<string, SingleCheck[]>();
+  const names = new Map<string, string>();
+  const slots = new Map<string, number>();
+
+  for (const row of rows) {
+    const entry = toSingleCheck(row, "standard");
+    if (row.batch_id === null) {
+      entries.push(entry);
+      continue;
+    }
+    if (!batches.has(row.batch_id)) {
+      batches.set(row.batch_id, []);
+      names.set(row.batch_id, row.batch_file_name ?? "Batch");
+      slots.set(row.batch_id, entries.length);
+      entries.push(entry);
+    }
+    batches.get(row.batch_id)!.push(entry);
+  }
+
+  for (const [batchId, batchRows] of batches) {
+    entries[slots.get(batchId)!] = toBatchRun(
+      batchRows,
+      names.get(batchId) ?? "Batch",
+    );
+  }
+  return entries;
+}
+
+export async function listHistory(
+  _actor: User,
+  signal?: AbortSignal,
+): Promise<HistoryEntry[]> {
+  const rows: CheckResponse[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+    if (cursor) query.set("cursor", cursor);
+    const page = await apiRequest<CheckListResponse>(
+      `${CHECKS_PATH}?${query}`,
+      { signal },
+    );
+    rows.push(...page.items);
+    cursor = page.next_cursor ?? null;
+  } while (cursor !== null);
+
+  return toHistory(rows);
+}
+
+export async function getEntry(
   actor: User,
   id: string,
   signal?: AbortSignal,
 ): Promise<HistoryEntry | undefined> {
-  return stub.getEntry(actor, id, signal);
-}
+  try {
+    const row = await apiRequest<CheckResponse>(`${CHECKS_PATH}/${id}`, {
+      signal,
+    });
+    return toSingleCheck(row, "standard");
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) throw error;
+  }
 
-const CHECKS_PATH = "/api/checks";
+  const history = await listHistory(actor, signal);
+  return history.find((entry) => entry.kind === "batch" && entry.id === id);
+}
 
 interface CheckDetectorResponse {
   model_version: string;
@@ -103,6 +194,7 @@ interface CheckResponse {
   check_id: string;
   actor_id: string;
   batch_id: string | null;
+  batch_file_name: string | null;
   external_ref: string | null;
   verdict: string;
   raw_score: number;
@@ -160,7 +252,15 @@ function toSingleCheck(row: CheckResponse, asked: Strictness): SingleCheck {
   };
 }
 
-async function postCheck(input: CheckInput): Promise<SingleCheck> {
+interface BatchTag {
+  batchId: string;
+  fileName: string;
+}
+
+async function postCheck(
+  input: CheckInput,
+  batch?: BatchTag,
+): Promise<SingleCheck> {
   stub.validateCheckInput(input);
   const strictness = input.strictness ?? "standard";
 
@@ -173,6 +273,8 @@ async function postCheck(input: CheckInput): Promise<SingleCheck> {
         external_ref: input.externalRef?.trim() || null,
         strictness,
         retain_answer: input.retainAnswer ?? true,
+        batch_id: batch?.batchId ?? null,
+        batch_file_name: batch?.fileName ?? null,
       },
     }),
     strictness,
@@ -184,9 +286,7 @@ export async function checkAnswer(
   input: CheckInput,
 ): Promise<SingleCheck> {
   stub.requireScreeningAccess(actor);
-  const entry = await postCheck(input);
-  stub.rememberCheck(entry);
-  return entry;
+  return postCheck(input);
 }
 
 const BATCH_CONCURRENCY = 4;
@@ -234,13 +334,16 @@ export async function runBatch(
     BATCH_CONCURRENCY,
     async (input): Promise<RowOutcome> => {
       try {
-        const entry = await postCheck({
-          answerText: input.answerText,
-          questionText: input.questionText,
-          externalRef: input.externalRef,
-          strictness,
-        });
-        return { ok: true, row: { ...entry, batchId } };
+        const entry = await postCheck(
+          {
+            answerText: input.answerText,
+            questionText: input.questionText,
+            externalRef: input.externalRef,
+            strictness,
+          },
+          { batchId, fileName },
+        );
+        return { ok: true, row: entry };
       } catch (error) {
         return {
           ok: false,
@@ -298,7 +401,6 @@ export async function runBatch(
     ...(failures.length > 0 ? { failures } : {}),
   };
 
-  stub.rememberCheck(run);
   return run;
 }
 
