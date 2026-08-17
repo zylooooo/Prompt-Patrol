@@ -254,10 +254,14 @@ describe("Dropdown — disabled options and dead ends", () => {
   it("arrow keys step over a disabled option", async () => {
     render(<Harness options={withDisabled} />);
     trigger().focus();
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
-    await waitFor(() =>
-      expect(document.activeElement?.textContent).toContain("Charlie"),
-    );
+    // Opening and stepping are separate keystrokes for the reason given above:
+    // batched in one call, the second arrow can outrun the deferred focus and
+    // be handled by the trigger again, which re-opens onto Alpha.
+    await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
+    await userEvent.keyboard("{ArrowDown}");
+    // Bravo is the disabled one, so a single step must land on Charlie.
+    await expectFocused(() => options()[2]);
   });
 
   it("a disabled option cannot be selected by click", async () => {
