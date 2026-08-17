@@ -48,11 +48,15 @@ describe("apiRequest — reading the server's account of a failure", () => {
   });
 
   it("reads the flat error shape the checks routes return", async () => {
+    // That shape calls its code `error`, not `code`. This test used to assert
+    // only the message, so the code arriving as null went unnoticed until the
+    // check form needed it to tell a timeout from an outage.
     vi.stubGlobal(
       "fetch",
       respondWith(503, {
         error: "detector_unavailable",
         message: "The detector is temporarily unavailable.",
+        request_id: "req-1",
       }),
     );
 
@@ -61,6 +65,7 @@ describe("apiRequest — reading the server's account of a failure", () => {
     )) as ApiError;
 
     expect(error.message).toBe("The detector is temporarily unavailable.");
+    expect(error.code).toBe("detector_unavailable");
   });
 
   it("survives a body that is not JSON at all", async () => {

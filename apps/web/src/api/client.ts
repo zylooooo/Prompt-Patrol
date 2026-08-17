@@ -33,6 +33,7 @@ export interface RequestOptions {
 interface ErrorBody {
   detail?: string | { code?: string; message?: string };
   code?: string;
+  error?: string;
   message?: string;
 }
 
@@ -52,7 +53,10 @@ async function describeFailure(
     return { code: detail.code ?? null, message: detail.message ?? fallback };
   }
   if (typeof detail === "string") return { code: null, message: detail };
-  return { code: body.code ?? null, message: body.message ?? fallback };
+  return {
+    code: body.code ?? body.error ?? null,
+    message: body.message ?? fallback,
+  };
 }
 
 function withTimeout(

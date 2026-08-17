@@ -60,7 +60,8 @@ export function useCheckAnswer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CheckInput) => checkAnswer(requireActor(actor), input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: checkKeys.all }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
   });
 }
 
@@ -79,6 +80,7 @@ export function useRunBatch(
       rows: BatchRowInput[];
       strictness?: Strictness;
     }) => runBatch(requireActor(actor), fileName, rows, strictness, onProgress),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: checkKeys.all }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
   });
 }

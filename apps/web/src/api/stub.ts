@@ -231,7 +231,10 @@ function loadHistory(): HistoryEntry[] {
   return readJson<HistoryEntry[]>(HISTORY_KEY, []);
 }
 
-function prependHistory(entry: HistoryEntry) {
+// Exported because `api/checks.ts` calls the real endpoint and then records the
+// result here: the server computes a check but stores nothing, so this is still
+// the only writer of screening history. Goes away when checks are persisted.
+export function rememberCheck(entry: HistoryEntry) {
   let list = [entry, ...loadHistory()].slice(0, HISTORY_CAP);
   for (;;) {
     try {
@@ -679,7 +682,10 @@ function requireRole(actor: User, min: UserRole): AppUser {
 
 const requireAdmin = (actor: User) => requireRole(actor, "root_admin");
 
-function requireScreeningAccess(actor: User): AppUser {
+// Client-side only, and cosmetic like the rest of this file. Exported so the
+// real `checkAnswer` keeps refusing the same cases it always did; the server has
+// no supervision table to check, so it cannot enforce this itself.
+export function requireScreeningAccess(actor: User): AppUser {
   const resolved = requireActor(actor);
   if (resolved.role !== "teaching_assistant") return resolved;
   const linked = loadSupervision().some((link) => link.taId === resolved.id);
@@ -716,7 +722,10 @@ function requireAdminOrSupervisor(actor: User, taId: string): AppUser {
   return resolved;
 }
 
-function validateCheckInput(input: CheckInput) {
+// Genuine client-side input validation, not a fake backend. Exported so the real
+// `checkAnswer` keeps the friendlier wording and the question/reference limits
+// the server does not have. Move into `./checks` when this file goes.
+export function validateCheckInput(input: CheckInput) {
   const answer = input.answerText.trim();
   if (answer.length < ANSWER_MIN_CHARS) {
     throw new ApiError(400, `Enter at least ${ANSWER_MIN_CHARS} characters.`);
@@ -777,7 +786,7 @@ export async function checkAnswer(
     createdAt: new Date().toISOString(),
     latencyMs: Math.round(performance.now() - startedAt),
   };
-  prependHistory(entry);
+  rememberCheck(entry);
   return entry;
 }
 
@@ -845,7 +854,7 @@ export async function runBatch(
     rows,
     counts,
   };
-  prependHistory(run);
+  rememberCheck(run);
   return run;
 }
 
