@@ -37,6 +37,10 @@ class User(Base):
     # ever, and a misclick needs manual SQL to undo.
     email: Mapped[str] = mapped_column(String, nullable=False)
     entra_oid: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Display label only, never an identifier: an admin placeholder until first
+    # login, then whatever Entra's `name` claim says. Nothing may look a user up
+    # by it, and it carries no uniqueness.
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     logout_hint: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
     status: Mapped[UserStatusEnum] = mapped_column(

@@ -313,6 +313,61 @@ async def test_create_user_persists_row(db_session):
     assert result.scalar_one_or_none() is not None
 
 
+# display_name is a label, never an identifier. It has no uniqueness, nothing
+# looks a user up by it, and Entra's `name` claim overwrites it on first login.
+
+
+@pytest.mark.asyncio
+async def test_create_user_stores_a_display_name(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(
+        db_session, admin, "named@smu.edu.sg", UserRoleEnum.instructor, "  Amirah Rahman  "
+    )
+
+    assert created.display_name == "Amirah Rahman"
+
+
+@pytest.mark.asyncio
+async def test_create_user_defaults_display_name_to_null(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, admin, "unnamed@smu.edu.sg", UserRoleEnum.instructor)
+
+    assert created.display_name is None
+
+
+@pytest.mark.asyncio
+async def test_a_blank_display_name_is_stored_as_null(db_session):
+    # An empty form field must not become a user whose name renders as "".
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, admin, "blank@smu.edu.sg", UserRoleEnum.instructor, "   ")
+
+    assert created.display_name is None
+
+
+@pytest.mark.asyncio
+async def test_display_name_does_not_have_to_be_unique(db_session):
+    # Two real people share a name far more often than two email addresses do;
+    # the partial unique indexes from 0004 cover email and entra_oid only.
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    first = await create_user(db_session, admin, "wei.1@smu.edu.sg", UserRoleEnum.instructor, "Wei Lin")
+    second = await create_user(db_session, admin, "wei.2@smu.edu.sg", UserRoleEnum.instructor, "Wei Lin")
+
+    assert first.display_name == second.display_name == "Wei Lin"
+    assert first.id != second.id
+
+
 @pytest.mark.asyncio
 async def test_ta_cannot_list_users(db_session):
     ta = _user(UserRoleEnum.teaching_assistant)

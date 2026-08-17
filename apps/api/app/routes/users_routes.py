@@ -81,7 +81,9 @@ async def provision_user(
     Create new user endpoint. Authorization checks performed in service layer.
     """
     try:
-        user = await create_user(db, actor, create_request.email, create_request.role)
+        user = await create_user(
+            db, actor, create_request.email, create_request.role, create_request.display_name
+        )
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
