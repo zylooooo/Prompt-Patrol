@@ -1,12 +1,10 @@
 import { useState } from "react";
 import Button from "../components/ui/Button";
 import Wordmark from "../components/ui/Wordmark";
+import heroImage from "../assets/login-hero.jpg";
 import { useSearchParams } from "react-router-dom";
 import { SECTION_LABEL } from "../components/ui/section-label";
 import { consumeSignOutMarker, LOGIN_HINT_KEY } from "../api/auth";
-
-const HERO_IMAGE_URL =
-  "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?q=75&w=2000&auto=format&fit=crop";
 
 const INPUT_CLASS =
   "w-full rounded-lg border border-transparent bg-surface-muted px-3.5 py-3 text-sm text-foreground placeholder:text-disabled-foreground transition-all outline-hidden focus-visible:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60";
@@ -41,7 +39,7 @@ function LoginHero() {
   return (
     <div
       className="relative hidden bg-cover bg-center lg:flex lg:w-2/3 xl:w-3/4"
-      style={{ backgroundImage: `url("${HERO_IMAGE_URL}")` }}
+      style={{ backgroundImage: `url("${heroImage}")` }}
     >
       <div className="absolute inset-0 bg-foreground/55" />
       <div className="relative z-10 flex max-w-2xl flex-col justify-end p-12 text-primary-foreground">
