@@ -264,8 +264,17 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
     return user
 
 
-# Determines whether an actor is authorized to view a target user.
 def _can_view_user(actor: User, target: User) -> bool:
+    """Who may see whom. The same delegation chain `_may_manage` and
+    `list_users` enforce, so a single rule answers "can I read this user?"
+    however it is asked.
+
+    It used to be wider than the listing: an instructor could read *any*
+    instructor and *any* TA by id while their listing showed only the TAs they
+    provisioned, and a TA could read every sibling TA. Two answers to one
+    question, and the permissive one was reachable through an endpoint the SPA
+    had not wired yet. Narrowed to the delegation chain 2026-08-18.
+    """
     if actor.role == UserRoleEnum.root_admin:
         return True
     if actor.id == target.id:
@@ -273,11 +282,19 @@ def _can_view_user(actor: User, target: User) -> bool:
     if target.role == UserRoleEnum.root_admin:
         return False
     if actor.role == UserRoleEnum.instructor:
-        return target.role in (UserRoleEnum.instructor, UserRoleEnum.teaching_assistant)
+        # Exactly what list_users returns for an instructor.
+        return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.id
     if actor.role == UserRoleEnum.teaching_assistant:
-        if target.role == UserRoleEnum.instructor:
-            return True
-        return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.provisioned_by
+        # Their own supervisor, and nobody else.
+        #
+        # The old rule compared two nullable columns - `target.provisioned_by ==
+        # actor.provisioned_by` - and every CLI-provisioned account carries
+        # provisioned_by = NULL, which compares equal in Python. So all seeded
+        # accounts could read each other. Comparing an id against a nullable
+        # column cannot reproduce that: `target.id` is never NULL, so a TA with
+        # no supervisor matches nobody. Do not reintroduce a
+        # provisioned_by-to-provisioned_by comparison here.
+        return target.id == actor.provisioned_by
     return False
 
 
@@ -347,9 +364,15 @@ async def list_users(
     query = select(User)
 
     if actor.role == UserRoleEnum.instructor:
+        # An instructor's directory is the TAs they provisioned - the same rule
+        # _can_view_user applies. Asking for any other role is refused rather
+        # than answered with an empty page: contradicting the scope with
+        # `role=instructor` used to return [], which reads as "there are none"
+        # when it means "you may not ask that".
+        if role is not None and role != UserRoleEnum.teaching_assistant:
+            logger.warning("Actor %s may not list role %s.", actor.id, role)
+            raise PermissionError(f"role {actor.role} may not list role {role}")
         query = query.where(User.role == UserRoleEnum.teaching_assistant, User.provisioned_by == actor.id)
-        if role is not None:
-            query = query.where(User.role == role)
     elif role is not None:
         query = query.where(User.role == role)
 

@@ -56,28 +56,51 @@ def test_root_admin_invisible_to_non_admin():
     assert _can_view_user(instructor, admin) is False
 
 
-def test_instructor_sees_other_instructor_and_ta():
+def test_instructor_sees_only_their_own_assistants():
+    """Narrowed 2026-08-18 to the delegation chain. This used to allow any
+    instructor and any TA, which contradicted what list_users returned for the
+    same actor - two answers to one question, and the wider one was reachable
+    through GET /api/users/{id}."""
     instructor = _user(UserRoleEnum.instructor)
     other_instructor = _user(UserRoleEnum.instructor)
-    ta = _user(UserRoleEnum.teaching_assistant)
-    assert _can_view_user(instructor, other_instructor) is True
-    assert _can_view_user(instructor, ta) is True
+    own_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    other_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor.id)
+
+    assert _can_view_user(instructor, own_ta) is True
+    assert _can_view_user(instructor, other_ta) is False
+    assert _can_view_user(instructor, other_instructor) is False
 
 
-def test_ta_sees_any_instructor():
-    ta = _user(UserRoleEnum.teaching_assistant)
+def test_ta_sees_only_their_own_supervisor():
     instructor = _user(UserRoleEnum.instructor)
+    other_instructor = _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+
     assert _can_view_user(ta, instructor) is True
+    assert _can_view_user(ta, other_instructor) is False
 
 
-def test_ta_sees_sibling_ta_same_provisioner_only():
+def test_ta_sees_no_other_assistants():
     instructor_id = uuid.uuid4()
-    other_instructor_id = uuid.uuid4()
     ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor_id)
     sibling_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor_id)
-    unrelated_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=other_instructor_id)
-    assert _can_view_user(ta, sibling_ta) is True
+    unrelated_ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=uuid.uuid4())
+
+    assert _can_view_user(ta, sibling_ta) is False
     assert _can_view_user(ta, unrelated_ta) is False
+
+
+def test_cli_provisioned_accounts_are_not_siblings():
+    """scripts/provision_user leaves provisioned_by NULL, and NULL == NULL is
+    True in Python, so the old provisioned_by-to-provisioned_by comparison let
+    every seeded account read every other one. This pins the property, so
+    reintroducing that comparison fails here."""
+    a = _user(UserRoleEnum.teaching_assistant, provisioned_by=None)
+    b = _user(UserRoleEnum.teaching_assistant, provisioned_by=None)
+    instructor = _user(UserRoleEnum.instructor, provisioned_by=None)
+
+    assert _can_view_user(a, b) is False
+    assert _can_view_user(a, instructor) is False
 
 
 @pytest.mark.asyncio
@@ -408,7 +431,10 @@ async def test_instructor_sees_only_own_tas(db_session):
 
 
 @pytest.mark.asyncio
-async def test_instructor_role_filter_outside_scope_returns_empty(db_session):
+async def test_instructor_role_filter_outside_scope_is_refused(db_session):
+    """It used to return []. An empty list reads as "there are none" when what
+    happened is "you may not ask that" - and the caller cannot tell the two
+    apart, so a scoping mistake looks like an empty directory."""
     instructor = _user(UserRoleEnum.instructor)
     db_session.add(instructor)
     await db_session.commit()
@@ -416,9 +442,12 @@ async def test_instructor_role_filter_outside_scope_returns_empty(db_session):
     db_session.add(own_ta)
     await db_session.commit()
 
-    items, _ = await list_users(db_session, instructor, role=UserRoleEnum.instructor)
+    with pytest.raises(PermissionError):
+        await list_users(db_session, instructor, role=UserRoleEnum.instructor)
 
-    assert items == []
+    # The scope itself still works, and asking for it explicitly is allowed.
+    items, _ = await list_users(db_session, instructor, role=UserRoleEnum.teaching_assistant)
+    assert [u.id for u in items] == [own_ta.id]
 
 
 @pytest.mark.asyncio

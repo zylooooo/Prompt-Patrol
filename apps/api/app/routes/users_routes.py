@@ -31,7 +31,9 @@ async def get_current_user_profile(
 async def list_all_users(
     role: UserRoleEnum | None = None,
     status_filter: Annotated[list[UserStatusEnum] | None, Query(alias="status")] = None,
-    limit: int = 50,
+    # Bounded, per the contract. It was unbounded, so one request could ask the
+    # database for the entire table; callers page with `cursor` instead.
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: str | None = None,
     actor: User = Depends(require_role(UserRoleEnum.instructor)),
     db: AsyncSession = Depends(get_db),
@@ -47,6 +49,11 @@ async def list_all_users(
     try:
         items, next_cursor = await list_users(
             db, actor, role, frozenset(status_filter) if status_filter else None, limit, cursor
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to list users with that role.",
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor")

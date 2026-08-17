@@ -184,3 +184,39 @@ async def test_a_deactivated_user_cannot_use_an_existing_session(client, db_sess
     client.cookies.set("__Host-session", victim_token)
     assert client.get("/api/auth/me").status_code == 401
     assert admin.id is not None
+
+
+@pytest.mark.asyncio
+async def test_listing_caps_the_page_size(client, db_session):
+    """`limit` was unbounded, so one request could ask for the whole table.
+    Callers page with `cursor` instead."""
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    assert client.get("/api/users/?limit=100").status_code == 200
+    assert client.get("/api/users/?limit=101").status_code == 422
+    assert client.get("/api/users/?limit=0").status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_instructor_listing_a_role_outside_their_scope_is_403(client, db_session):
+    """Not an empty 200. An instructor's directory is the TAs they provisioned;
+    asking for instructors is refused, so "you may not" cannot be mistaken for
+    "there are none"."""
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+
+    assert client.get("/api/users/?role=instructor").status_code == 403
+    assert client.get("/api/users/?role=teaching_assistant").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_reading_a_user_outside_the_delegation_chain_is_404(client, db_session):
+    """The read rule now matches the listing. Both "no such user" and "not
+    yours" answer 404, so the endpoint cannot be used to enumerate accounts."""
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    own = await _target(db_session, provisioned_by=instructor.id)
+    someone_elses = await _target(db_session, provisioned_by=uuid.uuid4())
+    another_instructor = await _target(db_session, role=UserRoleEnum.instructor)
+
+    assert client.get(f"/api/users/{own.id}").status_code == 200
+    assert client.get(f"/api/users/{someone_elses.id}").status_code == 404
+    assert client.get(f"/api/users/{another_instructor.id}").status_code == 404
