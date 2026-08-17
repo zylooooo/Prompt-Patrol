@@ -10,10 +10,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const USERS_V2 = "pp.users.v2";
 const USERS_V3 = "pp.users.v3";
 
-const ADMIN: User = { email: "admin@example.com", role: "root_admin" };
+const ADMIN: User = {
+  email: "admin@example.com",
+  role: "root_admin",
+  provisionedBy: null,
+};
 const INSTRUCTOR_A: User = {
   email: "instructor.a@example.com",
   role: "instructor",
+  provisionedBy: null,
 };
 
 // The shape this stub persisted before accounts gained a lifecycle status.

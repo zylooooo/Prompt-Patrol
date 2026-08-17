@@ -1,6 +1,11 @@
+import {
+  checkAnswer,
+  getCapabilities,
+  hasScreeningAccess,
+  runBatch,
+} from "../checks";
 import type { User } from "../auth";
 import { ApiError } from "../client";
-import { checkAnswer, getCapabilities, runBatch } from "../checks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -43,7 +48,11 @@ function route(
   return mock;
 }
 
-const INSTRUCTOR: User = { email: "teach@smu.edu.sg", role: "instructor" };
+const INSTRUCTOR: User = {
+  email: "teach@smu.edu.sg",
+  role: "instructor",
+  provisionedBy: null,
+};
 
 const ANSWER =
   "Equilibrium price rises because demand shifts outward while supply is fixed.";
@@ -526,5 +535,61 @@ describe("runBatch", () => {
     ]);
 
     expect(run.rows[0].verdict).toBe("ai_generated");
+  });
+});
+
+describe("hasScreeningAccess", () => {
+  // The gate used to answer from a localStorage table of fabricated accounts, so
+  // a real teaching assistant matched nothing and every screening screen told
+  // them they had no instructor. It reads the session payload now.
+  const ta = (provisionedBy: string | null): User => ({
+    email: "ta@smu.edu.sg",
+    role: "teaching_assistant",
+    provisionedBy,
+  });
+
+  it("lets a teaching assistant with a provisioner screen", () => {
+    expect(hasScreeningAccess(ta("instructor-1"))).toBe(true);
+  });
+
+  it("holds back a teaching assistant nobody provisioned", () => {
+    expect(hasScreeningAccess(ta(null))).toBe(false);
+  });
+
+  it("never holds back an instructor or an admin", () => {
+    expect(hasScreeningAccess(INSTRUCTOR)).toBe(true);
+    expect(
+      hasScreeningAccess({
+        email: "admin@smu.edu.sg",
+        role: "root_admin",
+        provisionedBy: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("answers from the session, not from anything this browser stored", () => {
+    localStorage.clear();
+
+    expect(hasScreeningAccess(ta("instructor-1"))).toBe(true);
+  });
+
+  it("refuses a single check without reaching the server", async () => {
+    const mock = route(() => CHECK, 201);
+
+    await expect(
+      checkAnswer(ta(null), { answerText: ANSWER }),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a batch without reaching the server", async () => {
+    const mock = route(() => CHECK, 201);
+
+    await expect(
+      runBatch(ta(null), "answers.csv", [
+        { externalRef: "A", answerText: ANSWER },
+      ]),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(mock).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,6 @@
-import {
-  createAccount,
-  deleteUser,
-  listUsers,
-  setUserActive,
-} from "../users";
 import type { User } from "../auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAccount, deleteUser, listUsers, setUserActive } from "../users";
 
 /**
  * These cover the seams between the two shapes, which are the parts that fail
@@ -14,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * renders as blank.
  */
 
-const ADMIN: User = { email: "admin@smu.edu.sg", role: "root_admin" };
+const ADMIN: User = {
+  email: "admin@smu.edu.sg",
+  role: "root_admin",
+  provisionedBy: null,
+};
 
 const ME = {
   id: "id-admin",
@@ -48,9 +47,7 @@ function route(handler: (url: string, init?: RequestInit) => unknown) {
 }
 
 const requested = (mock: ReturnType<typeof route>) =>
-  mock.mock.calls
-    .map((call) => call[0])
-    .filter((url) => !url.includes("/me"));
+  mock.mock.calls.map((call) => call[0]).filter((url) => !url.includes("/me"));
 
 const paramsOf = (url: string) => new URLSearchParams(url.split("?")[1] ?? "");
 

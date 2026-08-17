@@ -13,7 +13,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  * this module ever sees.
  */
 
-const USER: User = { email: "ada@smu.edu.sg", role: "root_admin" };
+const USER: User = {
+  email: "ada@smu.edu.sg",
+  role: "root_admin",
+  provisionedBy: null,
+};
 
 beforeEach(() => installDomStubs({ matches: false }));
 afterEach(cleanup);

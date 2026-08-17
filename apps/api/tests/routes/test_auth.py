@@ -269,6 +269,47 @@ def test_no_password_less_dev_login_exists(client):
     assert client.get("/api/auth/dev/users").status_code == 404
 
 
+# --- who the session belongs to ---------------------------------------------
+# `provisioned_by` is the only supervision edge the system has, and the SPA gates
+# a teaching assistant's screening screens on it. It has to ride on this payload:
+# reading it from /api/users/me instead costs a second round trip on every page,
+# and a TA cannot list users to get it another way.
+
+
+@pytest.mark.asyncio
+async def test_me_reports_who_provisioned_the_account(client, db_session):
+    instructor = User(id=uuid.uuid4(), email="teach@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(instructor)
+    await db_session.commit()
+    assistant = User(
+        id=uuid.uuid4(),
+        email="ta@smu.edu.sg",
+        role=UserRoleEnum.teaching_assistant,
+        provisioned_by=instructor.id,
+    )
+    db_session.add(assistant)
+    await db_session.commit()
+    client.cookies.set("__Host-session", await create_session(db_session, assistant.id))
+
+    body = client.get("/api/auth/me").json()
+
+    assert body["provisioned_by"] == str(instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_me_reports_a_null_provisioner_for_a_seeded_account(client, db_session):
+    # Accounts seeded by scripts/provision_user carry no provisioner, so this is
+    # null rather than absent - the SPA reads "no supervisor" from it.
+    seeded = User(id=uuid.uuid4(), email="seeded@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
+    db_session.add(seeded)
+    await db_session.commit()
+    client.cookies.set("__Host-session", await create_session(db_session, seeded.id))
+
+    body = client.get("/api/auth/me").json()
+
+    assert body["provisioned_by"] is None
+
+
 # --- sign-out ---------------------------------------------------------------
 # Logout had no tests at all before 2026-08-16, despite being the route with the
 # most side effects: it revokes a row, clears a cookie, and hands the browser to

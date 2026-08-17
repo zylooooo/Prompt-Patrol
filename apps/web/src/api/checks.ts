@@ -281,11 +281,23 @@ async function postCheck(
   );
 }
 
+export function hasScreeningAccess(actor: User): boolean {
+  return actor.role !== "teaching_assistant" || actor.provisionedBy !== null;
+}
+
+function requireScreeningAccess(actor: User): void {
+  if (hasScreeningAccess(actor)) return;
+  throw new ApiError(
+    403,
+    "You are not assigned to an instructor yet, so there is nothing to screen.",
+  );
+}
+
 export async function checkAnswer(
   actor: User,
   input: CheckInput,
 ): Promise<SingleCheck> {
-  stub.requireScreeningAccess(actor);
+  requireScreeningAccess(actor);
   return postCheck(input);
 }
 
@@ -324,7 +336,7 @@ export async function runBatch(
   strictness: Strictness = "standard",
   onProgress?: (done: number, total: number) => void,
 ): Promise<BatchRun> {
-  stub.requireScreeningAccess(actor);
+  requireScreeningAccess(actor);
 
   const batchId = crypto.randomUUID();
   let done = 0;
@@ -402,8 +414,4 @@ export async function runBatch(
   };
 
   return run;
-}
-
-export function hasScreeningAccess(actor: User): boolean {
-  return stub.hasScreeningAccess(actor);
 }
