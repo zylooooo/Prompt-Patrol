@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -6,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import ActiveSession, SessionFailure, generate_session_token, hash_token
 from models import User, UserSession, UserStatusEnum
+
+logger = logging.getLogger(__name__)
 
 SESSION_ABSOLUTE_TTL = timedelta(hours=12)
 SESSION_IDLE_TTL = timedelta(minutes=90)
@@ -83,8 +86,33 @@ async def authenticate_session(
     )
 
 
-# Revokes an active session and returns the user associated with it.
-async def revoke_session(db: AsyncSession, raw_token: str) -> User | None:
+# Revokes every live session for one user and reports how many were ended.
+async def revoke_all_for_user(db: AsyncSession, user_id: uuid.UUID) -> int:
+    # deleted_at IS NULL, so an already-revoked row keeps the timestamp that
+    # records when it actually ended.
+    result = await db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
+        .values(deleted_at=datetime.now(UTC))
+    )
+    await db.commit()
+    return result.rowcount
+
+
+async def sign_out_everywhere(db: AsyncSession, raw_token: str) -> User | None:
+    """Ends every session this user holds, not just the browser that asked.
+
+    Nothing in the product can reach a session on a device you no longer hold:
+    there is no device list, `/api/admin/sessions` is specified but not built,
+    and the only other lever is an admin deactivating the whole account. Ending
+    just the calling browser would leave someone who signed out on a shared
+    machine with no remedy at all. The cost is bounded the other way - sessions
+    already die after 90 minutes idle or 12 hours absolute, and signing back in
+    is one Entra click.
+
+    The user is resolved from a *live* session on purpose: a stale token must not
+    be replayable as a "sign this person out everywhere" primitive.
+    """
     token_hash = hash_token(raw_token)
     result = await db.execute(
         select(User)
@@ -92,11 +120,9 @@ async def revoke_session(db: AsyncSession, raw_token: str) -> User | None:
         .where(UserSession.token_hash == token_hash, UserSession.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
+    if user is None:
+        return None
 
-    await db.execute(
-        update(UserSession)
-        .where(UserSession.token_hash == token_hash, UserSession.deleted_at.is_(None))
-        .values(deleted_at=datetime.now(UTC))
-    )
-    await db.commit()
+    ended = await revoke_all_for_user(db, user.id)
+    logger.info("Signed out user %s, ending %d session(s).", user.id, ended)
     return user

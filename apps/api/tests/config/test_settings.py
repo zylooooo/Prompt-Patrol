@@ -2,6 +2,7 @@ import pytest
 
 from config import SESSION_SECRET_MIN_LENGTH, validate_session_cookie_hosts, validate_session_secret
 
+
 @pytest.mark.parametrize(
     ("frontend", "redirect"),
     [

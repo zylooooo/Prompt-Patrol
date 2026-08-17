@@ -605,23 +605,29 @@ paths:
         Sessions are soft-deleted (`revoked_at = now()`), never hard-deleted,
         preserving referential integrity with audit entries.
 
-        Idempotent: a second call returns 204.
+        Idempotent: repeating it with a token whose session is already revoked
+        revokes nothing further and still completes. The caller is resolved
+        through a **live** session only — otherwise a copied cookie would stay
+        usable indefinitely as a "sign this person out everywhere" primitive.
 
-        ### Two-step logout — the SPA must complete it
-        Revoking the local session is not sufficient. The Entra SSO session
+        ### Two-step logout — the server completes it
+        Revoking the local sessions is not sufficient. The Entra SSO session
         survives, so the user can click "log in" and be silently readmitted.
         This looks like a logout bug and is not.
 
-        The response carries `X-Entra-Logout-Url`. The SPA **must** navigate
-        to it:
+        **Implemented as a redirect, not a header (corrected 2026-08-17).**
+        This endpoint answers `303` straight to the Entra sign-out URL, and
+        `SignOutForm.tsx` submits a native form POST rather than an XHR.
 
-        ```ts
-        const res = await api.post('/api/auth/logout');
-        window.location.href = res.headers['x-entra-logout-url'];
-        ```
+        The originally specified shape — `204` plus an `X-Entra-Logout-Url`
+        header for the SPA to follow in JavaScript — was **not** built, on
+        purpose. The full document navigation is what discards the in-memory
+        query cache, and the redirect works with no JavaScript at all. The
+        implementation is the better design; this text was corrected to match
+        it rather than the reverse.
 
-        The URL is built server-side so tenant configuration never enters the
-        frontend bundle and does not vary between environments.
+        Either way the URL is built server-side, so tenant configuration never
+        enters the frontend bundle and does not vary between environments.
 
         ### On `logout_hint`
         The URL includes `logout_hint` when available, suppressing Entra's
@@ -642,14 +648,16 @@ paths:
         `end_session_endpoint` redirect. That is device SSO working as
         designed. Note it in the test plan so nobody spends a day on it.
       responses:
-        '204':
-          description: All sessions for this user revoked; cookie cleared.
+        '303':
+          description: |
+            All live sessions for this user revoked; cookie cleared; browser
+            redirected onward to Entra sign-out.
+
+            Returned even when the cookie is absent or already revoked — the
+            endpoint never reports whether a session existed, and the user ends
+            up signed out of Entra either way.
           headers:
-            Set-Cookie:
-              schema:
-                type: string
-                example: __Host-pp_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
-            X-Entra-Logout-Url:
+            Location:
               required: true
               schema:
                 type: string
@@ -660,8 +668,13 @@ paths:
                 registration, or Entra silently ignores it and strands the user
                 on a generic Microsoft page. Register production and
                 `http://localhost:5173` for development.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+
+                Falls back to `{FRONTEND_URL}/login` if the discovery document
+                cannot be reached — the local sessions are revoked regardless.
+            Set-Cookie:
+              schema:
+                type: string
+                example: __Host-session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
 
   # ---------------------------------------------------------------------------
   # ADMIN — BLOCKED ON USERS MODULE

@@ -11,7 +11,7 @@ from config import ENTRA_REDIRECT_URI, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
 from schemas import MeResponse, SessionResponse
-from services import create_session, record_logout_hint, resolve_or_bind_user, revoke_session
+from services import create_session, record_logout_hint, resolve_or_bind_user, sign_out_everywhere
 from services.sessions import SESSION_IDLE_TTL
 from services.users_service import LoginRejection
 
@@ -89,11 +89,11 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     return response
 
 
-# Revokes the local session and redirects the user through Entra sign-out.
+# Revokes every session this user holds, then redirects through Entra sign-out.
 @router.post("/logout")
 async def logout(request: Request, db: AsyncSession = Depends(get_db)):
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
-    user = await revoke_session(db, raw_token) if raw_token else None
+    user = await sign_out_everywhere(db, raw_token) if raw_token else None
 
     response = RedirectResponse(
         url=await _entra_logout_url(user),

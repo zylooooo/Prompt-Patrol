@@ -302,6 +302,56 @@ async def test_logout_revokes_the_session(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_logout_ends_this_users_other_sessions_too(client, db_session):
+    # Sign-out is global: nothing else in the product can reach a session on a
+    # device you no longer hold, so ending only the calling browser would leave
+    # someone who signed out on a shared machine with no remedy.
+    user, raw_token = await _signed_in_client(client, db_session)
+    other_device = await create_session(db_session, user.id)
+    third_device = await create_session(db_session, user.id)
+
+    with _discovery():
+        response = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    for token in (raw_token, other_device, third_device):
+        assert await authenticate_session(db_session, token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_logout_leaves_other_users_sessions_alone(client, db_session):
+    _, raw_token = await _signed_in_client(client, db_session)
+    bystander = User(id=uuid.uuid4(), email="stays@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(bystander)
+    await db_session.commit()
+    bystander_token = await create_session(db_session, bystander.id)
+
+    with _discovery():
+        client.post("/api/auth/logout", follow_redirects=False)
+
+    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
+    assert not isinstance(await authenticate_session(db_session, bystander_token), SessionFailure)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_token_cannot_sign_someone_out_again(client, db_session):
+    # The token is resolved through a live session only. Otherwise a copied
+    # cookie stays usable forever as a "sign this person out everywhere" button.
+    user, raw_token = await _signed_in_client(client, db_session)
+    with _discovery():
+        client.post("/api/auth/logout", follow_redirects=False)
+
+    fresh_login = await create_session(db_session, user.id)
+
+    client.cookies.set("__Host-session", raw_token)
+    with _discovery():
+        replay = client.post("/api/auth/logout", follow_redirects=False)
+
+    assert replay.status_code == 303
+    assert not isinstance(await authenticate_session(db_session, fresh_login), SessionFailure)
+
+
+@pytest.mark.asyncio
 async def test_logout_clears_the_cookie_with_matching_attributes(client, db_session):
     # delete_cookie must repeat path/secure/httponly/samesite or the browser
     # keeps the original cookie and the user stays signed in locally.
