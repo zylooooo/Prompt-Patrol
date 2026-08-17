@@ -191,7 +191,7 @@ function csvEscape(value: string): string {
 
 export function serializeResultsCsv(run: BatchRun): string {
   const lines = [
-    "external_ref,question_text,answer_text,raw_score,verdict,verdict_text",
+    "external_ref,question_text,answer_text,raw_score,verdict,verdict_text,note",
   ];
   for (const row of run.rows) {
     lines.push(
@@ -202,6 +202,21 @@ export function serializeResultsCsv(run: BatchRun): string {
         row.rawScore.toFixed(2),
         row.verdict,
         csvEscape(VERDICT_TEXT[row.verdict]),
+        "",
+      ].join(","),
+    );
+  }
+
+  for (const failure of run.failures ?? []) {
+    lines.push(
+      [
+        csvEscape(failure.externalRef),
+        "",
+        "",
+        "",
+        "",
+        "",
+        csvEscape(failure.reason),
       ].join(","),
     );
   }

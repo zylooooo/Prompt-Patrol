@@ -2,11 +2,11 @@ import ScoreGauge from "./ScoreGauge";
 import type { ReactNode } from "react";
 import VerdictChip from "./VerdictChip";
 import SignalsList from "./SignalsList";
-import { ApiError } from "../api/client";
 import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
+import { describeCheckFailure } from "../lib/checkFailure";
 import { STRICTNESS_TEXT, type SingleCheck } from "../types";
 
 interface ResultPanelProps {
@@ -14,29 +14,6 @@ interface ResultPanelProps {
   result?: SingleCheck;
   error?: unknown;
   showSavedLink?: boolean;
-}
-
-const GENERIC_FAILURE = "The check failed. Nothing was saved. Try again.";
-
-const FAILURE_TEXT: Record<string, string> = {
-  detector_timeout:
-    "The detector took too long to answer. Nothing was saved — try again in a moment.",
-  detector_unavailable:
-    "The detector is temporarily unavailable. Nothing was saved — try again shortly.",
-  payload_too_large:
-    "That answer is too long to screen. Shorten it and check again.",
-};
-
-function failureText(error: unknown): string {
-  if (!(error instanceof ApiError)) return GENERIC_FAILURE;
-  if (error.code && error.code in FAILURE_TEXT) {
-    return FAILURE_TEXT[error.code];
-  }
-
-  if (error.status >= 400 && error.status < 500 && error.message) {
-    return error.message;
-  }
-  return GENERIC_FAILURE;
 }
 
 function MetaRow({ name, children }: { name: string; children: ReactNode }) {
@@ -83,7 +60,7 @@ export default function ResultPanel({
           className="mt-6 rounded-md bg-danger-soft px-3.5 py-2.5 text-[13px] text-danger"
           role="alert"
         >
-          {failureText(error)}
+          {describeCheckFailure(error)}
         </p>
       )}
 

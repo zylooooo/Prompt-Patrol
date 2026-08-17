@@ -1,6 +1,6 @@
 import type { User } from "../auth";
 import { ApiError } from "../client";
-import { checkAnswer, getCapabilities } from "../checks";
+import { checkAnswer, getCapabilities, runBatch } from "../checks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -310,5 +310,218 @@ describe("checkAnswer", () => {
     const entry = await checkAnswer(INSTRUCTOR, { answerText: ANSWER });
 
     expect(entry.explanation).toEqual({ cues: ["formal_vocabulary"] });
+  });
+});
+
+describe("runBatch", () => {
+  const input = (ref: string) => ({
+    externalRef: ref,
+    answerText: `Answer number ${ref}, long enough to pass validation.`,
+  });
+
+  /** Answers every row, failing the refs named in `failing`. */
+  function batchRoute(failing: string[] = []) {
+    return vi.fn((_url: string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as {
+        external_ref: string;
+        strictness: string;
+      };
+      if (failing.includes(body.external_ref)) {
+        return Promise.resolve({
+          ok: false,
+          status: 504,
+          json: () =>
+            Promise.resolve({
+              error: "detector_timeout",
+              message: "Detector exceeded the 10s budget.",
+              request_id: "req",
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        json: () =>
+          Promise.resolve({
+            ...CHECK,
+            check_id: `check-${body.external_ref}`,
+            external_ref: body.external_ref,
+            detector: {
+              ...CHECK.detector,
+              strictness_applied: body.strictness,
+            },
+          }),
+      });
+    });
+  }
+
+  it("scores every row through the checks endpoint", async () => {
+    const mock = batchRoute();
+    vi.stubGlobal("fetch", mock);
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+      input("C"),
+    ]);
+
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(mock.mock.calls.every((call) => call[0] === "/api/checks")).toBe(
+      true,
+    );
+    expect(run.rows).toHaveLength(3);
+  });
+
+  it("applies the run's strictness to every row", async () => {
+    const mock = batchRoute();
+    vi.stubGlobal("fetch", mock);
+
+    await runBatch(
+      INSTRUCTOR,
+      "answers.csv",
+      [input("A"), input("B")],
+      "strict",
+    );
+
+    for (const call of mock.mock.calls) {
+      const body = JSON.parse(call[1]?.body as string) as {
+        strictness: string;
+      };
+      expect(body.strictness).toBe("strict");
+    }
+  });
+
+  it("keeps the rows it could score when others fail", async () => {
+    // The point of the phase: 2 timeouts must not discard 2 good scores.
+    vi.stubGlobal("fetch", batchRoute(["B", "D"]));
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+      input("C"),
+      input("D"),
+    ]);
+
+    expect(run.rows.map((row) => row.externalRef).sort()).toEqual(["A", "C"]);
+    expect(run.failures?.map((f) => f.externalRef)).toEqual(["B", "D"]);
+  });
+
+  it("names why a row failed", async () => {
+    vi.stubGlobal("fetch", batchRoute(["B"]));
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+    ]);
+
+    expect(run.failures?.[0].reason).toContain("took too long");
+  });
+
+  it("never invents a score for a row that failed", async () => {
+    // A row shown as 0.00 "uncertain" would be stating a result nobody
+    // produced. Failed rows stay out of `rows` and out of `counts`.
+    vi.stubGlobal("fetch", batchRoute(["B"]));
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+    ]);
+
+    const total =
+      run.counts.ai_generated + run.counts.uncertain + run.counts.human_written;
+    expect(total).toBe(run.rows.length);
+    expect(run.rows.some((row) => row.externalRef === "B")).toBe(false);
+  });
+
+  it("omits the failures field entirely when nothing failed", async () => {
+    vi.stubGlobal("fetch", batchRoute());
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [input("A")]);
+
+    expect(run.failures).toBeUndefined();
+  });
+
+  it("fails the run when no row could be scored", async () => {
+    // An empty table under a success banner would report a run that produced
+    // nothing as if it had worked.
+    vi.stubGlobal("fetch", batchRoute(["A", "B"]));
+
+    await expect(
+      runBatch(INSTRUCTOR, "answers.csv", [input("A"), input("B")]),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("reports progress once per row, including the failures", async () => {
+    vi.stubGlobal("fetch", batchRoute(["B"]));
+    const seen: number[] = [];
+
+    await runBatch(
+      INSTRUCTOR,
+      "answers.csv",
+      [input("A"), input("B"), input("C")],
+      "standard",
+      (done, total) => {
+        seen.push(done);
+        expect(total).toBe(3);
+      },
+    );
+
+    expect(seen).toHaveLength(3);
+    expect(Math.max(...seen)).toBe(3);
+  });
+
+  it("groups the rows under one batch id and records one history entry", async () => {
+    // Not 500 loose checks: the rows belong to the run, and the stub's history
+    // cap would evict real history if each were written separately.
+    vi.stubGlobal("fetch", batchRoute());
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+    ]);
+
+    expect(run.rows.every((row) => row.batchId === run.id)).toBe(true);
+
+    const stored = JSON.parse(
+      localStorage.getItem("pp.history.v2") ?? "[]",
+    ) as { kind?: string; id?: string; checkId?: string }[];
+
+    // Only the run itself is added. The other entries are the demo rows that
+    // resolving an actor seeds — none of them is a row from this batch.
+    expect(stored[0]).toMatchObject({ kind: "batch", id: run.id });
+    expect(
+      stored.filter((e) => e.checkId === "check-A" || e.checkId === "check-B"),
+    ).toHaveLength(0);
+  });
+
+  it("puts flagged rows first", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as {
+          external_ref: string;
+        };
+        const human = body.external_ref === "A";
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () =>
+            Promise.resolve({
+              ...CHECK,
+              check_id: `check-${body.external_ref}`,
+              external_ref: body.external_ref,
+              verdict: human ? "human_written" : "ai_generated",
+              raw_score: human ? 0.1 : 0.9,
+            }),
+        });
+      }),
+    );
+
+    const run = await runBatch(INSTRUCTOR, "answers.csv", [
+      input("A"),
+      input("B"),
+    ]);
+
+    expect(run.rows[0].verdict).toBe("ai_generated");
   });
 });

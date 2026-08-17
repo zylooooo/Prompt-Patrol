@@ -94,6 +94,8 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
   ];
 
   const expandedRow = run.rows.find((row) => row.checkId === expanded);
+  const failures = run.failures ?? [];
+  const shownFailures = failures.slice(0, 6);
 
   return (
     <section className="rounded-xl bg-surface p-7 shadow-md">
@@ -112,6 +114,29 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
         </div>
       </div>
 
+      {failures.length > 0 && (
+        <div
+          className="mt-4 rounded-md bg-warning-soft px-3.5 py-2.5 text-[13px] text-foreground"
+          role="status"
+        >
+          <p className="font-medium">
+            {failures.length} of {run.rows.length + failures.length} rows could
+            not be checked. The rest were scored.
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-muted-foreground">
+            {shownFailures.map((failure) => (
+              <li key={failure.externalRef}>
+                <span className="font-mono">{failure.externalRef}</span> —{" "}
+                {failure.reason}
+              </li>
+            ))}
+            {failures.length > shownFailures.length && (
+              <li>…and {failures.length - shownFailures.length} more.</li>
+            )}
+          </ul>
+        </div>
+      )}
+
       <div className="mt-5">
         <DataTable<BatchRow>
           columns={columns}
@@ -120,7 +145,11 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
           selectedId={expanded}
           onSelect={toggle}
           bodyMaxHeightClass="max-h-[28rem]"
-          footer={`Showing all ${run.rows.length} · flagged first`}
+          footer={
+            failures.length > 0
+              ? `Showing ${run.rows.length} scored · flagged first`
+              : `Showing all ${run.rows.length} · flagged first`
+          }
         />
       </div>
 

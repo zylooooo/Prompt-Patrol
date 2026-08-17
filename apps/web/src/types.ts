@@ -103,6 +103,11 @@ export interface BatchRowInput {
 
 export type BatchRow = CheckResult;
 
+export interface BatchFailure {
+  externalRef: string;
+  reason: string;
+}
+
 export interface BatchRun {
   id: string;
   kind: "batch";
@@ -111,6 +116,7 @@ export interface BatchRun {
   strictness: Strictness;
   rows: BatchRow[];
   counts: Record<Verdict, number>;
+  failures?: BatchFailure[];
 }
 
 export interface SingleCheck extends CheckResult {

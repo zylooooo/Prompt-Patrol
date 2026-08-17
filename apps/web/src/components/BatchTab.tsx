@@ -61,7 +61,16 @@ export default function BatchTab() {
     setProgress({ done: 0, total: file.rows.length });
     batch.mutate(
       { fileName: file.name, rows: file.rows, strictness },
-      { onSuccess: () => showToast("Batch complete. Saved to history.") },
+      {
+        onSuccess: (run) => {
+          const failed = run.failures?.length ?? 0;
+          showToast(
+            failed === 0
+              ? "Batch complete. Saved to history."
+              : `Batch complete with ${failed} row${failed === 1 ? "" : "s"} unchecked. Saved to history.`,
+          );
+        },
+      },
     );
   }
 
@@ -191,7 +200,10 @@ export default function BatchTab() {
           {batch.isPending && progress
             ? `Checked ${Math.floor((progress.done / progress.total) * 10) * 10} percent`
             : batch.isSuccess && batch.data
-              ? `Batch complete. ${batch.data.counts.ai_generated} flagged, ${batch.data.counts.uncertain} uncertain, ${batch.data.counts.human_written} likely human.`
+              ? `Batch complete. ${batch.data.counts.ai_generated} flagged, ${batch.data.counts.uncertain} uncertain, ${batch.data.counts.human_written} likely human.` +
+                (batch.data.failures?.length
+                  ? ` ${batch.data.failures.length} rows could not be checked.`
+                  : "")
               : ""}
         </p>
 

@@ -1,5 +1,7 @@
 import type {
   AbstainReason,
+  BatchFailure,
+  BatchRow,
   BatchRowInput,
   BatchRun,
   CheckInput,
@@ -18,7 +20,8 @@ import {
 } from "../types";
 import * as stub from "./stub";
 import type { User } from "./auth";
-import { apiRequest } from "./client";
+import { ApiError, apiRequest } from "./client";
+import { describeCheckFailure } from "../lib/checkFailure";
 
 export const checkKeys = {
   all: ["checks"] as const,
@@ -157,15 +160,11 @@ function toSingleCheck(row: CheckResponse, asked: Strictness): SingleCheck {
   };
 }
 
-export async function checkAnswer(
-  actor: User,
-  input: CheckInput,
-): Promise<SingleCheck> {
-  stub.requireScreeningAccess(actor);
+async function postCheck(input: CheckInput): Promise<SingleCheck> {
   stub.validateCheckInput(input);
-
   const strictness = input.strictness ?? "standard";
-  const entry = toSingleCheck(
+
+  return toSingleCheck(
     await apiRequest<CheckResponse>(CHECKS_PATH, {
       method: "POST",
       body: {
@@ -178,19 +177,129 @@ export async function checkAnswer(
     }),
     strictness,
   );
+}
 
+export async function checkAnswer(
+  actor: User,
+  input: CheckInput,
+): Promise<SingleCheck> {
+  stub.requireScreeningAccess(actor);
+  const entry = await postCheck(input);
   stub.rememberCheck(entry);
   return entry;
 }
 
-export function runBatch(
+const BATCH_CONCURRENCY = 4;
+
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+
+  const worker = async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      out[index] = await work(items[index], index);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return out;
+}
+
+type RowOutcome =
+  | { ok: true; row: BatchRow }
+  | { ok: false; failure: BatchFailure };
+
+export async function runBatch(
   actor: User,
   fileName: string,
-  rows: BatchRowInput[],
-  strictness?: Strictness,
+  inputs: BatchRowInput[],
+  strictness: Strictness = "standard",
   onProgress?: (done: number, total: number) => void,
 ): Promise<BatchRun> {
-  return stub.runBatch(actor, fileName, rows, strictness, onProgress);
+  stub.requireScreeningAccess(actor);
+
+  const batchId = crypto.randomUUID();
+  let done = 0;
+
+  const outcomes = await mapWithLimit(
+    inputs,
+    BATCH_CONCURRENCY,
+    async (input): Promise<RowOutcome> => {
+      try {
+        const entry = await postCheck({
+          answerText: input.answerText,
+          questionText: input.questionText,
+          externalRef: input.externalRef,
+          strictness,
+        });
+        return { ok: true, row: { ...entry, batchId } };
+      } catch (error) {
+        return {
+          ok: false,
+          failure: {
+            externalRef: input.externalRef,
+            reason: describeCheckFailure(error),
+          },
+        };
+      } finally {
+        onProgress?.(++done, inputs.length);
+      }
+    },
+  );
+
+  const rows: BatchRow[] = [];
+  const failures: BatchFailure[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.ok) rows.push(outcome.row);
+    else failures.push(outcome.failure);
+  }
+
+  if (rows.length === 0 && failures.length > 0) {
+    throw new ApiError(
+      502,
+      failures.length === 1
+        ? failures[0].reason
+        : `None of the ${failures.length} rows could be checked. ${failures[0].reason}`,
+    );
+  }
+
+  const counts: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 0,
+    human_written: 0,
+  };
+  for (const row of rows) counts[row.verdict]++;
+
+  const order: Record<Verdict, number> = {
+    ai_generated: 0,
+    uncertain: 1,
+    human_written: 2,
+  };
+  rows.sort(
+    (a, b) => order[a.verdict] - order[b.verdict] || b.rawScore - a.rawScore,
+  );
+
+  const run: BatchRun = {
+    id: batchId,
+    kind: "batch",
+    fileName,
+    createdAt: new Date().toISOString(),
+    strictness,
+    rows,
+    counts,
+    ...(failures.length > 0 ? { failures } : {}),
+  };
+
+  stub.rememberCheck(run);
+  return run;
 }
 
 export function hasScreeningAccess(actor: User): boolean {
