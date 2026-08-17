@@ -8,6 +8,7 @@ import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
 import { describeCheckFailure } from "../lib/checkFailure";
 import { STRICTNESS_TEXT, type SingleCheck } from "../types";
+import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
 interface ResultPanelProps {
   status: "idle" | "pending" | "error" | "success";
@@ -111,6 +112,12 @@ export default function ResultPanel({
           {result.verdict !== "uncertain" && (
             <p className="mt-6 text-xs text-disabled-foreground">
               Flags are prompts for review, not verdicts.
+            </p>
+          )}
+
+          {isUncalibrated(result.detector) && (
+            <p className="mt-3 text-xs text-disabled-foreground">
+              {UNCALIBRATED_NOTICE}
             </p>
           )}
         </>

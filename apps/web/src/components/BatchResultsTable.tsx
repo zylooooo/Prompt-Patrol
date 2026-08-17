@@ -10,6 +10,7 @@ import { truncate } from "../lib/format";
 import { useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
+import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
 function CountChip({
   dotClass,
@@ -135,6 +136,12 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
             )}
           </ul>
         </div>
+      )}
+
+      {run.rows.length > 0 && isUncalibrated(run.rows[0].detector) && (
+        <p className="mt-3 text-xs text-disabled-foreground">
+          {UNCALIBRATED_NOTICE}
+        </p>
       )}
 
       <div className="mt-5">
