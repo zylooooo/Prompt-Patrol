@@ -1,15 +1,21 @@
 import {
   checkKeys,
   checkAnswer,
+  getCapabilities,
   getEntry,
   listHistory,
   runBatch,
 } from "../api/checks";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
 import type { BatchRowInput, CheckInput, Strictness } from "../types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function useActor(): User | null {
   return useAuth().user;
@@ -18,6 +24,17 @@ function useActor(): User | null {
 function requireActor(actor: User | null): User {
   if (actor === null) throw new ApiError(401, "You are not signed in.");
   return actor;
+}
+
+export const capabilitiesQueryOptions = () =>
+  queryOptions({
+    queryKey: checkKeys.capabilities(),
+    queryFn: ({ signal }) => getCapabilities(signal),
+    staleTime: 60 * 60_000,
+  });
+
+export function useDetectorCapabilities() {
+  return useQuery(capabilitiesQueryOptions());
 }
 
 export function useHistory() {
