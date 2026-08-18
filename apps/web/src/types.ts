@@ -85,6 +85,8 @@ export interface CheckResult {
   latencyMs: number | null;
 }
 
+export type DetectorStatus = "ready" | "loading" | "unavailable";
+
 export interface DetectorCapabilities {
   modelVersion: string;
   requiresQuestionText: boolean;

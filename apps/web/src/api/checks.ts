@@ -7,6 +7,7 @@ import type {
   CheckInput,
   CueCode,
   DetectorCapabilities,
+  DetectorStatus,
   HistoryEntry,
   SingleCheck,
   Strictness,
@@ -28,9 +29,11 @@ export const checkKeys = {
   history: () => [...checkKeys.all, "history"] as const,
   entry: (id: string) => [...checkKeys.all, "entry", id] as const,
   capabilities: () => [...checkKeys.all, "capabilities"] as const,
+  detectorStatus: () => [...checkKeys.all, "detector-status"] as const,
 };
 
 const DETECTOR_PATH = "/api/detector";
+const DETECTOR_STATUS_PATH = "/api/detector/status";
 const CHECKS_PATH = "/api/checks";
 
 interface StrictnessLevelResponse {
@@ -72,6 +75,24 @@ export async function getCapabilities(
   return toDetectorCapabilities(
     await apiRequest<DetectorResponse>(DETECTOR_PATH, { signal }),
   );
+}
+
+interface DetectorStatusResponse {
+  status: string;
+  model_version: string;
+}
+
+function toDetectorStatus(value: string | undefined): DetectorStatus {
+  return value === "ready" || value === "loading" ? value : "unavailable";
+}
+
+export async function getDetectorStatus(
+  signal?: AbortSignal,
+): Promise<DetectorStatus> {
+  const body = await apiRequest<DetectorStatusResponse>(DETECTOR_STATUS_PATH, {
+    signal,
+  });
+  return toDetectorStatus(body?.status);
 }
 
 interface CheckListResponse {

@@ -1,18 +1,71 @@
 import time
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+import baseline
 from baseline import Score
 from main import app
 
 client = TestClient(app)
 
 
-def test_health_check():
+@pytest.fixture(autouse=True)
+def _unloaded():
+    """The status is a module global, so each test starts from a cold process."""
+    baseline._set_status("loading")
+    yield
+    baseline._set_status("loading")
+
+
+def test_health_is_503_until_the_model_is_loaded():
+    """The API gates its own startup on this, so answering 200 early is what let
+    the first real check pay the whole model load inside its 10s budget."""
     response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "loading"
+
+
+def test_health_is_200_once_the_model_is_ready():
+    baseline._set_status("ready")
+
+    response = client.get("/health")
+
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
+    assert response.json() == {"status": "ready", "model_version": baseline.MODEL_VERSION}
+
+
+def test_a_failed_load_is_reported_as_failed_not_as_still_loading():
+    """A load that is still running clears by itself and a broken one does not -
+    the operator reading the badge needs to know which they are looking at."""
+    baseline._set_status("failed")
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "failed"
+
+
+def test_warm_up_leaves_the_model_ready():
+    def fake_pipeline(texts, **kwargs):
+        return [[{"label": "Fake", "score": 0.9}]]
+
+    with patch("baseline._pipeline", return_value=fake_pipeline):
+        baseline.warm_up()
+
+    assert baseline.status() == "ready"
+
+
+def test_warm_up_survives_a_model_that_will_not_load():
+    """A crashed warm-up must leave the service answering /health, not dead: the
+    status is how anyone finds out what went wrong."""
+    with patch("baseline._pipeline", side_effect=OSError("no model files")):
+        baseline.warm_up()
+
+    assert baseline.status() == "failed"
+    assert client.get("/health").status_code == 503
 
 
 def test_score_happy_path():

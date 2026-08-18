@@ -2,6 +2,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,9 @@ MODEL_NAME = "openai-community/roberta-base-openai-detector"
 MAX_TOKENS = 512
 
 _AI_LABEL = "fake"
+
+# "loading" until warm_up finishes, then "ready" or "failed" for good.
+Status = Literal["loading", "ready", "failed"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,9 @@ class Score:
 # bought almost nothing even when it worked.
 _lock = threading.Lock()
 
+_status: Status = "loading"
+_status_lock = threading.Lock()
+
 
 @lru_cache(maxsize=1)
 def _pipeline():
@@ -36,6 +43,35 @@ def _pipeline():
 
     logger.info("Loading baseline detector model %s", MODEL_NAME)
     return pipeline("text-classification", model=MODEL_NAME, top_k=None)
+
+
+def status() -> Status:
+    """Whether the model is loaded yet, for /health to report."""
+    with _status_lock:
+        return _status
+
+
+def _set_status(value: Status) -> None:
+    global _status
+    with _status_lock:
+        _status = value
+
+
+def warm_up() -> None:
+    """Load the model up front so no request has to pay for it."""
+    # A real forward pass, not just the constructor: the first call is what
+    # materialises the weights and builds the tokenizer, so "ready" would
+    # otherwise still leave several seconds of work for the first caller.
+    try:
+        with _lock:
+            _pipeline()(["warm up"], truncation=True, max_length=MAX_TOKENS)
+    except Exception:
+        logger.exception("Detector model failed to load")
+        _set_status("failed")
+        return
+
+    _set_status("ready")
+    logger.info("Detector model ready")
 
 
 def score_text(text: str) -> Score:

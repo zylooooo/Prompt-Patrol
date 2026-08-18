@@ -24,10 +24,9 @@ services:
       dockerfile: Dockerfile
     container_name: prompt-patrol-detector
     restart: unless-stopped
-    volumes:
-      # Persists the ~500MB model download across rebuilds - without this,
-      # every `--build` re-downloads it from Hugging Face.
-      - detector_model_cache:/home/detectoruser/.cache/huggingface
+    # No model cache volume any more: the Dockerfile bakes the model into the
+    # image, and a volume mounted over that path would shadow it with whatever
+    # an older build happened to leave behind.
     networks:
       - prompt-patrol-network
     healthcheck:
@@ -90,4 +89,3 @@ networks:
 
 volumes:
   postgres_data:
-  detector_model_cache:

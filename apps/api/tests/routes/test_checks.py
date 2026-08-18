@@ -8,7 +8,7 @@ from db import get_db
 from main import app
 from models import User, UserRoleEnum
 from routes.checks import require_any_user, require_screening
-from services.detector_client import Score
+from services.detector_client import MODEL_VERSION, Score
 
 
 @pytest.fixture
@@ -139,6 +139,37 @@ async def test_get_detector_capabilities(client, db_session):
         "standard",
         "strict",
     }
+
+
+@pytest.mark.asyncio
+async def test_detector_status_without_session_returns_401(client):
+    response = client.get("/api/detector/status")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_detector_status_reports_ready(client, db_session):
+    await _signed_in(client, db_session, email="ta6@smu.edu.sg")
+
+    with patch("routes.checks.detector_health", new=AsyncMock(return_value="ready")):
+        response = client.get("/api/detector/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "model_version": MODEL_VERSION}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reported", ["loading", "unavailable"])
+async def test_a_detector_that_cannot_score_is_still_a_200(client, db_session, reported):
+    """The caller is a status badge. Answering 5xx would blank it at the one
+    moment it has something worth saying, so the trouble goes in the body."""
+    await _signed_in(client, db_session, email=f"ta-{reported}@smu.edu.sg")
+
+    with patch("routes.checks.detector_health", new=AsyncMock(return_value=reported)):
+        response = client.get("/api/detector/status")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == reported
 
 
 SCORED = AsyncMock(return_value=Score(raw_score=0.9, truncated=False))

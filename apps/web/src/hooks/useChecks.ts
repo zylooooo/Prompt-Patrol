@@ -2,6 +2,7 @@ import {
   checkKeys,
   checkAnswer,
   getCapabilities,
+  getDetectorStatus,
   getEntry,
   listHistory,
   runBatch,
@@ -35,6 +36,24 @@ export const capabilitiesQueryOptions = () =>
 
 export function useDetectorCapabilities() {
   return useQuery(capabilitiesQueryOptions());
+}
+
+const STATUS_POLL_SETTLED_MS = 60_000;
+const STATUS_POLL_STARTING_MS = 5_000;
+
+export const detectorStatusQueryOptions = () =>
+  queryOptions({
+    queryKey: checkKeys.detectorStatus(),
+    queryFn: ({ signal }) => getDetectorStatus(signal),
+    refetchInterval: ({ state }) =>
+      state.data === "loading"
+        ? STATUS_POLL_STARTING_MS
+        : STATUS_POLL_SETTLED_MS,
+    staleTime: 0,
+  });
+
+export function useDetectorStatus() {
+  return useQuery(detectorStatusQueryOptions());
 }
 
 export function useHistory() {

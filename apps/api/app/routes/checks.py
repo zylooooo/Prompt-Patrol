@@ -21,6 +21,8 @@ from services.checks import (
     get_check_by_id,
     list_checks,
 )
+from services.detector_client import MODEL_VERSION, Status
+from services.detector_client import health as detector_health
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +58,22 @@ def _error(status_code: int, error: str, message: str) -> JSONResponse:
     )
 
 
+class DetectorStatusResponse(BaseModel):
+    status: Status
+    model_version: str
+
+
 @router.get("/detector")
 async def get_detector_capabilities(user: User = Depends(require_any_user)):
     return DETECTOR_CAPABILITIES
+
+
+@router.get("/detector/status", response_model=DetectorStatusResponse)
+async def get_detector_status(user: User = Depends(require_any_user)):
+    """Always 200. A detector that is down is a state to render, not a failed
+    request - the caller is a status badge, and an error would leave it with
+    nothing to show at the exact moment it has something worth saying."""
+    return DetectorStatusResponse(status=await detector_health(), model_version=MODEL_VERSION)
 
 
 @router.post("/checks", status_code=201, response_model=CheckResponse)
