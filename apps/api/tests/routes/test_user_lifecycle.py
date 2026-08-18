@@ -184,3 +184,197 @@ async def test_a_deactivated_user_cannot_use_an_existing_session(client, db_sess
     client.cookies.set("__Host-session", victim_token)
     assert client.get("/api/auth/me").status_code == 401
     assert admin.id is not None
+
+
+@pytest.mark.asyncio
+async def test_listing_caps_the_page_size(client, db_session):
+    """`limit` was unbounded, so one request could ask for the whole table.
+    Callers page with `cursor` instead."""
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    assert client.get("/api/users/?limit=100").status_code == 200
+    assert client.get("/api/users/?limit=101").status_code == 422
+    assert client.get("/api/users/?limit=0").status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_instructor_listing_a_role_outside_their_scope_is_403(client, db_session):
+    """Not an empty 200. An instructor's directory is the TAs they provisioned;
+    asking for instructors is refused, so "you may not" cannot be mistaken for
+    "there are none"."""
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+
+    assert client.get("/api/users/?role=instructor").status_code == 403
+    assert client.get("/api/users/?role=teaching_assistant").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_reading_a_user_outside_the_delegation_chain_is_404(client, db_session):
+    """The read rule now matches the listing. Both "no such user" and "not
+    yours" answer 404, so the endpoint cannot be used to enumerate accounts."""
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    own = await _target(db_session, provisioned_by=instructor.id)
+    another_instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    someone_elses = await _target(db_session, provisioned_by=another_instructor.id)
+
+    assert client.get(f"/api/users/{own.id}").status_code == 200
+    assert client.get(f"/api/users/{someone_elses.id}").status_code == 404
+    assert client.get(f"/api/users/{another_instructor.id}").status_code == 404
+
+
+# --- assigning a supervisor -------------------------------------------------
+# The SPA used to hold "who supervises whom" in localStorage, so an admin's pick
+# of instructor never reached the database and the roster read Unassigned in every
+# other browser. These are the two routes that make the pick real.
+
+
+@pytest.mark.asyncio
+async def test_provisioning_accepts_a_supervising_instructor(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "placed@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(instructor.id),
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["provisioned_by"] == str(instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_provisioning_rejects_a_supervisor_who_is_not_an_instructor(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "nested@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(assistant.id),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_cannot_provision_under_a_colleague(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "theirs@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(colleague.id),
+        },
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_returns_the_new_assignment(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(instructor.id)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] == str(instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_a_null_supervisor_unassigns_over_the_wire(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_is_refused_to_an_instructor(client, db_session):
+    # Reassignment is an admin act: the column is what grants an instructor
+    # management of the row, so they cannot hand it to a colleague.
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(colleague.id)},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_hides_an_unknown_user(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(f"/api/users/{uuid.uuid4()}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_refuses_a_deleted_assistant(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, status=UserStatusEnum.deleted)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(instructor.id)},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_rejects_unknown_fields(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": None, "role": "root_admin"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_can_release_their_own_assistant_over_the_wire(client, db_session):
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_assistant_cannot_reach_the_supervisor_endpoint(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.teaching_assistant)
+    target = await _target(db_session)
+
+    response = client.post(f"/api/users/{target.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 403

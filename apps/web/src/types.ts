@@ -85,6 +85,8 @@ export interface CheckResult {
   latencyMs: number | null;
 }
 
+export type DetectorStatus = "ready" | "loading" | "unavailable";
+
 export interface DetectorCapabilities {
   modelVersion: string;
   requiresQuestionText: boolean;
@@ -103,6 +105,11 @@ export interface BatchRowInput {
 
 export type BatchRow = CheckResult;
 
+export interface BatchFailure {
+  externalRef: string;
+  reason: string;
+}
+
 export interface BatchRun {
   id: string;
   kind: "batch";
@@ -111,6 +118,7 @@ export interface BatchRun {
   strictness: Strictness;
   rows: BatchRow[];
   counts: Record<Verdict, number>;
+  failures?: BatchFailure[];
 }
 
 export interface SingleCheck extends CheckResult {
@@ -179,12 +187,6 @@ export function roleLabel(user: AppUser): string {
   return ROLE_TEXT[user.role];
 }
 
-export interface SupervisionLink {
-  instructorId: string;
-  taId: string;
-  createdAt: string;
-}
-
 export interface CheckInput {
   answerText: string;
   questionText?: string;
@@ -193,16 +195,11 @@ export interface CheckInput {
   retainAnswer?: boolean;
 }
 
-export type LookupResult =
-  | { kind: "free" }
-  | { kind: "linkable"; user: AppUser }
-  | { kind: "not-eligible" };
-
 export interface CreateAccountInput {
   email: string;
   role: UserRole;
   name?: string;
-  supervisorIds?: string[];
+  supervisorId?: string | null;
 }
 
 export type DeactivationPlan =

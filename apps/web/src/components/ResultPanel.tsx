@@ -6,11 +6,14 @@ import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
+import { describeCheckFailure } from "../lib/checkFailure";
 import { STRICTNESS_TEXT, type SingleCheck } from "../types";
+import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
 interface ResultPanelProps {
   status: "idle" | "pending" | "error" | "success";
   result?: SingleCheck;
+  error?: unknown;
   showSavedLink?: boolean;
 }
 
@@ -28,6 +31,7 @@ function MetaRow({ name, children }: { name: string; children: ReactNode }) {
 export default function ResultPanel({
   status,
   result,
+  error,
   showSavedLink = true,
 }: ResultPanelProps) {
   return (
@@ -57,7 +61,7 @@ export default function ResultPanel({
           className="mt-6 rounded-md bg-danger-soft px-3.5 py-2.5 text-[13px] text-danger"
           role="alert"
         >
-          The check failed. Nothing was saved. Try again.
+          {describeCheckFailure(error)}
         </p>
       )}
 
@@ -108,6 +112,12 @@ export default function ResultPanel({
           {result.verdict !== "uncertain" && (
             <p className="mt-6 text-xs text-disabled-foreground">
               Flags are prompts for review, not verdicts.
+            </p>
+          )}
+
+          {isUncalibrated(result.detector) && (
+            <p className="mt-3 text-xs text-disabled-foreground">
+              {UNCALIBRATED_NOTICE}
             </p>
           )}
         </>

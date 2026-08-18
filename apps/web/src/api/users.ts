@@ -1,95 +1,205 @@
-import type {
-  AppUser,
-  CreateAccountInput,
-  DeactivationOutcome,
-  DeactivationPlan,
-  LookupResult,
-  SupervisionLink,
+import {
+  isActive,
+  type AppUser,
+  type CreateAccountInput,
+  type DeactivationOutcome,
+  type DeactivationPlan,
+  type UserRole,
+  type UserStatus,
 } from "../types";
 import * as stub from "./stub";
 import type { User } from "./auth";
+import { apiRequest } from "./client";
 
 export const userKeys = {
   all: ["users"] as const,
   list: () => [...userKeys.all, "list"] as const,
-  supervision: () => [...userKeys.all, "supervision"] as const,
   myAssistants: () => [...userKeys.all, "mine"] as const,
 };
 
-export function listUsers(
-  actor: User,
+const USERS_PATH = "/api/users/";
+
+const PAGE_LIMIT = 100;
+
+const ROSTER_STATUSES: UserStatus[] = ["active", "deactivated", "deleted"];
+
+const ASSISTANT_STATUSES: UserStatus[] = ["active", "deactivated"];
+
+interface UserResponse {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: UserRole;
+  status: UserStatus;
+  provisioned_by: string | null;
+  created_at: string;
+}
+
+interface UserListResponse {
+  items: UserResponse[];
+  next_cursor: string | null;
+}
+
+function toAppUser(row: UserResponse): AppUser {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.display_name,
+    role: row.role,
+    status: row.status,
+    provisionedBy: row.provisioned_by,
+    createdAt: row.created_at,
+  };
+}
+
+interface ListQuery {
+  role?: UserRole;
+  statuses: UserStatus[];
+}
+
+async function fetchAll(
+  { role, statuses }: ListQuery,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  return stub.listUsers(actor, signal);
+  const users: AppUser[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const query = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+    if (role) query.set("role", role);
+    for (const status of statuses) query.append("status", status);
+    if (cursor) query.set("cursor", cursor);
+
+    const page = await apiRequest<UserListResponse>(`${USERS_PATH}?${query}`, {
+      signal,
+    });
+    users.push(...page.items.map(toAppUser));
+    cursor = page.next_cursor ?? null;
+  } while (cursor !== null);
+
+  return users;
 }
 
-export function listSupervision(
-  signal?: AbortSignal,
-): Promise<SupervisionLink[]> {
-  return stub.listSupervision(signal);
+export async function getCurrentUser(signal?: AbortSignal): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}me`, { signal }),
+  );
 }
 
-export function listMyAssistants(
-  actor: User,
+export async function listUsers(
+  _actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  return stub.listMyAssistants(actor, signal);
+  return fetchAll({ statuses: ROSTER_STATUSES }, signal);
 }
 
-export function createAccount(
-  actor: User,
+export async function listMyAssistants(
+  _actor: User,
+  signal?: AbortSignal,
+): Promise<AppUser[]> {
+  const [me, assistants] = await Promise.all([
+    getCurrentUser(signal),
+    fetchAll(
+      { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
+      signal,
+    ),
+  ]);
+
+  if (me.role === "instructor") return assistants;
+  return assistants.filter((ta) => ta.provisionedBy === me.id);
+}
+
+export async function createAccount(
+  _actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
-  return stub.createAccount(actor, input);
+  return toAppUser(
+    await apiRequest<UserResponse>(USERS_PATH, {
+      method: "POST",
+      body: {
+        email: input.email.trim(),
+        role: input.role,
+        display_name: input.name?.trim() || null,
+        supervisor_id: input.supervisorId ?? null,
+      },
+    }),
+  );
 }
 
-export function linkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  return stub.linkSupervision(actor, instructorId, taId);
+export async function setSupervisor(
+  _actor: User,
+  id: string,
+  supervisorId: string | null,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}/supervisor`, {
+      method: "POST",
+      body: { supervisor_id: supervisorId },
+    }),
+  );
 }
 
-export function unlinkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  return stub.unlinkSupervision(actor, instructorId, taId);
-}
-
-export function setUserActive(
-  actor: User,
+export async function setUserActive(
+  _actor: User,
   id: string,
   active: boolean,
 ): Promise<AppUser> {
-  return stub.setUserActive(actor, id, active);
+  return toAppUser(
+    await apiRequest<UserResponse>(
+      `${USERS_PATH}${id}/${active ? "reactivate" : "deactivate"}`,
+      { method: "POST" },
+    ),
+  );
 }
 
-export function deactivateInstructor(
+export async function listAssistantsOf(
+  instructorId: string,
+  signal?: AbortSignal,
+): Promise<AppUser[]> {
+  const assistants = await fetchAll(
+    { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
+    signal,
+  );
+  return assistants.filter((ta) => ta.provisionedBy === instructorId);
+}
+
+export async function deactivateInstructor(
   actor: User,
   id: string,
   plan: DeactivationPlan,
 ): Promise<DeactivationOutcome> {
-  return stub.deactivateInstructor(actor, id, plan);
+  const affected = await listAssistantsOf(id);
+
+  const outcome: DeactivationOutcome = {
+    reassigned: 0,
+    deactivated: 0,
+    leftUnassigned: 0,
+  };
+
+  if (plan.mode === "reassign") {
+    for (const ta of affected) await setSupervisor(actor, ta.id, plan.toId);
+    outcome.reassigned = affected.length;
+  } else if (plan.mode === "deactivate") {
+    for (const ta of affected) {
+      if (!isActive(ta)) continue;
+      await setUserActive(actor, ta.id, false);
+      outcome.deactivated++;
+    }
+  } else {
+    for (const ta of affected) await setSupervisor(actor, ta.id, null);
+    outcome.leftUnassigned = affected.length;
+  }
+
+  await setUserActive(actor, id, false);
+  return outcome;
 }
 
-export function deleteUser(actor: User, id: string): Promise<AppUser> {
-  return stub.deleteUser(actor, id);
+export async function deleteUser(_actor: User, id: string): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}`, { method: "DELETE" }),
+  );
 }
 
 export function resendInvite(actor: User, id: string): Promise<void> {
   return stub.resendInvite(actor, id);
-}
-
-export const findUserById = stub.findUserById;
-export const findUserByEmail = stub.findUserByEmail;
-export const supervisorsOf = stub.supervisorsOf;
-export const assistantsOf = stub.assistantsOf;
-export const linkedAt = stub.linkedAt;
-export const strandedBy = stub.strandedBy;
-
-export function lookupForLinking(actor: User, email: string): LookupResult {
-  return stub.lookupForLinking(actor, email);
 }

@@ -98,7 +98,11 @@ export default function SingleCheckTab() {
         </div>
       </form>
 
-      <ResultPanel status={check.status} result={check.data} />
+      <ResultPanel
+        status={check.status}
+        result={check.data}
+        error={check.error}
+      />
     </div>
   );
 }

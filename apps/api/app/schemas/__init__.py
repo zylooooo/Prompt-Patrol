@@ -1,5 +1,12 @@
 from .auth_schema import MeResponse, SessionResponse
-from .user_schema import StatusChangeRequest, UserCreateRequest, UserListResponse, UserResponse
+from .check_schema import CheckListResponse, CheckResponse, DetectorInfo
+from .user_schema import (
+    StatusChangeRequest,
+    SupervisorChangeRequest,
+    UserCreateRequest,
+    UserListResponse,
+    UserResponse,
+)
 
 __all__ = [
     "MeResponse",
@@ -8,4 +15,8 @@ __all__ = [
     "UserCreateRequest",
     "UserListResponse",
     "StatusChangeRequest",
+    "SupervisorChangeRequest",
+    "CheckResponse",
+    "CheckListResponse",
+    "DetectorInfo",
 ]

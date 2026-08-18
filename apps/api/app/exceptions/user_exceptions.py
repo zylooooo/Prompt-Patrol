@@ -9,3 +9,8 @@ class UserNotFoundError(Exception):
 
 class InvalidStatusTransitionError(Exception):
     """The requested lifecycle move is not permitted from the current status."""
+
+
+class InvalidSupervisorError(Exception):
+    """The proposed supervisor cannot hold that role: missing, not an instructor,
+    not active, or the assistant themselves."""

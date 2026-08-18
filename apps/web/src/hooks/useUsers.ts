@@ -2,13 +2,11 @@ import {
   createAccount,
   deactivateInstructor,
   deleteUser,
-  linkSupervision,
   listMyAssistants,
-  listSupervision,
   listUsers,
   resendInvite,
+  setSupervisor,
   setUserActive,
-  unlinkSupervision,
   userKeys,
 } from "../api/users";
 import { useAuth } from "./useAuth";
@@ -32,13 +30,6 @@ export function useUsers() {
     queryKey: userKeys.list(),
     queryFn: ({ signal }) => listUsers(requireActor(actor), signal),
     enabled: actor !== null,
-  });
-}
-
-export function useSupervision() {
-  return useQuery({
-    queryKey: userKeys.supervision(),
-    queryFn: ({ signal }) => listSupervision(signal),
   });
 }
 
@@ -68,19 +59,11 @@ export function useCreateAccount() {
   );
 }
 
-export function useLinkSupervision() {
+export function useSetSupervisor() {
   const actor = useActor();
   return useRosterMutation(
-    ({ instructorId, taId }: { instructorId: string; taId: string }) =>
-      linkSupervision(requireActor(actor), instructorId, taId),
-  );
-}
-
-export function useUnlinkSupervision() {
-  const actor = useActor();
-  return useRosterMutation(
-    ({ instructorId, taId }: { instructorId: string; taId: string }) =>
-      unlinkSupervision(requireActor(actor), instructorId, taId),
+    ({ id, supervisorId }: { id: string; supervisorId: string | null }) =>
+      setSupervisor(requireActor(actor), id, supervisorId),
   );
 }
 

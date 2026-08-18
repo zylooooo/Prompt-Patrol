@@ -72,6 +72,17 @@ const expectClosed = () =>
  * List navigation moves DOM focus asynchronously — Floating UI defers it so it
  * does not fight the browser's own focus handling mid-keystroke. Asserting
  * synchronously would race that, exactly as `expectClosed` would race the exit.
+ *
+ * Always assert focus through this, by element identity. Never write
+ * `expect(document.activeElement?.textContent).toContain("Apple")`: the trigger
+ * renders an invisible width-measuring span for *every* option label
+ * (`Dropdown.tsx`, `candidateLabels`), so its own textContent is
+ * "Pick oneLoading…AppleBananaPick one" — measured, not guessed. A `toContain`
+ * check is therefore satisfied by the trigger itself, so `waitFor` can succeed
+ * on a poll taken before focus has left the trigger at all.
+ *
+ * `options()` can only ever return elements inside the listbox, so an identity
+ * assertion cannot resolve early no matter how the scheduler behaves.
  */
 const expectFocused = (target: () => Element | null | undefined) =>
   waitFor(() => expect(document.activeElement).toBe(target()));
@@ -155,13 +166,18 @@ describe("Dropdown — navigating an open menu", () => {
   });
 
   it("typeahead jumps to the first option matching the buffer", async () => {
+    // Was a `toContain("Charlie")` on the focused element's text, which the
+    // trigger also satisfies. It still failed when typeahead was broken (focus
+    // sits on Alpha by then, and "Alpha" does not contain "Charlie"), so it was
+    // not toothless — but it could pass on a poll taken while focus was still
+    // on the trigger, which is the same unsoundness that made the grouped
+    // navigation test flaky. Identity against the option removes the ambiguity.
     render(<Harness />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
+    await expectFocused(() => options()[0]);
     await userEvent.keyboard("ch");
-    await waitFor(() =>
-      expect(document.activeElement?.textContent).toContain("Charlie"),
-    );
+    await expectFocused(() => options()[2]);
   });
 });
 
@@ -353,16 +369,18 @@ describe("Dropdown — grouped options", () => {
   ];
 
   it("navigates across group boundaries as one flat list", async () => {
+    // The flake this file used to show. The first wait asserted only that the
+    // focused element's text contained "Apple", which the trigger satisfies on
+    // its own, so under load it returned before focus had left the trigger. The
+    // second ArrowDown then went to the trigger, which re-opens onto the first
+    // option — landing on Apple when the test wanted Banana. Waiting on element
+    // identity cannot resolve early, so the second key always reaches the list.
     render(<Harness options={[]} groups={groups} />);
     trigger().focus();
     await userEvent.keyboard("{ArrowDown}");
-    await waitFor(() =>
-      expect(document.activeElement?.textContent).toContain("Apple"),
-    );
+    await expectFocused(() => options()[0]);
     await userEvent.keyboard("{ArrowDown}");
-    await waitFor(() =>
-      expect(document.activeElement?.textContent).toContain("Banana"),
-    );
+    await expectFocused(() => options()[1]);
   });
 
   it("selects a value from a group", async () => {

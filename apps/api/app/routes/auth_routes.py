@@ -118,6 +118,7 @@ async def me(
     return MeResponse(
         email=user.email,
         role=user.role,
+        provisioned_by=user.provisioned_by,
         session=SessionResponse(
             expires_at=session.expires_at,
             idle_expires_at=session.idle_expires_at,

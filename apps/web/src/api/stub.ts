@@ -23,7 +23,6 @@ import {
   ANSWER_MIN_CHARS,
   atLeastRole,
   EXTERNAL_REF_MAX_CHARS,
-  isActive,
   QUESTION_MAX_CHARS,
   type AbstainReason,
   type AppUser,
@@ -36,14 +35,10 @@ import {
   type HistoryEntry,
   type SingleCheck,
   type Strictness,
-  type SupervisionLink,
   type UserRole,
   type Verdict,
   type CheckInput,
   type CreateAccountInput,
-  type DeactivationOutcome,
-  type DeactivationPlan,
-  type LookupResult,
 } from "../types";
 import type { User } from "./auth";
 import { ApiError } from "./client";
@@ -213,7 +208,9 @@ const HISTORY_KEY = "pp.history.v2";
 // no `status` and rendered a blank chip.
 const USERS_KEY = "pp.users.v3";
 const LEGACY_USERS_KEYS = ["pp.users.v2"];
-const SUPERVISION_KEY = "pp.supervision.v2";
+// Held "who supervises whom" until the server took it over. Kept only so the
+// stale blob gets cleared out of browsers that still have one.
+const LEGACY_SUPERVISION_KEY = "pp.supervision.v2";
 const HISTORY_CAP = 200;
 
 function readJson<T>(key: string, fallback: T): T {
@@ -233,7 +230,10 @@ function loadHistory(): HistoryEntry[] {
   return readJson<HistoryEntry[]>(HISTORY_KEY, []);
 }
 
-function prependHistory(entry: HistoryEntry) {
+// Internal again: checks are persisted server-side since 2026-08-18, so
+// `api/checks.ts` no longer mirrors anything here. Only the stub's own
+// (now unused by the app) check functions still write history.
+function rememberCheck(entry: HistoryEntry) {
   let list = [entry, ...loadHistory()].slice(0, HISTORY_CAP);
   for (;;) {
     try {
@@ -465,17 +465,12 @@ const SEED_USERS: AppUser[] = [
     email: "ta.d@example.com",
     name: "Demo TA D",
     role: "teaching_assistant",
-    provisionedBy: ID_ADMIN,
+    // Deliberately nobody: the demo needs one assistant who shows up under the
+    // Unassigned filter and cannot screen.
+    provisionedBy: null,
     status: "active",
     createdAt: T2,
   },
-];
-
-const SEED_SUPERVISION: SupervisionLink[] = [
-  { instructorId: ID_INSTRUCTOR_A, taId: ID_TA_A, createdAt: T1 },
-  { instructorId: ID_INSTRUCTOR_A, taId: ID_TA_B, createdAt: T1 },
-  { instructorId: ID_INSTRUCTOR_B, taId: ID_TA_B, createdAt: T1 },
-  { instructorId: ID_INSTRUCTOR_B, taId: ID_TA_C, createdAt: T2 },
 ];
 
 function assertSeedsConsistent() {
@@ -492,42 +487,23 @@ function assertSeedsConsistent() {
     problems.push("duplicate user emails");
   }
 
+  // provisionedBy is the supervision edge now, so the seeds have to satisfy the
+  // same rule the server enforces: an assistant's supervisor is an instructor.
   for (const user of SEED_USERS) {
-    if (user.provisionedBy !== null && !byId.has(user.provisionedBy)) {
+    if (user.provisionedBy === null) continue;
+    const supervisor = byId.get(user.provisionedBy);
+    if (!supervisor) {
       problems.push(`${user.email}: provisionedBy references an unknown user`);
+      continue;
     }
-  }
-
-  const seen = new Set<string>();
-  for (const link of SEED_SUPERVISION) {
-    const instructor = byId.get(link.instructorId);
-    const ta = byId.get(link.taId);
-    if (!instructor) problems.push("supervision link with unknown instructor");
-    else if (instructor.role !== "instructor") {
-      problems.push(`${instructor.email} supervises but is ${instructor.role}`);
+    if (
+      user.role === "teaching_assistant" &&
+      supervisor.role !== "instructor"
+    ) {
+      problems.push(`${user.email}: supervised by a ${supervisor.role}`);
     }
-    if (!ta) problems.push("supervision link with unknown teaching assistant");
-    else if (ta.role !== "teaching_assistant") {
-      problems.push(`${ta.email} is supervised but is ${ta.role}`);
-    }
-    if (instructor && ta && link.createdAt < ta.createdAt) {
-      problems.push(
-        `link ${instructor.email}->${ta.email} predates the account`,
-      );
-    }
-    const key = `${link.instructorId}:${link.taId}`;
-    if (seen.has(key)) problems.push("duplicate supervision link");
-    seen.add(key);
-  }
-
-  for (const user of SEED_USERS) {
-    if (user.role !== "teaching_assistant" || !user.provisionedBy) continue;
-    const creator = byId.get(user.provisionedBy);
-    if (creator?.role !== "instructor") continue;
-    if (!seen.has(`${user.provisionedBy}:${user.id}`)) {
-      problems.push(
-        `${user.email}: provisioned by an instructor but not supervised by them`,
-      );
+    if (user.createdAt < supervisor.createdAt) {
+      problems.push(`${user.email}: predates ${supervisor.email}`);
     }
   }
 
@@ -551,25 +527,13 @@ function saveUsers(users: AppUser[]) {
   writeJson(USERS_KEY, users);
 }
 
-function loadSupervision(): SupervisionLink[] {
-  if (localStorage.getItem(SUPERVISION_KEY) === null) {
-    writeJson(SUPERVISION_KEY, SEED_SUPERVISION);
-    return SEED_SUPERVISION;
-  }
-  return readJson<SupervisionLink[]>(SUPERVISION_KEY, []);
-}
-
-function saveSupervision(links: SupervisionLink[]) {
-  writeJson(SUPERVISION_KEY, links);
-}
-
 // Drops every key this module owns. Goes away with the rest of the file.
 export function clearStoredData(): void {
   for (const key of [
     HISTORY_KEY,
     USERS_KEY,
     ...LEGACY_USERS_KEYS,
-    SUPERVISION_KEY,
+    LEGACY_SUPERVISION_KEY,
     HISTORY_SEEDED_KEY,
   ]) {
     localStorage.removeItem(key);
@@ -643,44 +607,10 @@ function requireRole(actor: User, min: UserRole): AppUser {
 
 const requireAdmin = (actor: User) => requireRole(actor, "root_admin");
 
-function requireScreeningAccess(actor: User): AppUser {
-  const resolved = requireActor(actor);
-  if (resolved.role !== "teaching_assistant") return resolved;
-  const linked = loadSupervision().some((link) => link.taId === resolved.id);
-  if (!linked) {
-    throw new ApiError(
-      403,
-      "You are not assigned to an instructor yet, so there is nothing to screen.",
-    );
-  }
-  return resolved;
-}
-
-export function hasScreeningAccess(actor: User): boolean {
-  try {
-    requireScreeningAccess(actor);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function requireAdminOrSupervisor(actor: User, taId: string): AppUser {
-  const resolved = requireActor(actor);
-  if (atLeastRole(resolved.role, "root_admin")) return resolved;
-  const supervises = loadSupervision().some(
-    (link) => link.instructorId === resolved.id && link.taId === taId,
-  );
-  if (!supervises) {
-    throw new ApiError(
-      403,
-      "You can only manage your own teaching assistants.",
-    );
-  }
-  return resolved;
-}
-
-function validateCheckInput(input: CheckInput) {
+// Genuine client-side input validation, not a fake backend. Exported so the real
+// `checkAnswer` keeps the friendlier wording and the question/reference limits
+// the server does not have. Move into `./checks` when this file goes.
+export function validateCheckInput(input: CheckInput) {
   const answer = input.answerText.trim();
   if (answer.length < ANSWER_MIN_CHARS) {
     throw new ApiError(400, `Enter at least ${ANSWER_MIN_CHARS} characters.`);
@@ -709,7 +639,7 @@ export async function checkAnswer(
   actor: User,
   input: CheckInput,
 ): Promise<SingleCheck> {
-  const resolved = requireScreeningAccess(actor);
+  const resolved = requireActor(actor);
   validateCheckInput(input);
   const startedAt = performance.now();
   await delay(650);
@@ -741,7 +671,7 @@ export async function checkAnswer(
     createdAt: new Date().toISOString(),
     latencyMs: Math.round(performance.now() - startedAt),
   };
-  prependHistory(entry);
+  rememberCheck(entry);
   return entry;
 }
 
@@ -752,7 +682,7 @@ export async function runBatch(
   strictness: Strictness = "standard",
   onProgress?: (done: number, total: number) => void,
 ): Promise<BatchRun> {
-  const resolved = requireScreeningAccess(actor);
+  const resolved = requireActor(actor);
   const batchId = newId();
   const rows: BatchRow[] = [];
 
@@ -809,7 +739,7 @@ export async function runBatch(
     rows,
     counts,
   };
-  prependHistory(run);
+  rememberCheck(run);
   return run;
 }
 
@@ -824,7 +754,7 @@ export async function listHistory(
   signal?: AbortSignal,
 ): Promise<HistoryEntry[]> {
   await delay(150, signal);
-  const resolved = requireScreeningAccess(actor);
+  const resolved = requireActor(actor);
   return loadHistory().filter((entry) => ownedBy(entry, resolved.id));
 }
 
@@ -834,7 +764,7 @@ export async function getEntry(
   signal?: AbortSignal,
 ): Promise<HistoryEntry | undefined> {
   await delay(120, signal);
-  const resolved = requireScreeningAccess(actor);
+  const resolved = requireActor(actor);
   return loadHistory()
     .filter((entry) => ownedBy(entry, resolved.id))
     .find(
@@ -850,70 +780,6 @@ export async function listUsers(
   requireAdmin(actor);
   return loadUsers();
 }
-
-export async function listSupervision(
-  signal?: AbortSignal,
-): Promise<SupervisionLink[]> {
-  await delay(80, signal);
-  return loadSupervision();
-}
-
-function byName(a: AppUser, b: AppUser) {
-  return (a.name ?? a.email).localeCompare(b.name ?? b.email);
-}
-
-export function supervisorsOf(taId: string): AppUser[] {
-  const ids = new Set(
-    loadSupervision()
-      .filter((link) => link.taId === taId)
-      .map((link) => link.instructorId),
-  );
-  return loadUsers()
-    .filter((user) => ids.has(user.id))
-    .sort(byName);
-}
-
-export function assistantsOf(instructorId: string): AppUser[] {
-  const ids = new Set(
-    loadSupervision()
-      .filter((link) => link.instructorId === instructorId)
-      .map((link) => link.taId),
-  );
-  return loadUsers()
-    .filter((user) => ids.has(user.id))
-    .sort(byName);
-}
-
-export function linkedAt(
-  instructorId: string,
-  taId: string,
-): string | undefined {
-  return loadSupervision().find(
-    (link) => link.instructorId === instructorId && link.taId === taId,
-  )?.createdAt;
-}
-
-export async function listMyAssistants(
-  actor: User,
-  signal?: AbortSignal,
-): Promise<AppUser[]> {
-  await delay(150, signal);
-  const resolved = requireActor(actor);
-  // The API hides deleted accounts from this list; the link outlives the row.
-  return assistantsOf(resolved.id).filter((ta) => ta.status !== "deleted");
-}
-
-export function lookupForLinking(actor: User, email: string): LookupResult {
-  requireActor(actor);
-  const match = findUserByEmail(email);
-  if (!match) return { kind: "free" };
-  if (match.role !== "teaching_assistant" || !isActive(match)) {
-    return { kind: "not-eligible" };
-  }
-  return { kind: "linkable", user: match };
-}
-
-const SMU_EMAIL = /^[^@\s]+@([a-z]+\.)?smu\.edu\.sg$/i;
 
 export async function createAccount(
   actor: User,
@@ -933,9 +799,9 @@ export async function createAccount(
   }
 
   const email = input.email.trim();
-  if (!SMU_EMAIL.test(email)) {
-    throw new ApiError(400, "Use an SMU email address.");
-  }
+  // if (!isSmuEmail(email)) {
+  //   throw new ApiError(400, "Use an SMU email address.");
+  // }
   if (findUserByEmail(email)) {
     throw new ApiError(409, "An account already exists for this email.");
   }
@@ -950,84 +816,7 @@ export async function createAccount(
     createdAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), user]);
-
-  const supervisors = atLeastRole(resolved.role, "root_admin")
-    ? (input.supervisorIds ?? [])
-    : [resolved.id];
-  if (input.role === "teaching_assistant" && supervisors.length > 0) {
-    const links = loadSupervision();
-    const now = new Date().toISOString();
-    for (const instructorId of supervisors) {
-      links.push({ instructorId, taId: user.id, createdAt: now });
-    }
-    saveSupervision(links);
-  }
   return user;
-}
-
-export async function linkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  await delay(200);
-  const resolved = requireActor(actor);
-  if (
-    !atLeastRole(resolved.role, "root_admin") &&
-    resolved.id !== instructorId
-  ) {
-    throw new ApiError(
-      403,
-      "You can only add teaching assistants to yourself.",
-    );
-  }
-  const target = findUserById(taId);
-  if (!target) throw new ApiError(404, "That account no longer exists.");
-  if (target.role !== "teaching_assistant") {
-    throw new ApiError(
-      400,
-      "Only a teaching assistant account can be supervised.",
-    );
-  }
-  if (!isActive(target)) {
-    throw new ApiError(
-      409,
-      "That account has been deactivated. Contact your administrator.",
-    );
-  }
-  const links = loadSupervision();
-  if (
-    links.some(
-      (link) => link.instructorId === instructorId && link.taId === taId,
-    )
-  ) {
-    return;
-  }
-  links.push({ instructorId, taId, createdAt: new Date().toISOString() });
-  saveSupervision(links);
-}
-
-export async function unlinkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  await delay(200);
-  const resolved = requireActor(actor);
-  if (
-    !atLeastRole(resolved.role, "root_admin") &&
-    resolved.id !== instructorId
-  ) {
-    throw new ApiError(
-      403,
-      "You can only remove your own teaching assistants.",
-    );
-  }
-  saveSupervision(
-    loadSupervision().filter(
-      (link) => !(link.instructorId === instructorId && link.taId === taId),
-    ),
-  );
 }
 
 export async function setUserActive(
@@ -1064,70 +853,12 @@ export async function setUserActive(
   return user;
 }
 
-export function strandedBy(instructorId: string): AppUser[] {
-  const links = loadSupervision();
-  return assistantsOf(instructorId).filter(
-    (ta) => links.filter((link) => link.taId === ta.id).length === 1,
-  );
-}
-
-export async function deactivateInstructor(
-  actor: User,
-  id: string,
-  plan: DeactivationPlan,
-): Promise<DeactivationOutcome> {
-  await delay(300);
-  const resolved = requireAdmin(actor);
-
-  if (resolved.id === id) {
-    throw new ApiError(403, "You cannot deactivate your own account.");
-  }
-
-  const stranded = strandedBy(id);
-  const outcome: DeactivationOutcome = {
-    reassigned: 0,
-    deactivated: 0,
-    leftUnassigned: 0,
-  };
-
-  if (plan.mode === "reassign") {
-    const links = loadSupervision();
-    const now = new Date().toISOString();
-    for (const ta of stranded) {
-      links.push({ instructorId: plan.toId, taId: ta.id, createdAt: now });
-      outcome.reassigned++;
-    }
-    saveSupervision(links);
-  } else if (plan.mode === "deactivate") {
-    const users = loadUsers();
-
-    for (const ta of stranded) {
-      const account = users.find((candidate) => candidate.id === ta.id);
-      if (
-        account &&
-        account.id !== resolved.id &&
-        account.status === "active"
-      ) {
-        account.status = "deactivated";
-        outcome.deactivated++;
-      }
-    }
-    saveUsers(users);
-  } else {
-    outcome.leftUnassigned = stranded.length;
-  }
-
-  saveSupervision(loadSupervision().filter((link) => link.instructorId !== id));
-  await setUserActive(actor, id, false);
-  return outcome;
-}
-
 export async function resendInvite(actor: User, id: string): Promise<void> {
   await delay(200);
   const user = findUserById(id);
   if (!user) throw new ApiError(404, "That account no longer exists.");
   if (user.role === "teaching_assistant") {
-    requireAdminOrSupervisor(actor, id);
+    requireRole(actor, "instructor");
   } else {
     requireAdmin(actor);
   }

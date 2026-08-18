@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.5 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.5.7 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -14,6 +14,21 @@ openapi: 3.0.3
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
 # CHANGELOG
+#   0.5.7  POST /api/checks refuses a teaching_assistant with no supervisor
+#          (`403`). The refusal existed only in the SPA, which decides it from
+#          the session payload it already holds — so the rule was a courtesy,
+#          not a control. Reading history is deliberately not gated: see the
+#          endpoint. Same model as [0.5.6], one layer down.
+#   0.5.6  `provisioned_by` is now the supervision edge, not just a record of
+#          who pressed create, and it is settable. POST /api/users accepts an
+#          optional `supervisor_id` (root_admin only — an instructor supervises
+#          whoever they create, and naming a colleague is 403), and the new
+#          POST /api/users/{id}/supervisor moves an assistant or unassigns
+#          them. This REVERSES the "never accepted from the request body" rule
+#          [0.4.0] put on POST /api/users. An admin-created assistant with no
+#          named instructor now gets `provisioned_by = NULL`, not the admin's
+#          id. `GET /api/auth/me` carries `provisioned_by` so the SPA can gate
+#          screening without a second round trip. See DECISION LOG [0.5.6].
 #   0.5.5  GET /api/users (list) widened from root_admin-only to delegation-
 #          scoped: root_admin sees everyone, instructor sees only the
 #          teaching_assistant rows they themselves provisioned (`role` query
@@ -810,8 +825,22 @@ paths:
         left NULL — first login binds them (see `/api/auth/callback` step 6).
         No session is created here; this is invitation, not authentication.
 
-        `provisioned_by` is set to the caller's `user_id` server-side. Never
-        accepted from the request body.
+        `provisioned_by` carries the supervision edge for a
+        `teaching_assistant` — see DECISION LOG [0.5.6]. It is derived, never
+        taken at face value:
+
+        | Caller       | `role`               | `supervisor_id` | `provisioned_by` |
+        |--------------|----------------------|-----------------|------------------|
+        | `root_admin` | `teaching_assistant` | an instructor   | that instructor  |
+        | `root_admin` | `teaching_assistant` | omitted/null    | `NULL`           |
+        | `root_admin` | `instructor`         | must be absent  | the admin        |
+        | `instructor` | `teaching_assistant` | absent or self  | the instructor   |
+        | `instructor` | `teaching_assistant` | a colleague     | `403`            |
+
+        An admin-created assistant with no named instructor is genuinely
+        unassigned — `NULL`, not the admin's id. The admin does not supervise,
+        and an assistant with no supervisor cannot screen, so recording the
+        admin there would grant access nobody granted.
 
         ### Delegation-scoped authorization
         Enforces the delegation chain from `info.description` §Provisioning:
@@ -1086,6 +1115,76 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/users/{id}/supervisor:
+    post:
+      tags: [users]
+      operationId: setUserSupervisor
+      summary: Assign, move or unassign a teaching assistant's supervisor
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — see DECISION LOG [0.5.6]"
+      description: |
+        Sets `provisioned_by` on a `teaching_assistant`. Its own endpoint for
+        the same reason `/role` is: supervision decides who may manage the row
+        and whether the assistant can screen at all, so changing it is a
+        distinct action rather than a field on a general update.
+
+        Placing people is a `root_admin` act. An `instructor` may only
+        **release** their own assistant — `supervisor_id: null` on a row whose
+        `provisioned_by` is already theirs. Anything else from an instructor is
+        `403`, including claiming an unassigned account: `provisioned_by` is
+        what grants management of the row, so an instructor who could assign
+        could hand a colleague access, or help themselves to someone else's
+        assistant. A `teaching_assistant` reaches this endpoint never.
+
+        Unassigning **revokes the assistant's live sessions**, in the same
+        commit. The SPA answers "may this person screen?" from the session
+        payload it already holds, so an assistant who kept a session would keep
+        screening until they happened to reload.
+
+        A move does not revoke: they still have a supervisor, so nothing they
+        may do has changed.
+
+        Setting the supervisor to the value it already holds is a no-op that
+        returns `200` — no revocation, no audit noise.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SupervisorChangeRequest" }
+      responses:
+        "200":
+          description: Updated user, so the caller sees the resulting assignment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: |
+            The target is not a `teaching_assistant`, or the proposed
+            supervisor is missing, not an `instructor`, or not `active`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The target is deleted. Deletion is terminal, so there is nothing to
+            assign them to.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/users/{id}/restore:
     post:
       tags: [users]
@@ -1195,10 +1294,19 @@ paths:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
       x-authorization: |
-        users module — any provisioned, non-deleted user. No role gate:
+        users module — any provisioned, non-deleted user, except a
+        `teaching_assistant` with no supervisor. No role gate beyond that:
         detection is the product. Attribution is the control, not restriction.
       description: |
         Synchronous. Submits one short answer, returns a verdict.
+
+        A `teaching_assistant` whose `provisioned_by` is NULL is refused with
+        `403` — they belong to no course, so there is nothing for them to
+        screen. See DECISION LOG [0.5.6]. The SPA refuses them too, but it
+        decides that from the session payload it is holding and can be skipped
+        entirely; this is the check that counts. The rule names assistants
+        specifically rather than "must have a supervisor", which would lock out
+        every instructor and admin.
 
         `actor_id` on the persisted row is taken from the gateway-injected
         `user_id`. **There is no `instructor_id` field in this request body,
@@ -1281,6 +1389,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            A `teaching_assistant` with no supervisor. The message names what
+            is missing, since it is something an administrator can fix.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "413":
           description: "`answer_text` exceeds 10,000 characters."
           content:
@@ -1540,6 +1655,29 @@ components:
             Optional admin-UI placeholder shown before first login.
             Overwritten by the Entra `name` claim on first login — never
             treat this value as authoritative.
+        supervisor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The instructor who will supervise a new `teaching_assistant`.
+            `root_admin` only; an `instructor` may omit it or name themselves,
+            and naming anyone else is `403`. Must be absent for any other
+            `role`. Omitted or null from an admin means unassigned — see the
+            derivation table on `POST /api/users`.
+
+    SupervisorChangeRequest:
+      type: object
+      required: [supervisor_id]
+      properties:
+        supervisor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The instructor who will supervise this assistant, or null to
+            unassign them. Null is spelled out rather than omitted: the caller
+            is asking for a change, not accepting a default.
 
     UserRolePatchRequest:
       type: object
@@ -2063,6 +2201,57 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.5.6] `provisioned_by` is the supervision edge, and it is settable.
+#
+#   PROBLEM. The SPA held "who supervises whom" in a localStorage table of
+#   instructor->assistant links, and every screen that asked the question read
+#   it from there. The database's only supervision edge is `provisioned_by` on
+#   `users`, which the API set to the caller's id and never accepted from the
+#   body. The two never met, with three consequences, all confirmed by driving
+#   the app:
+#
+#     1. A correctly provisioned assistant could not screen. The gate looked
+#        them up in the link table, found nothing, and told them "You are not
+#        assigned to an instructor yet" — the product's core feature, denied to
+#        a properly onboarded user.
+#     2. The roster called them "Unassigned", to the admin and to the very
+#        instructor who supervises them, because their id was only ever in the
+#        link table of the browser that created them.
+#     3. When an admin created an assistant "under instructor A", the server
+#        recorded the *admin* as the supervisor. The pick reached localStorage
+#        and stopped there.
+#
+#   DECISION. One supervisor per assistant, carried by `provisioned_by`, owned
+#   by the server. The link table is deleted, not synced.
+#
+#   The alternative was a real `supervision` table supporting many instructors
+#   per assistant, which is what the UI had been built for ("Also supervised
+#   by", per-link "Since <date>", multi-select assignment). Rejected for the
+#   MVP: the column already carried the edge everywhere authorization looked
+#   (`_can_view_user`, `_may_manage`, the instructor's `list_users` scope), so
+#   one column was already the de facto model and a second store would have
+#   given two answers to one question — the same failure being fixed here, one
+#   layer down. The multi-supervisor UI was trimmed to match rather than the
+#   schema grown to match it. Revisit if an assistant genuinely needs to be
+#   shared, which is a scheduling question nobody has asked yet.
+#
+#   Overloading one column with "who created this" and "who supervises this" is
+#   the acknowledged cost. It only bites for non-assistants, where the value is
+#   descriptive and nothing gates on it; for an assistant the column means
+#   supervisor, full stop. `NULL` therefore had to mean unassigned rather than
+#   "created by a script", which is also what CLI-provisioned rows already
+#   carried — so seeded accounts read as unassigned and cannot screen until
+#   somebody places them. That is the correct answer for them.
+#
+#   CONSEQUENCE. `provisioned_by` rides on `GET /api/auth/me`. The SPA needs it
+#   on every page load to decide whether to show the screening UI, a second
+#   round trip would cost that on every navigation, and an assistant cannot
+#   list users to obtain it any other way.
+#
+#   Unassigning revokes sessions (see the endpoint). Assigning is admin-only,
+#   releasing-your-own is not — an instructor releasing an assistant can only
+#   ever give access away, never take it, so it needs no admin.
 #
 # [0.5.3] In-app session resolution moves from middleware to Depends().
 #

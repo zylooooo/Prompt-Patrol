@@ -1,8 +1,13 @@
 import asyncio
+import base64
+import binascii
 import time
 import uuid
-from datetime import UTC, datetime
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 from services.detector_client import MODEL_VERSION, score_text
 
 DETECTOR_TIMEOUT_SECONDS = 10
@@ -43,6 +48,7 @@ def _decide(raw_score: float, threshold: float, word_count: int) -> tuple[str, s
 
 
 async def create_check(
+    db: AsyncSession,
     *,
     actor_id: uuid.UUID,
     answer_text: str,
@@ -50,7 +56,9 @@ async def create_check(
     external_ref: str | None,
     strictness: str,
     retain_answer: bool,
-) -> dict:
+    batch_id: uuid.UUID | None = None,
+    batch_file_name: str | None = None,
+) -> Check:
     start = time.perf_counter()
     try:
         result = await asyncio.wait_for(score_text(answer_text), timeout=DETECTOR_TIMEOUT_SECONDS)
@@ -64,28 +72,92 @@ async def create_check(
     word_count = len(answer_text.split())
     verdict, abstain_reason = _decide(result.raw_score, threshold, word_count)
 
-    return {
-        "check_id": uuid.uuid4(),
-        "actor_id": actor_id,
-        "batch_id": None,
-        "external_ref": external_ref,
-        "verdict": verdict,
-        "raw_score": result.raw_score,
-        "confidence": None,
-        "abstain_reason": abstain_reason,
-        "truncated": result.truncated,
-        "detector": {
-            "model_version": MODEL_VERSION,
-            "calibration_version": None,
-            "strictness_applied": strictness,
-            "threshold_applied": threshold,
-            "target_fpr": TARGET_FPR[strictness],
-            "used_question_text": False,
-        },
-        "answer_text": answer_text if retain_answer else None,
-        "question_text": question_text,
-        "explanation": None,
-        "spans": None,
-        "created_at": datetime.now(UTC),
-        "latency_ms": latency_ms,
-    }
+    check = Check(
+        actor_id=actor_id,
+        batch_id=batch_id,
+        batch_file_name=batch_file_name,
+        external_ref=external_ref,
+        verdict=VerdictEnum(verdict),
+        raw_score=result.raw_score,
+        confidence=None,
+        abstain_reason=AbstainReasonEnum(abstain_reason) if abstain_reason else None,
+        truncated=result.truncated,
+        model_version=MODEL_VERSION,
+        calibration_version=None,
+        strictness_applied=StrictnessEnum(strictness),
+        threshold_applied=threshold,
+        target_fpr=TARGET_FPR[strictness],
+        used_question_text=False,
+        # The judgement is recorded either way; only the text is withheld.
+        answer_text=answer_text if retain_answer else None,
+        question_text=question_text,
+        latency_ms=latency_ms,
+    )
+    db.add(check)
+    await db.commit()
+    await db.refresh(check)
+    return check
+
+
+def _may_read_any_check(actor: User) -> bool:
+    """Checks carry student answer text, so the rule is narrower than the user
+    directory's: you read what you ran, and a root admin reads everything.
+    Widening this later is backwards-compatible; narrowing it would not be."""
+    return actor.role == UserRoleEnum.root_admin
+
+
+def _encode_cursor(check_id: uuid.UUID) -> str:
+    return base64.urlsafe_b64encode(str(check_id).encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(base64.urlsafe_b64decode(cursor.encode()).decode())
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("Invalid cursor") from exc
+
+
+async def list_checks(
+    db: AsyncSession,
+    actor: User,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> tuple[list[Check], str | None]:
+    """Newest first. Keyset-paginated on `created_at, id` rather than `id`
+    alone: ids are random UUIDs, so paging by id would hand back rows in an
+    order nobody asked for and the history page reads chronologically."""
+    query = select(Check)
+    if not _may_read_any_check(actor):
+        query = query.where(Check.actor_id == actor.id)
+
+    if cursor is not None:
+        anchor_id = _decode_cursor(cursor)
+        anchor = (await db.execute(select(Check).where(Check.id == anchor_id))).scalar_one_or_none()
+        if anchor is None:
+            raise ValueError("Invalid cursor")
+        # Strictly older than the anchor, with id breaking ties on equal
+        # timestamps so a page boundary cannot repeat or skip a row.
+        query = query.where(
+            (Check.created_at < anchor.created_at)
+            | ((Check.created_at == anchor.created_at) & (Check.id < anchor.id))
+        )
+
+    query = query.order_by(Check.created_at.desc(), Check.id.desc()).limit(limit + 1)
+    rows = list((await db.execute(query)).scalars().all())
+
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        next_cursor = _encode_cursor(rows[-1].id)
+    return rows, next_cursor
+
+
+async def get_check_by_id(db: AsyncSession, actor: User, check_id: uuid.UUID) -> Check | None:
+    """`None` for both "no such check" and "not yours", so the endpoint cannot
+    be used to discover that a check exists."""
+    check = (await db.execute(select(Check).where(Check.id == check_id))).scalar_one_or_none()
+    if check is None:
+        return None
+    if not _may_read_any_check(actor) and check.actor_id != actor.id:
+        return None
+    return check

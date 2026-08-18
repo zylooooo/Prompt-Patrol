@@ -293,6 +293,16 @@ const row = (over: Record<string, unknown> = {}) => ({
   questionText: "q",
   rawScore: 0.5,
   verdict: "uncertain",
+  // Every real row carries the settings it was scored with; the export reads
+  // them so the caveat travels with the file.
+  detector: {
+    modelVersion: "roberta-base-openai-detector-v0",
+    calibrationVersion: null,
+    strictnessApplied: "standard",
+    thresholdApplied: 0.5,
+    targetFpr: 0.01,
+    usedQuestionText: false,
+  },
   ...over,
 });
 
@@ -300,9 +310,24 @@ describe("serializeResultsCsv", () => {
   it("emits a header and CRLF-separated rows (positive control)", () => {
     const lines = serializeResultsCsv(run([row()])).split("\r\n");
     expect(lines[0]).toBe(
-      "external_ref,question_text,answer_text,raw_score,verdict,verdict_text",
+      "external_ref,question_text,answer_text,raw_score,verdict,verdict_text,model_version,calibration,note",
     );
     expect(lines).toHaveLength(2);
+  });
+
+  it("lists rows the detector could not score, rather than omitting them", () => {
+    // A downloaded file holding fewer rows than the uploaded one is the same
+    // failure as a table showing fewer — it just travels further.
+    const csv = serializeResultsCsv({
+      ...run([row({ externalRef: "OK-1" })]),
+      failures: [
+        { externalRef: "BAD-1", reason: "The detector took too long." },
+      ],
+    });
+    const lines = csv.split("\r\n");
+
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe("BAD-1,,,,,,,,The detector took too long.");
   });
 
   it("quotes fields containing commas, quotes or newlines", () => {

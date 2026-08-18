@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -17,4 +18,6 @@ class SessionResponse(BaseModel):
 class MeResponse(BaseModel):
     email: str
     role: UserRoleEnum
+    # Who provisioned this account - for a teaching assistant, that is their supervisor.
+    provisioned_by: uuid.UUID | None
     session: SessionResponse

@@ -57,6 +57,26 @@ async def get_current_user(session: ActiveSession = Depends(get_current_session)
     return session.user
 
 
+# Rejects a teaching assistant nobody supervises.
+#
+# `provisioned_by` is the only supervision edge the schema has, so an assistant
+# with none belongs to no course and has nothing to screen for. The SPA refuses
+# them too, but that is a courtesy to the user, not a control: it reads the
+# session payload it is holding and can be skipped entirely. This is the check
+# that counts.
+#
+# Only assistants are gated. An instructor or admin carries no supervisor by
+# design, and the same rule shaped as "must have a supervisor" would lock out
+# everyone above.
+def require_screening_access(user: User = Depends(get_current_user)) -> User:
+    if user.role == UserRoleEnum.teaching_assistant and user.provisioned_by is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to an instructor yet, so there is nothing to screen.",
+        )
+    return user
+
+
 # Creates a FastAPI dependency that enforces a minimum user role.
 def require_role(min_role: UserRoleEnum):
     # Rejects authenticated users whose role is below the required level.

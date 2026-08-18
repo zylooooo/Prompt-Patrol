@@ -1,15 +1,22 @@
 import {
   checkKeys,
   checkAnswer,
+  getCapabilities,
+  getDetectorStatus,
   getEntry,
   listHistory,
   runBatch,
 } from "../api/checks";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
 import type { BatchRowInput, CheckInput, Strictness } from "../types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function useActor(): User | null {
   return useAuth().user;
@@ -18,6 +25,35 @@ function useActor(): User | null {
 function requireActor(actor: User | null): User {
   if (actor === null) throw new ApiError(401, "You are not signed in.");
   return actor;
+}
+
+export const capabilitiesQueryOptions = () =>
+  queryOptions({
+    queryKey: checkKeys.capabilities(),
+    queryFn: ({ signal }) => getCapabilities(signal),
+    staleTime: 60 * 60_000,
+  });
+
+export function useDetectorCapabilities() {
+  return useQuery(capabilitiesQueryOptions());
+}
+
+const STATUS_POLL_SETTLED_MS = 60_000;
+const STATUS_POLL_STARTING_MS = 5_000;
+
+export const detectorStatusQueryOptions = () =>
+  queryOptions({
+    queryKey: checkKeys.detectorStatus(),
+    queryFn: ({ signal }) => getDetectorStatus(signal),
+    refetchInterval: ({ state }) =>
+      state.data === "loading"
+        ? STATUS_POLL_STARTING_MS
+        : STATUS_POLL_SETTLED_MS,
+    staleTime: 0,
+  });
+
+export function useDetectorStatus() {
+  return useQuery(detectorStatusQueryOptions());
 }
 
 export function useHistory() {
@@ -43,7 +79,8 @@ export function useCheckAnswer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CheckInput) => checkAnswer(requireActor(actor), input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: checkKeys.all }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
   });
 }
 
@@ -62,6 +99,7 @@ export function useRunBatch(
       rows: BatchRowInput[];
       strictness?: Strictness;
     }) => runBatch(requireActor(actor), fileName, rows, strictness, onProgress),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: checkKeys.all }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
   });
 }

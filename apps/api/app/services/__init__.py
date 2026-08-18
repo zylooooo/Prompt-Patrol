@@ -10,6 +10,7 @@ from .users_service import (
     reactivate_user,
     record_logout_hint,
     resolve_or_bind_user,
+    set_supervisor,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "get_user_by_id",
     "create_user",
     "list_users",
+    "set_supervisor",
 ]

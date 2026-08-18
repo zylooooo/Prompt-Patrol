@@ -5,6 +5,7 @@ import { ApiError, apiRequest } from "./client";
 export interface User {
   email: string;
   role: UserRole;
+  provisionedBy: string | null;
 }
 
 export interface SessionInfo {
@@ -78,6 +79,7 @@ const SIGNED_OUT_REASONS = new Set<string>([
 interface MeResponse {
   email: string;
   role: UserRole;
+  provisioned_by: string | null;
   session: {
     expires_in_seconds: number;
     capped: boolean;
@@ -110,7 +112,11 @@ export async function getSession(
     );
     return {
       status: "authenticated",
-      user: { email: body.email, role: body.role },
+      user: {
+        email: body.email,
+        role: body.role,
+        provisionedBy: body.provisioned_by ?? null,
+      },
       session: {
         expiresAt: Date.now() + body.session.expires_in_seconds * 1000,
         capped: body.session.capped,
