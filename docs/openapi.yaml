@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.6 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.5.7 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -14,6 +14,11 @@ openapi: 3.0.3
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
 # CHANGELOG
+#   0.5.7  POST /api/checks refuses a teaching_assistant with no supervisor
+#          (`403`). The refusal existed only in the SPA, which decides it from
+#          the session payload it already holds — so the rule was a courtesy,
+#          not a control. Reading history is deliberately not gated: see the
+#          endpoint. Same model as [0.5.6], one layer down.
 #   0.5.6  `provisioned_by` is now the supervision edge, not just a record of
 #          who pressed create, and it is settable. POST /api/users accepts an
 #          optional `supervisor_id` (root_admin only — an instructor supervises
@@ -1289,10 +1294,19 @@ paths:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
       x-authorization: |
-        users module — any provisioned, non-deleted user. No role gate:
+        users module — any provisioned, non-deleted user, except a
+        `teaching_assistant` with no supervisor. No role gate beyond that:
         detection is the product. Attribution is the control, not restriction.
       description: |
         Synchronous. Submits one short answer, returns a verdict.
+
+        A `teaching_assistant` whose `provisioned_by` is NULL is refused with
+        `403` — they belong to no course, so there is nothing for them to
+        screen. See DECISION LOG [0.5.6]. The SPA refuses them too, but it
+        decides that from the session payload it is holding and can be skipped
+        entirely; this is the check that counts. The rule names assistants
+        specifically rather than "must have a supervisor", which would lock out
+        every instructor and admin.
 
         `actor_id` on the persisted row is taken from the gateway-injected
         `user_id`. **There is no `instructor_id` field in this request body,
@@ -1375,6 +1389,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            A `teaching_assistant` with no supervisor. The message names what
+            is missing, since it is something an administrator can fix.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "413":
           description: "`answer_text` exceeds 10,000 characters."
           content:

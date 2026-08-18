@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import require_role
+from auth.dependencies import require_role, require_screening_access
 from config import request_id_ctx_var
 from db import get_db
 from models import User, UserRoleEnum
@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["checks"])
 
 require_any_user = require_role(UserRoleEnum.teaching_assistant)
+
+# Screening is the one thing an unsupervised assistant may not do. Reading back
+# their own past checks is not screening, so the list and fetch routes keep the
+# plain session gate - and an assistant loses their sessions the moment someone
+# unassigns them anyway, so there is no live reader to shut out.
+require_screening = require_screening_access
 
 
 class CheckCreateRequest(BaseModel):
@@ -59,7 +65,7 @@ async def get_detector_capabilities(user: User = Depends(require_any_user)):
 async def create_check_route(
     body: CheckCreateRequest,
     response: Response,
-    user: User = Depends(require_any_user),
+    user: User = Depends(require_screening),
     db: AsyncSession = Depends(get_db),
 ):
     if body.strictness not in THRESHOLDS:

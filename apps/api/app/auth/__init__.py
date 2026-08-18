@@ -1,4 +1,10 @@
-from .dependencies import SESSION_COOKIE_NAME, get_current_session, get_current_user, require_role
+from .dependencies import (
+    SESSION_COOKIE_NAME,
+    get_current_session,
+    get_current_user,
+    require_role,
+    require_screening_access,
+)
 from .oidc import oauth
 from .session_state import ActiveSession, SessionFailure
 from .tokens import generate_session_token, hash_token
@@ -9,6 +15,7 @@ __all__ = [
     "get_current_session",
     "get_current_user",
     "require_role",
+    "require_screening_access",
     "oauth",
     "generate_session_token",
     "hash_token",

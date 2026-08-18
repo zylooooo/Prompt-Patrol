@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from db import get_db
 from main import app
 from models import User, UserRoleEnum
-from routes.checks import require_any_user
+from routes.checks import require_any_user, require_screening
 from services.detector_client import Score
 
 
@@ -24,8 +24,25 @@ def client(db_session):
 async def _signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, email=None):
     """Persists the user before authenticating as them. `checks.actor_id` is a
     real foreign key, so an in-memory User that was never inserted only works
-    because SQLite leaves FK enforcement off - on Postgres the insert fails."""
-    user = User(id=uuid.uuid4(), email=email or f"{uuid.uuid4()}@smu.edu.sg", role=role)
+    because SQLite leaves FK enforcement off - on Postgres the insert fails.
+
+    An assistant gets a supervisor. `provisioned_by` is what grants screening
+    access, so a fixture without one describes somebody the server refuses -
+    which is a case worth testing deliberately, not by accident in every test.
+    """
+    provisioned_by = None
+    if role == UserRoleEnum.teaching_assistant:
+        supervisor = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@smu.edu.sg", role=UserRoleEnum.instructor)
+        db_session.add(supervisor)
+        await db_session.commit()
+        provisioned_by = supervisor.id
+
+    user = User(
+        id=uuid.uuid4(),
+        email=email or f"{uuid.uuid4()}@smu.edu.sg",
+        role=role,
+        provisioned_by=provisioned_by,
+    )
     db_session.add(user)
     await db_session.commit()
 
@@ -33,6 +50,7 @@ async def _signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, e
         return user
 
     client.app.dependency_overrides[require_any_user] = override
+    client.app.dependency_overrides[require_screening] = override
     return user
 
 
@@ -250,3 +268,100 @@ async def test_a_bad_cursor_is_400_not_500(client, db_session):
     await _signed_in(client, db_session)
 
     assert client.get("/api/checks?cursor=not-base64").status_code == 400
+
+
+# --- screening needs a supervisor -------------------------------------------
+# The SPA refuses an unsupervised assistant, but it decides that from the session
+# payload it is holding and can be skipped entirely. These drive the real
+# dependency with a real session cookie - no override - so the check being tested
+# is the one that actually runs.
+
+
+async def _really_signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, provisioned_by=None):
+    from services import create_session
+
+    user = User(
+        id=uuid.uuid4(),
+        email=f"{uuid.uuid4()}@smu.edu.sg",
+        role=role,
+        provisioned_by=provisioned_by,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    client.cookies.set("__Host-session", await create_session(db_session, user.id))
+    return user
+
+
+@pytest.mark.asyncio
+async def test_an_unsupervised_assistant_cannot_screen(client, db_session):
+    await _really_signed_in(client, db_session)
+
+    response = client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_is_the_reason_not_a_bare_forbidden(client, db_session):
+    # They can act on this one: it names what is missing and who fixes it.
+    await _really_signed_in(client, db_session)
+
+    response = client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
+
+    assert "not assigned to an instructor" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_supervised_assistant_can_screen(client, db_session):
+    instructor = await _really_signed_in(client, db_session, role=UserRoleEnum.instructor)
+    client.cookies.clear()
+    await _really_signed_in(client, db_session, provisioned_by=instructor.id)
+
+    with patch(
+        "services.checks.score_text",
+        new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
+    ):
+        response = client.post("/api/checks", json={"answer_text": AI_LIKE})
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_screens_without_a_supervisor_of_their_own(client, db_session):
+    # The gate reads "an assistant needs a supervisor", not "everybody needs
+    # one" - the second shape would lock out every instructor and admin.
+    await _really_signed_in(client, db_session, role=UserRoleEnum.instructor)
+
+    with patch(
+        "services.checks.score_text",
+        new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
+    ):
+        response = client.post("/api/checks", json={"answer_text": AI_LIKE})
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_a_root_admin_screens_without_a_supervisor(client, db_session):
+    await _really_signed_in(client, db_session, role=UserRoleEnum.root_admin)
+
+    with patch(
+        "services.checks.score_text",
+        new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
+    ):
+        response = client.post("/api/checks", json={"answer_text": AI_LIKE})
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_an_unsupervised_assistant_may_still_read_their_own_history(client, db_session):
+    # Deliberate: reading back your own past work is not screening. Being
+    # unassigned by an admin revokes the session anyway, so the reachable case
+    # here is a script-provisioned account that has no history to read.
+    await _really_signed_in(client, db_session)
+
+    response = client.get("/api/checks")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
