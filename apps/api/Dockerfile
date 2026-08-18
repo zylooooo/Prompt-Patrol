@@ -16,8 +16,11 @@ COPY requirements.txt .
 COPY app/ /app/
 COPY alembic.ini .
 COPY alembic/ /app/alembic/
+COPY entrypoint.sh .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "main.py"]
+# Invoked through sh rather than as an executable: COPY lands the file
+# root-owned and this stage already runs as apiuser, so it cannot chmod +x.
+CMD ["sh", "/app/entrypoint.sh"]
