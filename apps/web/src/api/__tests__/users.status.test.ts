@@ -1,10 +1,5 @@
-import {
-  deleteUser,
-  listMyAssistants,
-  listUsers,
-  setUserActive,
-} from "../stub";
 import type { User } from "../auth";
+import { listUsers, setUserActive } from "../stub";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const USERS_V2 = "pp.users.v2";
@@ -13,11 +8,6 @@ const USERS_V3 = "pp.users.v3";
 const ADMIN: User = {
   email: "admin@example.com",
   role: "root_admin",
-  provisionedBy: null,
-};
-const INSTRUCTOR_A: User = {
-  email: "instructor.a@example.com",
-  role: "instructor",
   provisionedBy: null,
 };
 
@@ -62,28 +52,5 @@ describe("persisted accounts", () => {
     expect(after.find((u) => u.id === before[1].id)?.status).toBe(
       "deactivated",
     );
-  });
-});
-
-describe("listMyAssistants", () => {
-  it("drops assistants whose account was deleted", async () => {
-    const before = await listMyAssistants(INSTRUCTOR_A);
-    const target = before[0];
-    expect(target).toBeDefined();
-
-    await deleteUser(ADMIN, target.id);
-
-    const after = await listMyAssistants(INSTRUCTOR_A);
-    expect(after.map((ta) => ta.id)).not.toContain(target.id);
-  });
-
-  it("keeps assistants who were only deactivated", async () => {
-    const before = await listMyAssistants(INSTRUCTOR_A);
-    const target = before[0];
-
-    await setUserActive(ADMIN, target.id, false);
-
-    const after = await listMyAssistants(INSTRUCTOR_A);
-    expect(after.find((ta) => ta.id === target.id)?.status).toBe("deactivated");
   });
 });

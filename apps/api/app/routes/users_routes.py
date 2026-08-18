@@ -6,10 +6,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import require_role
 from db import get_db
-from exceptions import EmailAlreadyExistsError, InvalidStatusTransitionError, UserNotFoundError
+from exceptions import (
+    EmailAlreadyExistsError,
+    InvalidStatusTransitionError,
+    InvalidSupervisorError,
+    UserNotFoundError,
+)
 from models import User, UserRoleEnum, UserStatusEnum
-from schemas import StatusChangeRequest, UserCreateRequest, UserListResponse, UserResponse
-from services import create_user, deactivate_user, delete_user, get_user_by_id, list_users, reactivate_user
+from schemas import (
+    StatusChangeRequest,
+    SupervisorChangeRequest,
+    UserCreateRequest,
+    UserListResponse,
+    UserResponse,
+)
+from services import (
+    create_user,
+    deactivate_user,
+    delete_user,
+    get_user_by_id,
+    list_users,
+    reactivate_user,
+    set_supervisor,
+)
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -88,11 +107,23 @@ async def provision_user(
     Create new user endpoint. Authorization checks performed in service layer.
     """
     try:
-        user = await create_user(db, actor, create_request.email, create_request.role, create_request.display_name)
+        user = await create_user(
+            db,
+            actor,
+            create_request.email,
+            create_request.role,
+            create_request.display_name,
+            create_request.supervisor_id,
+        )
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to create a user with this role.",
+        )
+    except InvalidSupervisorError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That supervisor is not an active instructor.",
         )
     except EmailAlreadyExistsError:
         raise HTTPException(
@@ -100,6 +131,39 @@ async def provision_user(
             detail="A user with this email already exists.",
         )
     return user
+
+
+@router.post("/{user_id}/supervisor", response_model=UserResponse)
+async def set_supervisor_route(
+    user_id: uuid.UUID,
+    body: SupervisorChangeRequest,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Moves a teaching assistant to a different instructor, or unassigns them with
+    a null supervisor. Assigning is a root admin act; an instructor may only
+    release their own assistant. The rule lives in the service.
+
+    Returns the row so the caller can see the resulting assignment without a
+    follow-up read, matching the status transitions.
+    """
+    try:
+        return await set_supervisor(db, actor, user_id, body.supervisor_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to change this user's supervisor.",
+        )
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except InvalidSupervisorError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That supervisor is not an active instructor.",
+        )
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.post("/{user_id}/deactivate", response_model=UserResponse)

@@ -185,12 +185,6 @@ export function roleLabel(user: AppUser): string {
   return ROLE_TEXT[user.role];
 }
 
-export interface SupervisionLink {
-  instructorId: string;
-  taId: string;
-  createdAt: string;
-}
-
 export interface CheckInput {
   answerText: string;
   questionText?: string;
@@ -199,16 +193,11 @@ export interface CheckInput {
   retainAnswer?: boolean;
 }
 
-export type LookupResult =
-  | { kind: "free" }
-  | { kind: "linkable"; user: AppUser }
-  | { kind: "not-eligible" };
-
 export interface CreateAccountInput {
   email: string;
   role: UserRole;
   name?: string;
-  supervisorIds?: string[];
+  supervisorId?: string | null;
 }
 
 export type DeactivationPlan =

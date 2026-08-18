@@ -1,12 +1,9 @@
 import {
-  atLeastRole,
   isActive,
   type AppUser,
   type CreateAccountInput,
   type DeactivationOutcome,
   type DeactivationPlan,
-  type LookupResult,
-  type SupervisionLink,
   type UserRole,
   type UserStatus,
 } from "../types";
@@ -17,7 +14,6 @@ import { apiRequest } from "./client";
 export const userKeys = {
   all: ["users"] as const,
   list: () => [...userKeys.all, "list"] as const,
-  supervision: () => [...userKeys.all, "supervision"] as const,
   myAssistants: () => [...userKeys.all, "mine"] as const,
 };
 
@@ -94,19 +90,7 @@ export async function listUsers(
   _actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  const [me, users] = await Promise.all([
-    getCurrentUser(signal),
-    fetchAll({ statuses: ROSTER_STATUSES }, signal),
-  ]);
-
-  stub.rememberUsers([me, ...users]);
-  return users;
-}
-
-export function listSupervision(
-  signal?: AbortSignal,
-): Promise<SupervisionLink[]> {
-  return stub.listSupervision(signal);
+  return fetchAll({ statuses: ROSTER_STATUSES }, signal);
 }
 
 export async function listMyAssistants(
@@ -120,55 +104,39 @@ export async function listMyAssistants(
       signal,
     ),
   ]);
-  stub.rememberUsers([me, ...assistants]);
 
   if (me.role === "instructor") return assistants;
-  const mine = new Set(stub.assistantsOf(me.id).map((ta) => ta.id));
-  return assistants.filter((ta) => mine.has(ta.id));
+  return assistants.filter((ta) => ta.provisionedBy === me.id);
 }
 
 export async function createAccount(
-  actor: User,
+  _actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
-  const email = input.email.trim();
-
-  const created = toAppUser(
+  return toAppUser(
     await apiRequest<UserResponse>(USERS_PATH, {
       method: "POST",
       body: {
-        email,
+        email: input.email.trim(),
         role: input.role,
         display_name: input.name?.trim() || null,
+        supervisor_id: input.supervisorId ?? null,
       },
     }),
   );
-  stub.rememberUsers([created]);
-
-  if (created.role === "teaching_assistant") {
-    const supervisors = atLeastRole(actor.role, "root_admin")
-      ? (input.supervisorIds ?? [])
-      : [(await getCurrentUser()).id];
-    stub.rememberSupervision(supervisors, created.id);
-  }
-
-  return created;
 }
 
-export function linkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  return stub.linkSupervision(actor, instructorId, taId);
-}
-
-export function unlinkSupervision(
-  actor: User,
-  instructorId: string,
-  taId: string,
-): Promise<void> {
-  return stub.unlinkSupervision(actor, instructorId, taId);
+export async function setSupervisor(
+  _actor: User,
+  id: string,
+  supervisorId: string | null,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}/supervisor`, {
+      method: "POST",
+      body: { supervisor_id: supervisorId },
+    }),
+  );
 }
 
 export async function setUserActive(
@@ -176,14 +144,23 @@ export async function setUserActive(
   id: string,
   active: boolean,
 ): Promise<AppUser> {
-  const user = toAppUser(
+  return toAppUser(
     await apiRequest<UserResponse>(
       `${USERS_PATH}${id}/${active ? "reactivate" : "deactivate"}`,
       { method: "POST" },
     ),
   );
-  stub.rememberUsers([user]);
-  return user;
+}
+
+export async function listAssistantsOf(
+  instructorId: string,
+  signal?: AbortSignal,
+): Promise<AppUser[]> {
+  const assistants = await fetchAll(
+    { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
+    signal,
+  );
+  return assistants.filter((ta) => ta.provisionedBy === instructorId);
 }
 
 export async function deactivateInstructor(
@@ -191,8 +168,7 @@ export async function deactivateInstructor(
   id: string,
   plan: DeactivationPlan,
 ): Promise<DeactivationOutcome> {
-  const stranded = stub.strandedBy(id);
-  await setUserActive(actor, id, false);
+  const affected = await listAssistantsOf(id);
 
   const outcome: DeactivationOutcome = {
     reassigned: 0,
@@ -201,41 +177,29 @@ export async function deactivateInstructor(
   };
 
   if (plan.mode === "reassign") {
-    for (const ta of stranded) stub.rememberSupervision([plan.toId], ta.id);
-    outcome.reassigned = stranded.length;
+    for (const ta of affected) await setSupervisor(actor, ta.id, plan.toId);
+    outcome.reassigned = affected.length;
   } else if (plan.mode === "deactivate") {
-    for (const ta of stranded) {
+    for (const ta of affected) {
       if (!isActive(ta)) continue;
       await setUserActive(actor, ta.id, false);
       outcome.deactivated++;
     }
   } else {
-    outcome.leftUnassigned = stranded.length;
+    for (const ta of affected) await setSupervisor(actor, ta.id, null);
+    outcome.leftUnassigned = affected.length;
   }
 
-  stub.forgetSupervisionBy(id);
+  await setUserActive(actor, id, false);
   return outcome;
 }
 
 export async function deleteUser(_actor: User, id: string): Promise<AppUser> {
-  const user = toAppUser(
+  return toAppUser(
     await apiRequest<UserResponse>(`${USERS_PATH}${id}`, { method: "DELETE" }),
   );
-  stub.rememberUsers([user]);
-  return user;
 }
 
 export function resendInvite(actor: User, id: string): Promise<void> {
   return stub.resendInvite(actor, id);
-}
-
-export const findUserById = stub.findUserById;
-export const findUserByEmail = stub.findUserByEmail;
-export const supervisorsOf = stub.supervisorsOf;
-export const assistantsOf = stub.assistantsOf;
-export const linkedAt = stub.linkedAt;
-export const strandedBy = stub.strandedBy;
-
-export function lookupForLinking(actor: User, email: string): LookupResult {
-  return stub.lookupForLinking(actor, email);
 }

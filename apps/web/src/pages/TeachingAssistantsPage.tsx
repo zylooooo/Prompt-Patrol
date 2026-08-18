@@ -4,20 +4,13 @@ import DataTable, {
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
-  findUserByEmail,
-  linkedAt,
-  lookupForLinking,
-  supervisorsOf,
-} from "../api/users";
-import {
   useCreateAccount,
-  useLinkSupervision,
   useMyAssistants,
-  useUnlinkSupervision,
+  useSetSupervisor,
 } from "../hooks/useUsers";
 import { useState } from "react";
+import { ApiError } from "../api/client";
 import Modal from "../components/ui/Modal";
-import { useAuth } from "../hooks/useAuth";
 import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
@@ -35,13 +28,10 @@ const FIELD =
 
 export default function TeachingAssistantsPage() {
   usePageTitle("Manage My Assistants");
-  const { user: session } = useAuth();
   const { showToast } = useToast();
   const { data: assistants, isPending, isError, refetch } = useMyAssistants();
   const createAccount = useCreateAccount();
-  const link = useLinkSupervision();
-  const unlink = useUnlinkSupervision();
-  const actor = session ? findUserByEmail(session.email) : undefined;
+  const release = useSetSupervisor();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -51,35 +41,10 @@ export default function TeachingAssistantsPage() {
     message: string;
   } | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [existing, setExisting] = useState<AppUser | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
 
-  function alsoWith(ta: AppUser): string {
-    const others = supervisorsOf(ta.id).filter(
-      (supervisor) => supervisor.id !== actor?.id,
-    );
-    return others.length === 0 ? "·" : others.map(displayName).join(", ");
-  }
-
-  function addedOn(ta: AppUser): string {
-    const iso = actor ? linkedAt(actor.id, ta.id) : undefined;
-    return iso ? fmtDateOnly(iso) : "·";
-  }
-
   async function onAdd() {
-    if (!session) return;
     setError(null);
-    const lookup = lookupForLinking(session, email.trim());
-    if (lookup.kind === "linkable") {
-      setExisting(lookup.user);
-      return;
-    }
-    if (lookup.kind === "not-eligible") {
-      setError(
-        "That email belongs to another kind of account. Ask your administrator for help.",
-      );
-      return;
-    }
     try {
       const created = await createAccount.mutateAsync({
         name: name.trim() || undefined,
@@ -90,36 +55,25 @@ export default function TeachingAssistantsPage() {
       setEmail("");
       showToast(`${created.email} can now sign in with their SMU account`);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setError(
+          "That email already has an account. Ask your administrator to assign them to you.",
+        );
+        return;
+      }
       setError(
         err instanceof Error ? err.message : "Could not add the account.",
       );
     }
   }
 
-  async function onConfirmLink() {
-    if (!existing || !actor) return;
-    setError(null);
-    try {
-      await link.mutateAsync({ instructorId: actor.id, taId: existing.id });
-      showToast(`${displayName(existing)} added to your teaching assistants`);
-      setExisting(null);
-      setName("");
-      setEmail("");
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not link the account.",
-      );
-      setExisting(null);
-    }
-  }
-
   async function onConfirmRemove() {
-    if (!confirmRemove || !actor) return;
+    if (!confirmRemove) return;
     const target = confirmRemove;
     setRowError(null);
     setPending(target.id);
     try {
-      await unlink.mutateAsync({ instructorId: actor.id, taId: target.id });
+      await release.mutateAsync({ id: target.id, supervisorId: null });
       showToast(`${displayName(target)} removed from your teaching assistants`);
       setConfirmRemove(null);
     } catch (err) {
@@ -157,24 +111,13 @@ export default function TeachingAssistantsPage() {
       ),
     },
     {
-      id: "alsoWith",
-      header: "Also supervised by",
-      width: "minmax(0,1.3fr)",
-      hideWhenCompact: true,
-      cell: (ta) => (
-        <span className="min-w-0 max-w-[11rem] truncate text-[13px] text-muted-foreground">
-          {alsoWith(ta)}
-        </span>
-      ),
-    },
-    {
       id: "addedOn",
       header: "Added",
       width: "minmax(0,0.9fr)",
       hideWhenCompact: true,
       cell: (ta) => (
         <span className="truncate text-[13px] text-muted-foreground">
-          {addedOn(ta)}
+          {fmtDateOnly(ta.createdAt)}
         </span>
       ),
     },
@@ -296,78 +239,33 @@ export default function TeachingAssistantsPage() {
         </PageFill>
       )}
 
-      {existing && (
-        <Modal
-          title={`${displayName(existing)} already has an account`}
-          subtitle={existing.email}
-          busy={link.isPending}
-          onClose={() => setExisting(null)}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => setExisting(null)}
-                disabled={link.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void onConfirmLink()}
-                disabled={link.isPending}
-              >
-                {link.isPending ? "Adding…" : "Add to my teaching assistants"}
-              </Button>
-            </>
-          }
-        >
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            Adding them links the existing account to you. No second account is
-            created, and their work with other instructors is untouched.
-          </p>
-          <div className="mt-5 flex items-center justify-between gap-4 rounded-lg border border-border bg-modal-muted px-4 py-3.5">
-            <p className="text-sm font-medium text-foreground">
-              {displayName(existing)}
-            </p>
-            <p className="text-[13px] text-muted-foreground">
-              {supervisorsOf(existing.id).length === 0
-                ? "Currently unassigned"
-                : `Currently with ${supervisorsOf(existing.id).map(displayName).join(", ")}`}
-            </p>
-          </div>
-          <p className="mt-4 text-xs leading-relaxed text-disabled-foreground">
-            The name on the account stays as it is. Only an administrator can
-            rename it.
-          </p>
-        </Modal>
-      )}
-
       {confirmRemove && (
         <Modal
           title={`Remove ${displayName(confirmRemove)}`}
-          busy={unlink.isPending}
+          busy={release.isPending}
           onClose={() => setConfirmRemove(null)}
           footer={
             <>
               <Button
                 variant="secondary"
                 onClick={() => setConfirmRemove(null)}
-                disabled={unlink.isPending}
+                disabled={release.isPending}
               >
                 Cancel
               </Button>
               <Button
                 onClick={() => void onConfirmRemove()}
-                disabled={unlink.isPending}
+                disabled={release.isPending}
               >
-                {unlink.isPending ? "Removing…" : "Remove"}
+                {release.isPending ? "Removing…" : "Remove"}
               </Button>
             </>
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            {supervisorsOf(confirmRemove.id).length > 1
-              ? "They keep their account and continue working with their other instructors."
-              : "They keep their account. It becomes unassigned and stays active until someone adds them again."}
+            They keep their account, and it stays active. They stop being able
+            to screen answers until an administrator assigns them to an
+            instructor again.
           </p>
         </Modal>
       )}

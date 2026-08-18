@@ -9,7 +9,12 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exceptions import EmailAlreadyExistsError, InvalidStatusTransitionError, UserNotFoundError
+from exceptions import (
+    EmailAlreadyExistsError,
+    InvalidStatusTransitionError,
+    InvalidSupervisorError,
+    UserNotFoundError,
+)
 from models import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
 from models.session import UserSession
 
@@ -298,9 +303,104 @@ def _can_view_user(actor: User, target: User) -> bool:
     return False
 
 
+# Confirms a proposed supervisor can actually hold the role.
+async def _assert_supervisor_available(db: AsyncSession, supervisor_id: uuid.UUID) -> None:
+    result = await db.execute(select(User).where(User.id == supervisor_id))
+    supervisor = result.scalar_one_or_none()
+    if supervisor is None:
+        raise InvalidSupervisorError(f"no user with id {supervisor_id}")
+    if supervisor.role != UserRoleEnum.instructor:
+        raise InvalidSupervisorError("a supervisor must be an instructor")
+    if supervisor.status != UserStatusEnum.active:
+        raise InvalidSupervisorError("a supervisor must be an active account")
+
+
+async def _resolve_supervisor(
+    db: AsyncSession, actor: User, role: UserRoleEnum, supervisor_id: uuid.UUID | None
+) -> uuid.UUID | None:
+    """Decides what `provisioned_by` holds on a new account.
+
+    For a teaching assistant this column *is* the supervision edge - the only one
+    the schema has - so it names an instructor or nobody at all. For an instructor
+    it records who created them and nothing gates on it.
+    """
+    if role != UserRoleEnum.teaching_assistant:
+        if supervisor_id is not None:
+            raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+        return actor.id
+
+    if actor.role == UserRoleEnum.instructor:
+        # An instructor may only place an assistant under themselves. Naming a
+        # colleague would hand them a row this instructor could no longer manage.
+        if supervisor_id is not None and supervisor_id != actor.id:
+            logger.warning("Instructor %s attempted to assign supervisor %s.", actor.id, supervisor_id)
+            raise PermissionError(f"role {actor.role} may not assign another instructor")
+        return actor.id
+
+    # Root admin. Naming nobody means genuinely unassigned rather than "supervised
+    # by the admin": the assistant cannot screen until someone assigns them, and
+    # the roster says so.
+    if supervisor_id is None:
+        return None
+    await _assert_supervisor_available(db, supervisor_id)
+    return supervisor_id
+
+
+async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supervisor_id: uuid.UUID | None) -> User:
+    """Moves a teaching assistant to another instructor, or unassigns them.
+
+    Placing people is a root admin act. An instructor may only *release* their
+    own assistant, never take one: `provisioned_by` is what grants management of
+    the row, so letting them assign would let them hand a colleague access, or
+    help themselves to someone else's assistant.
+    """
+    if actor.role == UserRoleEnum.teaching_assistant:
+        logger.warning("Actor %s may not reassign supervisors.", actor.id)
+        raise PermissionError(f"role {actor.role} may not reassign supervisors")
+
+    target = await _load_manageable(db, user_id)
+    if target.role != UserRoleEnum.teaching_assistant:
+        raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+    if target.status == UserStatusEnum.deleted:
+        raise InvalidStatusTransitionError("cannot reassign a deleted user")
+
+    if actor.role == UserRoleEnum.instructor and (supervisor_id is not None or target.provisioned_by != actor.id):
+        logger.warning("Instructor %s may not set supervisor %s on %s.", actor.id, supervisor_id, target.id)
+        raise PermissionError(f"role {actor.role} may only release their own assistant")
+
+    if supervisor_id is not None:
+        await _assert_supervisor_available(db, supervisor_id)
+
+    if target.provisioned_by == supervisor_id:
+        return target
+
+    target.provisioned_by = supervisor_id
+
+    # Losing a supervisor ends screening access, and the SPA reads that from the
+    # session payload it is already holding. Revoke in the same commit so the
+    # next request re-reads the truth instead of trusting a session minted while
+    # they still had one.
+    if supervisor_id is None:
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == target.id, UserSession.deleted_at.is_(None))
+            .values(deleted_at=datetime.now(UTC))
+        )
+
+    await db.commit()
+    await db.refresh(target)
+    logger.info("Assistant %s assigned to supervisor %s by %s.", target.id, supervisor_id, actor.id)
+    return target
+
+
 # Provisions a new user when the actor has permission to assign the requested role.
 async def create_user(
-    db: AsyncSession, actor: User, email: str, role: UserRoleEnum, display_name: str | None = None
+    db: AsyncSession,
+    actor: User,
+    email: str,
+    role: UserRoleEnum,
+    display_name: str | None = None,
+    supervisor_id: uuid.UUID | None = None,
 ) -> User:
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
 
@@ -320,12 +420,16 @@ async def create_user(
         )
         raise PermissionError(f"role {actor.role} may not provision role {role}")
 
+    provisioned_by = await _resolve_supervisor(db, actor, role, supervisor_id)
+
     existing = await db.execute(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
     if existing.scalar_one_or_none() is not None:
         logger.warning("Attempted to provision duplicate email: %s", email)
         raise EmailAlreadyExistsError(email)
 
-    user = User(email=email, role=role, display_name=normalize_display_name(display_name), provisioned_by=actor.id)
+    user = User(
+        email=email, role=role, display_name=normalize_display_name(display_name), provisioned_by=provisioned_by
+    )
     db.add(user)
     await db.commit()
     await db.refresh(user)

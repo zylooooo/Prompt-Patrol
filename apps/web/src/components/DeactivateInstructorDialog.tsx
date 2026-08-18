@@ -8,7 +8,6 @@ import Modal from "./ui/Modal";
 import Button from "./ui/Button";
 import Dropdown from "./ui/Dropdown";
 import { useToast } from "../hooks/useToast";
-import { assistantsOf, strandedBy } from "../api/users";
 import { useMemo, useState, type ReactNode } from "react";
 import { useDeactivateInstructor } from "../hooks/useUsers";
 
@@ -32,10 +31,15 @@ export default function DeactivateInstructorDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const stranded = useMemo(() => strandedBy(instructor.id), [instructor.id]);
-  const all = useMemo(() => assistantsOf(instructor.id), [instructor.id]);
-  const unaffected = all.filter(
-    (ta) => !stranded.some((strandedTa) => strandedTa.id === ta.id),
+  const stranded = useMemo(
+    () =>
+      allUsers.filter(
+        (u) =>
+          u.role === "teaching_assistant" &&
+          u.provisionedBy === instructor.id &&
+          u.status !== "deleted",
+      ),
+    [allUsers, instructor.id],
   );
 
   const otherInstructors = allUsers.filter(
@@ -138,24 +142,16 @@ export default function DeactivateInstructorDialog({
     >
       {stranded.length === 0 ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {all.length === 0
-            ? "This account supervises nobody, so no teaching assistants are affected."
-            : "Every teaching assistant here also reports to somebody else, so none of them lose access."}
+          This account supervises nobody, so no teaching assistants are
+          affected.
         </p>
       ) : (
         <>
           <p className="text-sm leading-relaxed text-muted-foreground">
             {stranded.map(displayName).join(", ")}{" "}
-            {stranded.length === 1 ? "reports" : "report"} only to this account.
+            {stranded.length === 1 ? "reports" : "report"} to this account.
             Choose what happens to them.
           </p>
-          {unaffected.length > 0 && (
-            <p className="mt-1.5 text-[13px] leading-relaxed text-disabled-foreground">
-              {unaffected.map(displayName).join(", ")} also{" "}
-              {unaffected.length === 1 ? "reports" : "report"} elsewhere, so
-              they keep access either way.
-            </p>
-          )}
 
           <div className="mt-5 flex flex-col gap-1.5">
             {option(

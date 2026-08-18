@@ -4,11 +4,17 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from exceptions import EmailAlreadyExistsError, InvalidStatusTransitionError, UserNotFoundError
+from exceptions import (
+    EmailAlreadyExistsError,
+    InvalidStatusTransitionError,
+    InvalidSupervisorError,
+    UserNotFoundError,
+)
 from models import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
 from services.users_service import (
     LoginRejection,
     _can_view_user,
+    _may_manage,
     create_user,
     deactivate_user,
     delete_user,
@@ -17,6 +23,7 @@ from services.users_service import (
     normalize_email,
     reactivate_user,
     resolve_or_bind_user,
+    set_supervisor,
 )
 
 
@@ -986,3 +993,308 @@ async def test_nobody_can_change_their_own_status(db_session):
 
     await db_session.refresh(admin)
     assert admin.status == UserStatusEnum.active
+
+
+# --- who supervises whom ---------------------------------------------------
+# `provisioned_by` is the whole supervision model: one instructor per assistant,
+# and the SPA gates screening on it. Before this, it always held whoever ran the
+# create call, so an admin adding an assistant "under instructor A" produced a
+# row supervised by the admin, and the chosen instructor existed only in that
+# browser's localStorage.
+
+
+@pytest.mark.asyncio
+async def test_admin_can_name_the_supervising_instructor(db_session):
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    await _seed(db_session, admin, instructor)
+
+    created = await create_user(
+        db_session, admin, "placed@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=instructor.id
+    )
+
+    assert created.provisioned_by == instructor.id
+
+
+@pytest.mark.asyncio
+async def test_an_admin_created_assistant_with_no_instructor_is_unassigned(db_session):
+    # Not the admin's id. The column means "supervisor" for an assistant, and an
+    # admin does not supervise - leaving it NULL is what makes the roster's
+    # Unassigned filter and the screening gate tell the truth.
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    created = await create_user(db_session, admin, "floating@smu.edu.sg", UserRoleEnum.teaching_assistant)
+
+    assert created.provisioned_by is None
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_still_supervises_whoever_they_create(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    await _seed(db_session, instructor)
+
+    created = await create_user(db_session, instructor, "mine@smu.edu.sg", UserRoleEnum.teaching_assistant)
+
+    assert created.provisioned_by == instructor.id
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_may_not_place_an_assistant_under_a_colleague(db_session):
+    # provisioned_by is what grants management of the row, so this would be
+    # handing away access they could not take back.
+    instructor, colleague = _user(UserRoleEnum.instructor), _user(UserRoleEnum.instructor)
+    await _seed(db_session, instructor, colleague)
+
+    with pytest.raises(PermissionError):
+        await create_user(
+            db_session, instructor, "theirs@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=colleague.id
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_naming_themselves_is_accepted(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    await _seed(db_session, instructor)
+
+    created = await create_user(
+        db_session, instructor, "explicit@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=instructor.id
+    )
+
+    assert created.provisioned_by == instructor.id
+
+
+@pytest.mark.asyncio
+async def test_a_supervisor_must_be_an_instructor(db_session):
+    admin, ta = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, ta)
+
+    with pytest.raises(InvalidSupervisorError):
+        await create_user(db_session, admin, "nested@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=ta.id)
+
+
+@pytest.mark.asyncio
+async def test_a_supervisor_must_be_active(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    gone = _deactivated_user(UserRoleEnum.instructor)
+    await _seed(db_session, admin, gone)
+
+    with pytest.raises(InvalidSupervisorError):
+        await create_user(
+            db_session, admin, "stranded@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=gone.id
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_supervisor_must_exist(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    with pytest.raises(InvalidSupervisorError):
+        await create_user(
+            db_session, admin, "ghost@smu.edu.sg", UserRoleEnum.teaching_assistant, supervisor_id=uuid.uuid4()
+        )
+
+
+@pytest.mark.asyncio
+async def test_only_an_assistant_can_be_given_a_supervisor(db_session):
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    await _seed(db_session, admin, instructor)
+
+    with pytest.raises(InvalidSupervisorError):
+        await create_user(db_session, admin, "peer@smu.edu.sg", UserRoleEnum.instructor, supervisor_id=instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_creating_an_instructor_still_records_its_creator(db_session):
+    # For a non-assistant the column keeps its older, purely descriptive meaning.
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    created = await create_user(db_session, admin, "prof@smu.edu.sg", UserRoleEnum.instructor)
+
+    assert created.provisioned_by == admin.id
+
+
+# --- moving an assistant ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_moves_an_assistant_to_another_instructor(db_session):
+    admin, first, second = (
+        _user(UserRoleEnum.root_admin),
+        _user(UserRoleEnum.instructor),
+        _user(UserRoleEnum.instructor),
+    )
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=first.id)
+    await _seed(db_session, admin, first, second, ta)
+
+    moved = await set_supervisor(db_session, admin, ta.id, second.id)
+
+    assert moved.provisioned_by == second.id
+
+
+@pytest.mark.asyncio
+async def test_the_new_instructor_can_manage_a_moved_assistant(db_session):
+    # The point of the move: management follows the column, so this is what the
+    # reassignment actually buys.
+    admin, first, second = (
+        _user(UserRoleEnum.root_admin),
+        _user(UserRoleEnum.instructor),
+        _user(UserRoleEnum.instructor),
+    )
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=first.id)
+    await _seed(db_session, admin, first, second, ta)
+
+    moved = await set_supervisor(db_session, admin, ta.id, second.id)
+
+    assert _may_manage(second, moved) is True
+    assert _may_manage(first, moved) is False
+
+
+@pytest.mark.asyncio
+async def test_a_null_supervisor_unassigns_the_assistant(db_session):
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    await _seed(db_session, admin, instructor, ta)
+
+    unassigned = await set_supervisor(db_session, admin, ta.id, None)
+
+    assert unassigned.provisioned_by is None
+
+
+@pytest.mark.asyncio
+async def test_unassigning_revokes_live_sessions(db_session):
+    # The SPA decides "may this person screen?" from the session payload it is
+    # already holding, so an assistant who kept a session would keep screening
+    # until they happened to reload.
+    from auth import SessionFailure
+    from services import authenticate_session, create_session
+
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    await _seed(db_session, admin, instructor, ta)
+    token = await create_session(db_session, ta.id)
+    assert not isinstance(await authenticate_session(db_session, token), SessionFailure)
+
+    await set_supervisor(db_session, admin, ta.id, None)
+
+    assert await authenticate_session(db_session, token) is SessionFailure.session_revoked
+
+
+@pytest.mark.asyncio
+async def test_moving_an_assistant_keeps_them_signed_in(db_session):
+    # They still have a supervisor, so nothing they can do has changed.
+    from auth import SessionFailure
+    from services import authenticate_session, create_session
+
+    admin, first, second = (
+        _user(UserRoleEnum.root_admin),
+        _user(UserRoleEnum.instructor),
+        _user(UserRoleEnum.instructor),
+    )
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=first.id)
+    await _seed(db_session, admin, first, second, ta)
+    token = await create_session(db_session, ta.id)
+
+    await set_supervisor(db_session, admin, ta.id, second.id)
+
+    assert not isinstance(await authenticate_session(db_session, token), SessionFailure)
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_cannot_reassign_anyone(db_session):
+    instructor, colleague = _user(UserRoleEnum.instructor), _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    await _seed(db_session, instructor, colleague, ta)
+
+    with pytest.raises(PermissionError):
+        await set_supervisor(db_session, instructor, ta.id, colleague.id)
+
+
+@pytest.mark.asyncio
+async def test_an_assistant_cannot_reassign_themselves(db_session):
+    instructor = _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, instructor, ta)
+
+    with pytest.raises(PermissionError):
+        await set_supervisor(db_session, ta, ta.id, instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_only_an_assistant_can_be_reassigned(db_session):
+    admin, instructor, other = (
+        _user(UserRoleEnum.root_admin),
+        _user(UserRoleEnum.instructor),
+        _user(UserRoleEnum.instructor),
+    )
+    await _seed(db_session, admin, instructor, other)
+
+    with pytest.raises(InvalidSupervisorError):
+        await set_supervisor(db_session, admin, instructor.id, other.id)
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_assistant_cannot_be_reassigned(db_session):
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    ta = _deleted_user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, instructor, ta)
+
+    with pytest.raises(InvalidStatusTransitionError):
+        await set_supervisor(db_session, admin, ta.id, instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_a_deactivated_assistant_can_still_be_reassigned(db_session):
+    # Deactivation is reversible, so the roster has to be able to place them
+    # before they come back.
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    ta = _deactivated_user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, instructor, ta)
+
+    moved = await set_supervisor(db_session, admin, ta.id, instructor.id)
+
+    assert moved.provisioned_by == instructor.id
+
+
+@pytest.mark.asyncio
+async def test_reassigning_an_unknown_user_is_not_found(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    with pytest.raises(UserNotFoundError):
+        await set_supervisor(db_session, admin, uuid.uuid4(), None)
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_may_release_their_own_assistant(db_session):
+    # The "Remove" button on the instructor's own page. Releasing is safe because
+    # it only ever gives access away, never takes it.
+    instructor = _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    await _seed(db_session, instructor, ta)
+
+    released = await set_supervisor(db_session, instructor, ta.id, None)
+
+    assert released.provisioned_by is None
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_may_not_release_someone_elses_assistant(db_session):
+    instructor, colleague = _user(UserRoleEnum.instructor), _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant, provisioned_by=colleague.id)
+    await _seed(db_session, instructor, colleague, ta)
+
+    with pytest.raises(PermissionError):
+        await set_supervisor(db_session, instructor, ta.id, None)
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_may_not_claim_an_unassigned_assistant(db_session):
+    # Helping themselves to a spare account is an admin's call, not theirs.
+    instructor = _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, instructor, ta)
+
+    with pytest.raises(PermissionError):
+        await set_supervisor(db_session, instructor, ta.id, instructor.id)

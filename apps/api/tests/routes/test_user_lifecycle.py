@@ -220,3 +220,161 @@ async def test_reading_a_user_outside_the_delegation_chain_is_404(client, db_ses
     assert client.get(f"/api/users/{own.id}").status_code == 200
     assert client.get(f"/api/users/{someone_elses.id}").status_code == 404
     assert client.get(f"/api/users/{another_instructor.id}").status_code == 404
+
+
+# --- assigning a supervisor -------------------------------------------------
+# The SPA used to hold "who supervises whom" in localStorage, so an admin's pick
+# of instructor never reached the database and the roster read Unassigned in every
+# other browser. These are the two routes that make the pick real.
+
+
+@pytest.mark.asyncio
+async def test_provisioning_accepts_a_supervising_instructor(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "placed@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(instructor.id),
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["provisioned_by"] == str(instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_provisioning_rejects_a_supervisor_who_is_not_an_instructor(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "nested@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(assistant.id),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_cannot_provision_under_a_colleague(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "theirs@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(colleague.id),
+        },
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_returns_the_new_assignment(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(instructor.id)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] == str(instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_a_null_supervisor_unassigns_over_the_wire(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_is_refused_to_an_instructor(client, db_session):
+    # Reassignment is an admin act: the column is what grants an instructor
+    # management of the row, so they cannot hand it to a colleague.
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(colleague.id)},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_hides_an_unknown_user(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(f"/api/users/{uuid.uuid4()}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_refuses_a_deleted_assistant(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, status=UserStatusEnum.deleted)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(instructor.id)},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_supervisor_endpoint_rejects_unknown_fields(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    assistant = await _target(db_session)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": None, "role": "root_admin"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_can_release_their_own_assistant_over_the_wire(client, db_session):
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 200
+    assert response.json()["provisioned_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_assistant_cannot_reach_the_supervisor_endpoint(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.teaching_assistant)
+    target = await _target(db_session)
+
+    response = client.post(f"/api/users/{target.id}/supervisor", json={"supervisor_id": None})
+
+    assert response.status_code == 403

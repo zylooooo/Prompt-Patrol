@@ -13,7 +13,6 @@ import {
   useCreateAccount,
   useDeleteUser,
   useSetUserActive,
-  useSupervision,
   useUsers,
 } from "../hooks/useUsers";
 import DataTable, {
@@ -30,9 +29,8 @@ import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
+import SupervisorDialog from "../components/SupervisorDialog";
 import { SECTION_LABEL } from "../components/ui/section-label";
-import TokenMultiSelect from "../components/ui/TokenMultiSelect";
-import RelationshipDialog from "../components/RelationshipDialog";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
@@ -59,7 +57,6 @@ export default function UsersPage() {
   const { user: actor } = useAuth();
   const { showToast } = useToast();
   const { data: users, isPending } = useUsers();
-  const { data: links } = useSupervision();
   const createAccount = useCreateAccount();
   const setActive = useSetUserActive();
   const removeUser = useDeleteUser();
@@ -68,7 +65,7 @@ export default function UsersPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole | "">("");
-  const [supervisors, setSupervisors] = useState<string[]>([]);
+  const [supervisorId, setSupervisorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{
     id: string;
@@ -77,10 +74,7 @@ export default function UsersPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<AppUser | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [relationship, setRelationship] = useState<{
-    subject: AppUser;
-    direction: "supervisors" | "assistants";
-  } | null>(null);
+  const [assigning, setAssigning] = useState<AppUser | null>(null);
   const [deactivating, setDeactivating] = useState<AppUser | null>(null);
 
   const instructors = useMemo(
@@ -88,28 +82,11 @@ export default function UsersPage() {
     [users],
   );
 
-  const supervisorNames = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const link of links ?? []) {
-      const instructor = (users ?? []).find(
-        (user) => user.id === link.instructorId,
-      );
-      if (!instructor) continue;
-      map.set(link.taId, [
-        ...(map.get(link.taId) ?? []),
-        displayName(instructor),
-      ]);
-    }
-    for (const [key, names] of map) map.set(key, [...names].sort());
-    return map;
-  }, [links, users]);
-
   function supervisorText(u: AppUser): string {
     if (u.role !== "teaching_assistant") return "·";
-    const names = supervisorNames.get(u.id) ?? [];
-    if (names.length === 0) return "Unassigned";
-    if (names.length === 1) return names[0];
-    return `${names[0]} +${names.length - 1}`;
+    if (u.provisionedBy === null) return "Unassigned";
+    const supervisor = (users ?? []).find((who) => who.id === u.provisionedBy);
+    return supervisor ? displayName(supervisor) : "Unknown account";
   }
 
   const visible = useMemo(() => {
@@ -120,13 +97,11 @@ export default function UsersPage() {
       return list.filter((u) => u.role === "teaching_assistant");
     if (filter === "unassigned") {
       return list.filter(
-        (u) =>
-          u.role === "teaching_assistant" &&
-          (supervisorNames.get(u.id) ?? []).length === 0,
+        (u) => u.role === "teaching_assistant" && u.provisionedBy === null,
       );
     }
     return list;
-  }, [users, filter, supervisorNames]);
+  }, [users, filter]);
 
   async function onAdd() {
     setError(null);
@@ -135,12 +110,12 @@ export default function UsersPage() {
         name: name.trim() || undefined,
         email: email.trim(),
         role: role as UserRole,
-        supervisorIds: role === "teaching_assistant" ? supervisors : [],
+        supervisorId: role === "teaching_assistant" ? supervisorId : null,
       });
       setName("");
       setEmail("");
       setRole("");
-      setSupervisors([]);
+      setSupervisorId(null);
       showToast(`${created.email} can now sign in with their SMU account`);
     } catch (err) {
       setError(
@@ -212,8 +187,8 @@ export default function UsersPage() {
       ),
     },
     {
-      id: "supervisors",
-      header: "Supervisors",
+      id: "supervisor",
+      header: "Supervisor",
       width: "minmax(0,1.2fr)",
       hideWhenCompact: true,
       cell: (u) => (
@@ -251,24 +226,9 @@ export default function UsersPage() {
         }
         return (
           <span className="flex items-center justify-end gap-1">
-            {u.role === "teaching_assistant" && (
-              <RowAction
-                onClick={() =>
-                  setRelationship({ subject: u, direction: "supervisors" })
-                }
-                disabled={busy}
-              >
-                Supervisors
-              </RowAction>
-            )}
-            {u.role === "instructor" && (
-              <RowAction
-                onClick={() =>
-                  setRelationship({ subject: u, direction: "assistants" })
-                }
-                disabled={busy}
-              >
-                Assistants
+            {u.role === "teaching_assistant" && u.status !== "deleted" && (
+              <RowAction onClick={() => setAssigning(u)} disabled={busy}>
+                Supervisor
               </RowAction>
             )}
             {u.status !== "deleted" && (
@@ -333,7 +293,7 @@ export default function UsersPage() {
               value={role === "" ? null : role}
               onChange={(next) => {
                 setRole(next ?? "");
-                setSupervisors([]);
+                setSupervisorId(null);
               }}
               options={ROLE_OPTIONS}
               placeholder="Choose a role"
@@ -346,16 +306,19 @@ export default function UsersPage() {
           {role === "teaching_assistant" && (
             <div className="flex flex-col gap-2">
               <span className="text-xs text-muted-foreground">
-                Supervising instructors
+                Supervising instructor
               </span>
-              <TokenMultiSelect
-                choices={instructors.map((i) => ({
-                  value: i.id,
-                  label: displayName(i),
-                }))}
-                selected={supervisors}
-                onChange={setSupervisors}
-                placeholder="choose instructors"
+              <Dropdown<string>
+                value={supervisorId}
+                onChange={setSupervisorId}
+                options={instructors
+                  .filter(isActive)
+                  .map((i) => ({ value: i.id, label: displayName(i) }))}
+                placeholder="Leave unassigned"
+                ariaLabel="Supervising instructor"
+                emptyLabel="No active instructors"
+                size="lg"
+                triggerLeading={false}
               />
             </div>
           )}
@@ -409,12 +372,11 @@ export default function UsersPage() {
         )}
       </PageFill>
 
-      {relationship && (
-        <RelationshipDialog
-          subject={relationship.subject}
-          direction={relationship.direction}
+      {assigning && (
+        <SupervisorDialog
+          assistant={assigning}
           allUsers={users ?? []}
-          onClose={() => setRelationship(null)}
+          onClose={() => setAssigning(null)}
         />
       )}
 
