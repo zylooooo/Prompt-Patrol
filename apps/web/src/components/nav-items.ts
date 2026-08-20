@@ -3,7 +3,7 @@ import type { UserRole } from "../types";
 export interface NavItem {
   to: string;
   label: string;
-  minRole?: UserRole;
+  roles?: readonly UserRole[];
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -12,7 +12,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     to: "/teaching-assistants",
     label: "Manage My Assistants",
-    minRole: "instructor",
+    roles: ["instructor"],
   },
-  { to: "/users", label: "Manage All Accounts", minRole: "root_admin" },
+  { to: "/users", label: "Manage All Accounts", roles: ["root_admin"] },
 ];

@@ -2,7 +2,7 @@ import Wordmark from "./ui/Wordmark";
 import SignOutForm from "./SignOutForm";
 import type { User } from "../api/auth";
 import { LogOut, Menu, X } from "lucide-react";
-import { atLeastRole, ROLE_TEXT } from "../types";
+import { canAccess, ROLE_TEXT } from "../types";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { NavLink, useLocation } from "react-router-dom";
@@ -12,9 +12,7 @@ const DESKTOP_QUERY = "(min-width: 48rem)";
 
 function visibleTo(user: User | null, items: readonly NavItem[]): NavItem[] {
   if (!user) return [];
-  return items.filter(
-    (item) => !item.minRole || atLeastRole(user.role, item.minRole),
-  );
+  return items.filter((item) => canAccess(user.role, item.roles));
 }
 
 interface SidebarProps {

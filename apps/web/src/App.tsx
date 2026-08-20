@@ -36,7 +36,7 @@ export default function App() {
           <Route
             path="teaching-assistants"
             element={
-              <ProtectedRoute minRole="instructor">
+              <ProtectedRoute roles={["instructor"]}>
                 <TeachingAssistantsPage />
               </ProtectedRoute>
             }
@@ -44,7 +44,7 @@ export default function App() {
           <Route
             path="users"
             element={
-              <ProtectedRoute minRole="root_admin">
+              <ProtectedRoute roles={["root_admin"]}>
                 <UsersPage />
               </ProtectedRoute>
             }

@@ -264,6 +264,58 @@ async def test_provisioning_rejects_a_supervisor_who_is_not_an_instructor(client
 
 
 @pytest.mark.asyncio
+async def test_an_admin_cannot_provision_an_assistant_under_themselves(client, db_session):
+    # No assistant is ever supervised by an admin. Supervision is what grants
+    # management of the row and what the screening gate reads, and both are
+    # instructor-shaped - an admin already manages everyone without it. The SPA
+    # hides "Manage My Assistants" from admins for the same reason, but that is
+    # a courtesy; this is the check that counts.
+    admin = await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(
+        "/api/users/",
+        json={
+            "email": "under-admin@smu.edu.sg",
+            "role": "teaching_assistant",
+            "supervisor_id": str(admin.id),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_an_admin_provisioning_without_a_supervisor_leaves_the_assistant_unassigned(client, db_session):
+    # Naming nobody means genuinely unassigned, not "supervised by the admin
+    # who typed it" - the assistant cannot screen until an instructor takes them.
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = client.post(
+        "/api/users/",
+        json={"email": "waiting@smu.edu.sg", "role": "teaching_assistant"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["provisioned_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_supervisor_endpoint_refuses_to_move_an_assistant_under_an_admin(client, db_session):
+    # The same rule on the reassignment route. Enforcing it only at creation
+    # would leave one door open to the state the model does not allow.
+    admin = await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    response = client.post(
+        f"/api/users/{assistant.id}/supervisor",
+        json={"supervisor_id": str(admin.id)},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_an_instructor_cannot_provision_under_a_colleague(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.instructor)
     colleague = await _target(db_session, role=UserRoleEnum.instructor)

@@ -4,17 +4,17 @@ import { ApiError } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { Navigate } from "react-router-dom";
 import LoadingState from "./ui/LoadingState";
+import { canAccess, type UserRole } from "../types";
 import { useShowAfter } from "../hooks/useShowAfter";
-import { atLeastRole, type UserRole } from "../types";
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  minRole?: UserRole;
+  roles?: readonly UserRole[];
 }
 
 const SPINNER_DELAY_MS = 250;
 
-export function ProtectedRoute({ children, minRole }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   const { user, reason, isPending, isError, error, refetch } = useAuth();
   const showSpinner = useShowAfter(isPending, SPINNER_DELAY_MS);
 
@@ -54,7 +54,7 @@ export function ProtectedRoute({ children, minRole }: ProtectedRouteProps) {
     );
   }
 
-  if (minRole && !atLeastRole(user.role, minRole)) {
+  if (!canAccess(user.role, roles)) {
     return <Navigate to="/" replace />;
   }
   return <>{children}</>;

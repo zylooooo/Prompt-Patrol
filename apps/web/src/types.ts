@@ -149,6 +149,13 @@ export function atLeastRole(role: UserRole, min: UserRole): boolean {
   return ROLE_ORDER[role] >= ROLE_ORDER[min];
 }
 
+export function canAccess(
+  role: UserRole,
+  allowed?: readonly UserRole[],
+): boolean {
+  return allowed === undefined || allowed.includes(role);
+}
+
 export type UserStatus = "active" | "deactivated" | "deleted";
 
 export const USER_STATUS_TEXT: Record<UserStatus, string> = {
