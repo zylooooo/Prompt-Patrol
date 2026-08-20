@@ -256,36 +256,40 @@ describe("listMyAssistants", () => {
     // The endpoint already narrows an instructor to the assistants they
     // supervise, so filtering again here could only ever remove somebody the
     // server said belongs.
-    route((url) =>
-      url.includes("/me")
-        ? { ...ME, id: "id-teach", role: "instructor" }
-        : {
-            items: [row("ta-1"), row("ta-2")],
-            next_cursor: null,
-          },
-    );
+    route(() => ({
+      items: [row("ta-1"), row("ta-2")],
+      next_cursor: null,
+    }));
 
     const mine = await listMyAssistants({ ...ADMIN, role: "instructor" });
 
     expect(mine.map((ta) => ta.id)).toEqual(["ta-1", "ta-2"]);
   });
 
-  it("answers from the supervisor column for anyone else", async () => {
-    route((url) =>
-      url.includes("/me")
-        ? ME
-        : {
-            items: [
-              row("ours", { provisioned_by: "id-admin" }),
-              row("theirs", { provisioned_by: "id-someone-else" }),
-            ],
-            next_cursor: null,
-          },
-    );
+  it("asks only for assistants that are still assignable", async () => {
+    // Deleted assistants are gone; deactivated ones are still yours and still
+    // reactivatable, so both live statuses are requested and nothing else.
+    const mock = route(() => ({ items: [], next_cursor: null }));
 
-    const mine = await listMyAssistants(ADMIN);
+    await listMyAssistants({ ...ADMIN, role: "instructor" });
 
-    expect(mine.map((ta) => ta.id)).toEqual(["ours"]);
+    const params = paramsOf(requested(mock)[0]);
+    expect(params.get("role")).toBe("teaching_assistant");
+    expect(params.getAll("status")).toEqual(["active", "deactivated"]);
+  });
+
+  it("does not read the profile to decide whose assistants these are", async () => {
+    // This page belongs to instructors alone. It used to fall back to "the
+    // assistants whose provisioned_by is me", which for an admin described a
+    // supervision edge the server refuses to create - a supervisor must be an
+    // instructor. Reintroducing that read would reintroduce the idea.
+    const mock = route(() => ({ items: [row("ta-1")], next_cursor: null }));
+
+    await listMyAssistants({ ...ADMIN, role: "instructor" });
+
+    expect(
+      mock.mock.calls.filter((call) => call[0].includes("/me")),
+    ).toHaveLength(0);
   });
 });
 

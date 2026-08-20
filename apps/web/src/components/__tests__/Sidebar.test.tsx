@@ -44,23 +44,35 @@ describe("Sidebar — role-gated navigation", () => {
 
   it("adds teaching assistants for an instructor, but not users", () => {
     renderAt(asUser("instructor"));
-    expect(hrefs()).toContain("/teaching-assistants");
-    expect(hrefs()).not.toContain("/users");
+    expect(hrefs()).toEqual(["/check", "/history", "/teaching-assistants"]);
+  });
+
+  it("gives an admin the roster, never the instructor's own assistants", () => {
+    // Gating is an allow-list, not a rank. Supervision is an instructor
+    // relationship - an assistant's supervisor must be an instructor, so no
+    // assistant is ever under an admin and "Manage My Assistants" could only
+    // ever be an empty page they had no way to fill. They administer everyone
+    // from /users instead.
+    renderAt(asUser("root_admin"));
+    expect(hrefs()).toEqual(["/check", "/history", "/users"]);
   });
 
   it("labels every destination from NAV_ITEMS", () => {
     // The one place copy is asserted, so an empty or duplicated label is caught
-    // without pinning the wording in five other tests.
-    renderAt(asUser("root_admin"));
-    const labels = navLinks().map((a) => a.textContent);
-    expect(labels).toEqual(NAV_ITEMS.map((i) => i.label));
-    expect(new Set(labels).size).toBe(labels.length);
-    expect(labels.every((l) => (l ?? "").trim().length > 0)).toBe(true);
-  });
+    // without pinning the wording in five other tests. No single role sees the
+    // whole list any more, so the two administrative roles are unioned - which
+    // also catches a destination that has become unreachable to everyone.
+    const declared = NAV_ITEMS.map((i) => i.label);
+    expect(new Set(declared).size).toBe(declared.length);
+    expect(declared.every((l) => l.trim().length > 0)).toBe(true);
 
-  it("shows every destination to a root admin", () => {
     renderAt(asUser("root_admin"));
-    expect(navLinks()).toHaveLength(NAV_ITEMS.length);
+    const asAdmin = navLinks().map((a) => a.textContent);
+    cleanup();
+    renderAt(asUser("instructor"));
+    const asInstructor = navLinks().map((a) => a.textContent);
+
+    expect(new Set([...asAdmin, ...asInstructor])).toEqual(new Set(declared));
   });
 
   it("renders no destinations at all without a user", () => {
@@ -71,10 +83,13 @@ describe("Sidebar — role-gated navigation", () => {
   });
 
   it("keeps the declared order rather than the filtered order", () => {
+    // /users is declared last, behind an item an admin cannot see. Hiding that
+    // item must not pull /users forward past anything.
     renderAt(asUser("root_admin"));
-    expect(navLinks().map((a) => a.getAttribute("href"))).toEqual(
-      NAV_ITEMS.map((i) => i.to),
-    );
+    const declared = NAV_ITEMS.map((i) => i.to);
+    const positions = hrefs().map((href) => declared.indexOf(href ?? ""));
+    expect(positions).not.toContain(-1);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 
   it("honours an injected item list", () => {

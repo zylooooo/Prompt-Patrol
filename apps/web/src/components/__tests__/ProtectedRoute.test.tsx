@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ApiError } from "../../api/client";
+import type { UserRole } from "../../types";
 import { ProtectedRoute } from "../ProtectedRoute";
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, render, screen } from "@testing-library/react";
@@ -89,8 +90,6 @@ describe("ProtectedRoute", () => {
   });
 
   it("renders nothing for a session check that answers promptly", () => {
-    // A flash of the login page would state an answer the app does not have
-    // yet; a spinner for 30ms is just a flicker. Neither, briefly, is correct.
     vi.useFakeTimers();
     useAuthMock.mockReturnValue(pendingAuth);
 
@@ -185,5 +184,61 @@ describe("ProtectedRoute", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Prompt Patrol is having a problem");
     expect(alert.textContent).toContain("have not been signed out");
+  });
+});
+
+describe("ProtectedRoute — role gating", () => {
+  function renderRoleGated(roles: UserRole[]) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/teaching-assistants"]}>
+          <Routes>
+            <Route
+              path="/teaching-assistants"
+              element={
+                <ProtectedRoute roles={roles}>
+                  <p>assistants</p>
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/" element={<p data-testid="home">home</p>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  const as = (role: UserRole) =>
+    useAuthMock.mockReturnValue(signedIn({ email: "ada@smu.edu.sg", role }));
+
+  it("renders the page for a role on the list", () => {
+    as("instructor");
+
+    renderRoleGated(["instructor"]);
+
+    expect(screen.getByText("assistants")).toBeDefined();
+  });
+
+  it("sends an admin home from an instructor-only page", () => {
+    // The gate is an allow-list, not a rank. An admin outranks an instructor
+    // but supervises nobody - an assistant's supervisor must be an instructor -
+    // so this page has no content for them and they administer from /users.
+    as("root_admin");
+
+    renderRoleGated(["instructor"]);
+
+    expect(screen.getByTestId("home")).toBeDefined();
+    expect(screen.queryByText("assistants")).toBeNull();
+  });
+
+  it("sends a teaching assistant home from the same page", () => {
+    as("teaching_assistant");
+
+    renderRoleGated(["instructor"]);
+
+    expect(screen.getByTestId("home")).toBeDefined();
   });
 });

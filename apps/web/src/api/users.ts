@@ -97,16 +97,10 @@ export async function listMyAssistants(
   _actor: User,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
-  const [me, assistants] = await Promise.all([
-    getCurrentUser(signal),
-    fetchAll(
-      { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
-      signal,
-    ),
-  ]);
-
-  if (me.role === "instructor") return assistants;
-  return assistants.filter((ta) => ta.provisionedBy === me.id);
+  return fetchAll(
+    { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
+    signal,
+  );
 }
 
 export async function createAccount(

@@ -1,5 +1,6 @@
 import {
   atLeastRole,
+  canAccess,
   canReactivate,
   displayName,
   entryId,
@@ -65,6 +66,42 @@ describe("atLeastRole", () => {
     expect(atLeastRole("root_admin", "instructor")).toBe(true);
     expect(atLeastRole("instructor", "teaching_assistant")).toBe(true);
     expect(atLeastRole("root_admin", "teaching_assistant")).toBe(true);
+  });
+});
+
+describe("canAccess", () => {
+  it("opens a destination to everyone when no list is given", () => {
+    for (const role of ALL_ROLES) expect(canAccess(role)).toBe(true);
+  });
+
+  it("admits the listed roles and nobody else", () => {
+    for (const allowed of ALL_ROLES) {
+      for (const role of ALL_ROLES) {
+        expect(canAccess(role, [allowed]), `${role} in [${allowed}]`).toBe(
+          role === allowed,
+        );
+      }
+    }
+  });
+
+  it("does not let seniority substitute for membership", () => {
+    // The whole reason this exists beside atLeastRole. "Manage My Assistants"
+    // is instructor work, and an admin outranking an instructor must not reach
+    // it - no assistant is ever supervised by an admin.
+    expect(canAccess("root_admin", ["instructor"])).toBe(false);
+    expect(canAccess("instructor", ["instructor"])).toBe(true);
+  });
+
+  it("admits any member of a multi-role list", () => {
+    const allowed: UserRole[] = ["instructor", "root_admin"];
+    expect(canAccess("instructor", allowed)).toBe(true);
+    expect(canAccess("root_admin", allowed)).toBe(true);
+    expect(canAccess("teaching_assistant", allowed)).toBe(false);
+  });
+
+  it("admits nobody when the list is empty", () => {
+    // Distinct from omitting it, which admits everyone.
+    for (const role of ALL_ROLES) expect(canAccess(role, [])).toBe(false);
   });
 });
 
