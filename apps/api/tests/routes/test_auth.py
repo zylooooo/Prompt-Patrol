@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 import pytest
 from authlib.integrations.base_client.errors import OAuthError
+from fastapi.responses import RedirectResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -96,6 +97,61 @@ async def test_callback_issues_no_session_on_attempted_account_takeover(client, 
     assert (await db_session.execute(select(UserSession))).scalars().all() == []
     await db_session.refresh(victim)
     assert victim.entra_oid == "victim-oid"
+
+
+def test_login_is_silent_sso_by_default(client):
+    # openapi.yaml /api/auth/logout ("Two-step logout"): silent SSO readmission
+    # is documented as intentional, not a bug, outside the post-logout window -
+    # a plain visit to /login must keep using it.
+    with patch(
+        "routes.auth_routes.oauth.entra.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+    ) as mock_redirect:
+        client.get("/api/auth/login", follow_redirects=False)
+
+    assert "prompt" not in mock_redirect.call_args.kwargs
+
+
+def test_login_forwards_login_hint_when_not_forcing_the_chooser(client):
+    with patch(
+        "routes.auth_routes.oauth.entra.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+    ) as mock_redirect:
+        client.get("/api/auth/login?login_hint=ada@smu.edu.sg", follow_redirects=False)
+
+    assert mock_redirect.call_args.kwargs["login_hint"] == "ada@smu.edu.sg"
+    assert "prompt" not in mock_redirect.call_args.kwargs
+
+
+def test_login_forces_the_account_chooser_right_after_our_own_logout(client):
+    # Regression: without prompt=select_account, a live Microsoft SSO cookie
+    # right after our own logout makes Entra silently re-authenticate instead
+    # of showing an interactive screen, so the user never appears to leave
+    # our login page.
+    with patch(
+        "routes.auth_routes.oauth.entra.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+    ) as mock_redirect:
+        client.get("/api/auth/login?force_account_chooser=1", follow_redirects=False)
+
+    assert mock_redirect.call_args.kwargs["prompt"] == "select_account"
+
+
+def test_login_ignores_login_hint_when_forcing_the_chooser(client):
+    # Microsoft's docs: prompt=select_account can't be combined with
+    # login_hint, so a login_hint on our own endpoint must not be forwarded.
+    with patch(
+        "routes.auth_routes.oauth.entra.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+    ) as mock_redirect:
+        client.get(
+            "/api/auth/login?login_hint=ada@smu.edu.sg&force_account_chooser=1",
+            follow_redirects=False,
+        )
+
+    assert mock_redirect.call_args.kwargs["prompt"] == "select_account"
+    assert "login_hint" not in mock_redirect.call_args.kwargs
+    assert "login_hint" not in mock_redirect.call_args.kwargs
 
 
 def test_me_without_session_returns_401(client):

@@ -46,7 +46,11 @@ async def _entra_logout_url(user: User | None) -> str:
 
 # Starts the Entra authorization flow with an optional login hint.
 @router.get("/login")
-async def login(request: Request, login_hint: str | None = None):
+async def login(request: Request, login_hint: str | None = None, force_account_chooser: bool = False):
+    if force_account_chooser:
+        # Force account chooser is a flag set by frontend on successive logins. on successive logins,
+        # it will force users to choose which account to login so they will be redirected to login
+        return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, prompt="select_account")
     kwargs = {"login_hint": login_hint} if login_hint else {}
     return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, **kwargs)
 
