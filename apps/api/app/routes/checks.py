@@ -7,22 +7,23 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import require_role, require_screening_access
+from auth import require_role, require_screening_access
 from config import request_id_ctx_var
 from db import get_db
 from models import User, UserRoleEnum
 from schemas import CheckListResponse, CheckResponse
-from services.checks import (
+from services import (
     DETECTOR_CAPABILITIES,
+    MODEL_VERSION,
     THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
+    Status,
     create_check,
+    detector_health,
     get_check_by_id,
     list_checks,
 )
-from services.detector_client import MODEL_VERSION, Status
-from services.detector_client import health as detector_health
 
 logger = logging.getLogger(__name__)
 
