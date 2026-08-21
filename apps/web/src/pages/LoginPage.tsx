@@ -102,6 +102,9 @@ export default function LoginPage() {
           )}
 
           <form method="get" action="/api/auth/login" className="space-y-5">
+            {signedOut && (
+              <input type="hidden" name="force_account_chooser" value="1" />
+            )}
             <div>
               <label htmlFor="login_hint" className={LABEL_CLASS}>
                 Email
