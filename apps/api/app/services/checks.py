@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
-from services.detector_client import MODEL_VERSION, score_text
+
+from .detector_client import MODEL_VERSION, score_text
 
 DETECTOR_TIMEOUT_SECONDS = 10
 

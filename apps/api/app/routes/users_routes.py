@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import require_role
+from auth import require_role
 from db import get_db
 from exceptions import (
     EmailAlreadyExistsError,

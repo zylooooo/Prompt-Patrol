@@ -15,8 +15,7 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
-from models.session import UserSession
+from models import User, UserRoleEnum, UserSession, UserStatusEnum, UserStatusEvent
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +55,17 @@ async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User |
             update(User)
             .where(User.email == email, User.entra_oid.is_(None), User.status == UserStatusEnum.active)
             .values(entra_oid=oid)
+            .returning(User)
         )
     except IntegrityError:
         await db.rollback()
         logger.warning("Refused to bind an oid already held by a removed account.")
         return await _classify_rejection(db, email)
 
-    if claimed.rowcount == 1:
+    claimed_user = claimed.scalar_one_or_none()
+    if claimed_user is not None:
         await db.commit()
-        result = await db.execute(select(User).where(User.email == email, User.status == UserStatusEnum.active))
-        return result.scalar_one_or_none()
+        return claimed_user
 
     await db.rollback()
 

@@ -11,9 +11,14 @@ from config import ENTRA_REDIRECT_URI, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
 from schemas import MeResponse, SessionResponse
-from services import create_session, record_logout_hint, resolve_or_bind_user, sign_out_everywhere
-from services.sessions import SESSION_IDLE_TTL
-from services.users_service import LoginRejection
+from services import (
+    SESSION_IDLE_TTL,
+    LoginRejection,
+    create_session,
+    record_logout_hint,
+    resolve_or_bind_user,
+    sign_out_everywhere,
+)
 
 logger = logging.getLogger(__name__)
 
