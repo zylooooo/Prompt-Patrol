@@ -41,7 +41,7 @@ async def get_current_session(
     probe: Annotated[bool, Query(include_in_schema=False)] = False,
     db: AsyncSession = Depends(get_db),
 ) -> ActiveSession:
-    from services.sessions import authenticate_session
+    from services import authenticate_session
 
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
     if raw_token is None:
