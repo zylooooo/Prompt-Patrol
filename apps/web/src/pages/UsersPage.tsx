@@ -116,7 +116,7 @@ export default function UsersPage() {
       setEmail("");
       setRole("");
       setSupervisorId(null);
-      showToast(`${created.email} can now sign in with their SMU account`);
+      showToast(`${created.email} added — Auth0 emailed them a link to set their password`);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not add the account.",

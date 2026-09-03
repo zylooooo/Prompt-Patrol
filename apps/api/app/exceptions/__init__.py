@@ -4,8 +4,10 @@ from .user_exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
+from .auth_exceptions import Auth0ProvisioningError
 
 __all__ = [
+    "Auth0ProvisioningError",
     "EmailAlreadyExistsError",
     "InvalidStatusTransitionError",
     "InvalidSupervisorError",

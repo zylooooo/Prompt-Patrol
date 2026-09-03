@@ -6,9 +6,9 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth import delete_auth0_user, invite_user
 from exceptions import (
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
@@ -33,7 +33,7 @@ def normalize_display_name(display_name: str | None) -> str | None:
 
 
 class LoginRejection(str, enum.Enum):
-    """Why a validated Entra identity was refused. Distinguishing these lets the
+    """Why a validated Auth0 identity was refused. Distinguishing these lets the
     login page say something true, and lets a removed person still trying the
     door show up in the logs."""
 
@@ -42,43 +42,17 @@ class LoginRejection(str, enum.Enum):
     deleted = "deleted"
 
 
-# Resolves an Entra user by object ID or safely binds an unclaimed provisioned account.
-async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | LoginRejection:
+# Resolves an Auth0 user by subject claim. create_user() stores the real
+# Auth0 user_id as auth0_sub up front (it IS the sub Auth0 will send back),
+# so there is no unclaimed row left to bind here - a match is either exact
+# or a rejection.
+async def resolve_user(db: AsyncSession, sub: str, email: str) -> User | LoginRejection:
     email = normalize_email(email)
-    result = await db.execute(select(User).where(User.entra_oid == oid, User.status == UserStatusEnum.active))
+    result = await db.execute(select(User).where(User.auth0_sub == sub, User.status == UserStatusEnum.active))
     user = result.scalar_one_or_none()
     if user is not None:
         return user
 
-    try:
-        claimed = await db.execute(
-            update(User)
-            .where(User.email == email, User.entra_oid.is_(None), User.status == UserStatusEnum.active)
-            .values(entra_oid=oid)
-            .returning(User)
-        )
-    except IntegrityError:
-        await db.rollback()
-        logger.warning("Refused to bind an oid already held by a removed account.")
-        return await _classify_rejection(db, email)
-
-    claimed_user = claimed.scalar_one_or_none()
-    if claimed_user is not None:
-        await db.commit()
-        return claimed_user
-
-    await db.rollback()
-
-    result = await db.execute(select(User.entra_oid).where(User.email == email, User.status == UserStatusEnum.active))
-    bound_oid = result.scalar_one_or_none()
-    if bound_oid is not None:
-        logger.warning(
-            "Rejected Entra login: claim email %s matches an account already bound to a "
-            "different identity (incoming oid %s, bound oid %s).",
-            email,
-            oid,
-            bound_oid,
-        )
     return await _classify_rejection(db, email)
 
 
@@ -99,14 +73,6 @@ async def _classify_rejection(db: AsyncSession, email: str) -> LoginRejection:
         return LoginRejection.deleted
     logger.info("Refused sign-in: %s is not provisioned.", email)
     return LoginRejection.not_provisioned
-
-
-# Stores the latest Entra logout hint when it is present and has changed.
-async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> None:
-    if not hint or user.logout_hint == hint:
-        return
-    user.logout_hint = hint
-    await db.commit()
 
 
 _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
@@ -229,7 +195,33 @@ async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason:
         logger.warning("Actor %s attempted to delete a root_admin.", actor.id)
         raise PermissionError("root_admin accounts cannot be deleted")
 
-    return await _transition(db, actor, target, UserStatusEnum.deleted, reason)
+    deleted = await _transition(db, actor, target, UserStatusEnum.deleted, reason)
+
+    # After the local delete commits, not before: the local status change is
+    # what actually blocks sign-in (resolve_user only matches active
+    # users), so a failure here is a cleanup gap, not a security hole. Hard
+    # delete, not block - deleting frees the email for reprovisioning
+    # (uq_users_email_live excludes deleted rows), and a blocked-but-present
+    # Auth0 user would keep 400ing that re-invite forever.
+    if deleted.auth0_sub is not None:
+        # Only clear the local record once Auth0 confirms the credential is
+        # actually gone. Trusting a failed call here would hide a stale Auth0
+        # user behind a row that looks fully cleaned up - and create_user()'s
+        # reuse-on-reprovision path would then invite_user() straight into
+        # Auth0's own duplicate-email 400 with nothing left to explain why.
+        if await delete_auth0_user(deleted.auth0_sub):
+            deleted.auth0_sub = None
+            await db.commit()
+            await db.refresh(deleted)
+        else:
+            logger.error(
+                "User %s was soft-deleted but its Auth0 credential could not be removed - "
+                "re-provisioning this email will fail until it's deleted manually or the M2M "
+                "app's delete:users scope is fixed.",
+                deleted.id,
+            )
+
+    return deleted
 
 
 async def _load_manageable(db: AsyncSession, user_id: uuid.UUID) -> User:
@@ -394,6 +386,8 @@ async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supe
 
 
 # Provisions a new user when the actor has permission to assign the requested role.
+# Auth0 emails the invitee their own password-set link directly. 
+# Disable Sign Ups means that's the only way they get a credential.
 async def create_user(
     db: AsyncSession,
     actor: User,
@@ -422,16 +416,68 @@ async def create_user(
 
     provisioned_by = await _resolve_supervisor(db, actor, role, supervisor_id)
 
-    existing = await db.execute(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
-    if existing.scalar_one_or_none() is not None:
+    # Every row for this email, most recent first. At most one can be
+    # non-deleted (uq_users_email_live), so a non-deleted match is always the
+    # live account; anything else here is deleted history.
+    existing = await db.execute(select(User).where(User.email == email).order_by(User.created_at.desc()))
+    existing_rows = existing.scalars().all()
+    if any(row.status != UserStatusEnum.deleted for row in existing_rows):
         logger.warning("Attempted to provision duplicate email: %s", email)
         raise EmailAlreadyExistsError(email)
+    # The most recently deleted row for this email, if any - reused below
+    # instead of inserting a second row, so deleting and re-provisioning the
+    # same address repeatedly doesn't pile up duplicate identities that
+    # differ only in which one currently holds the live auth0_sub.
+    reusable = existing_rows[0] if existing_rows else None
 
-    user = User(
-        email=email, role=role, display_name=normalize_display_name(display_name), provisioned_by=provisioned_by
-    )
-    db.add(user)
-    await db.commit()
+    # Before the local row is written: a `users` row with no matching Auth0
+    # credential is a permanent lockout, since Disable Sign Ups means the
+    # invitee has no way to create one themselves.
+    # Stored on the row now, not left for resolve_user to fill in on
+    # first login - it's the exact sub Auth0 will send back, and a user who
+    # never logs in still needs it on file so delete_user() can remove the
+    # Auth0 credential instead of orphaning it.
+    auth0_user_id = await invite_user(email)
+
+    if reusable is not None:
+        reusable.role = role
+        reusable.display_name = normalize_display_name(display_name)
+        reusable.provisioned_by = provisioned_by
+        reusable.auth0_sub = auth0_user_id
+        reusable.status = UserStatusEnum.active
+        user = reusable
+        # deleted -> active is otherwise a one-way door (_ALLOWED_TRANSITIONS);
+        # this is a fresh onboarding, not a reactivation, but it still crosses
+        # that boundary, so it gets the same audit record any other status
+        # change does.
+        db.add(
+            UserStatusEvent(
+                user_id=user.id,
+                actor_id=actor.id,
+                from_status=UserStatusEnum.deleted,
+                to_status=UserStatusEnum.active,
+                reason="reprovisioned with a new Auth0 credential",
+            )
+        )
+    else:
+        user = User(
+            email=email,
+            role=role,
+            display_name=normalize_display_name(display_name),
+            provisioned_by=provisioned_by,
+            auth0_sub=auth0_user_id,
+        )
+        db.add(user)
+
+    try:
+        await db.commit()
+    except Exception:
+        # The inverse lockout: invite_user() already succeeded, so without this
+        # the email is stuck against an Auth0 credential with no `users` row -
+        # every retry 400s on Auth0's own duplicate-email check forever.
+        await db.rollback()
+        await delete_auth0_user(auth0_user_id)
+        raise
     await db.refresh(user)
     logger.info("User created successfully")
 

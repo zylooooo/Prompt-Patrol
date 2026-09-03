@@ -19,6 +19,17 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+# POST /api/users calls out to Auth0's Management + Authentication APIs
+# (DECISION LOG [0.9.0]). These tests exercise the route/service, not that
+# HTTP call.
+@pytest.fixture(autouse=True)
+def _stub_invite_user(monkeypatch):
+    async def fake_invite_user(email):
+        return None
+
+    monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+
+
 async def _signed_in(client, db_session, role):
     actor = User(id=uuid.uuid4(), email=f"{role.value}@smu.edu.sg", role=role)
     db_session.add(actor)

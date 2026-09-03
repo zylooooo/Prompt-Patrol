@@ -132,10 +132,12 @@ jobs:
       ENVIRONMENT: dev
       LOG_LEVEL: info
       DB_URL: "sqlite+aiosqlite:///:memory:"
-      ENTRA_TENANT_ID: ci-dummy-tenant
-      ENTRA_CLIENT_ID: ci-dummy-client
-      ENTRA_CLIENT_SECRET: ci-dummy-secret
-      ENTRA_REDIRECT_URI: http://localhost:8000/api/auth/callback
+      AUTH0_DOMAIN: ci-dummy-tenant.auth0.com
+      AUTH0_CLIENT_ID: ci-dummy-client
+      AUTH0_CLIENT_SECRET: ci-dummy-secret
+      AUTH0_REDIRECT_URI: http://localhost:8000/api/auth/callback
+      AUTH0_M2M_CLIENT_ID: ci-dummy-m2m-client
+      AUTH0_M2M_CLIENT_SECRET: ci-dummy-m2m-secret
       SESSION_SECRET: ci-dummy-session-secret
       FRONTEND_URL: http://localhost:5173
     steps:

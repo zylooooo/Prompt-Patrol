@@ -107,17 +107,16 @@ export async function createAccount(
   _actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
-  return toAppUser(
-    await apiRequest<UserResponse>(USERS_PATH, {
-      method: "POST",
-      body: {
-        email: input.email.trim(),
-        role: input.role,
-        display_name: input.name?.trim() || null,
-        supervisor_id: input.supervisorId ?? null,
-      },
-    }),
-  );
+  const row = await apiRequest<UserResponse>(USERS_PATH, {
+    method: "POST",
+    body: {
+      email: input.email.trim(),
+      role: input.role,
+      display_name: input.name?.trim() || null,
+      supervisor_id: input.supervisorId ?? null,
+    },
+  });
+  return toAppUser(row);
 }
 
 export async function setSupervisor(

@@ -70,7 +70,7 @@ describe("LoginPage — redirect reasons", () => {
 
 describe("LoginPage — after a deliberate sign-out", () => {
   it("acknowledges the sign-out rather than saying nothing", () => {
-    // The trip out goes through Entra and lands back on a bare URL, so without
+    // The trip out goes through Auth0 and lands back on a bare URL, so without
     // the marker the person who just pressed Sign out arrives at a blank login
     // page with no confirmation that it worked.
     sessionStorage.setItem("pp_signed_out", "1");
