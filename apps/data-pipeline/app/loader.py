@@ -14,7 +14,7 @@ def load_raw_corpus():
     """Pull the raw Mohler ASAG corpus at the pinned revision.
 
     Concatenates the open_ended and close_ended splits into one table, keeping
-    a `split` column since that distinction is dropped by concatenation.
+    a `split` column
     """
     ds = load_dataset(
         DATASET_REPO_ID,
