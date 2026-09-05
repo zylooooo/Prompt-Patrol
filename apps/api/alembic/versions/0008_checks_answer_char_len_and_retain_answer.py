@@ -20,16 +20,16 @@ Both are NOT NULL, so existing rows are backfilled first:
   recovered retroactively; going forward every row captures it before any
   conditional nulling.
 
-Revision ID: 0007_checks_char_len_retain
-Revises: 0006_add_checks
+Revision ID: 0008_checks_char_len_retain
+Revises: 0007_auth0_migration
 Create Date: 2026-08-22
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0007_checks_char_len_retain"
-down_revision = "0006_add_checks"
+revision = "0008_checks_char_len_retain"
+down_revision = "0007_auth0_migration"
 branch_labels = None
 depends_on = None
 

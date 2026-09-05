@@ -6,9 +6,9 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth import delete_auth0_user, invite_user
 from exceptions import (
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
@@ -33,52 +33,38 @@ def normalize_display_name(display_name: str | None) -> str | None:
 
 
 class LoginRejection(str, enum.Enum):
-    """Why a validated Entra identity was refused. Distinguishing these lets the
+    """
+    Why a validated Auth0 identity was refused. Distinguishing these lets the
     login page say something true, and lets a removed person still trying the
-    door show up in the logs."""
+    door show up in the logs.
+    """
 
     not_provisioned = "not_provisioned"
     deactivated = "deactivated"
     deleted = "deleted"
 
 
-# Resolves an Entra user by object ID or safely binds an unclaimed provisioned account.
-async def resolve_or_bind_user(db: AsyncSession, oid: str, email: str) -> User | LoginRejection:
+async def resolve_user(db: AsyncSession, sub: str, email: str) -> User | LoginRejection:
+    """
+    Checks if the user is allowed to log in by their Auth0 sub. Auth0 sub is used because Auth0 sub is lazily injected upon user creation.
+    If the user account is properly created, there will be an Auth0 sub in the database, regardless of user status.
+    If Auth0 sub is not found, the user is not authorized to log in.
+
+    Args:
+        db (AsyncSession): The database session.
+        sub (str): The Auth0 sub of the user.
+        email (str): The email of the user.
+    
+    Returns:
+        User: The user object if the user is allowed to log in.
+        LoginRejection: The reason for rejection if the user is not allowed to log in.
+    """
     email = normalize_email(email)
-    result = await db.execute(select(User).where(User.entra_oid == oid, User.status == UserStatusEnum.active))
+    result = await db.execute(select(User).where(User.auth0_sub == sub, User.status == UserStatusEnum.active))
     user = result.scalar_one_or_none()
     if user is not None:
         return user
 
-    try:
-        claimed = await db.execute(
-            update(User)
-            .where(User.email == email, User.entra_oid.is_(None), User.status == UserStatusEnum.active)
-            .values(entra_oid=oid)
-            .returning(User)
-        )
-    except IntegrityError:
-        await db.rollback()
-        logger.warning("Refused to bind an oid already held by a removed account.")
-        return await _classify_rejection(db, email)
-
-    claimed_user = claimed.scalar_one_or_none()
-    if claimed_user is not None:
-        await db.commit()
-        return claimed_user
-
-    await db.rollback()
-
-    result = await db.execute(select(User.entra_oid).where(User.email == email, User.status == UserStatusEnum.active))
-    bound_oid = result.scalar_one_or_none()
-    if bound_oid is not None:
-        logger.warning(
-            "Rejected Entra login: claim email %s matches an account already bound to a "
-            "different identity (incoming oid %s, bound oid %s).",
-            email,
-            oid,
-            bound_oid,
-        )
     return await _classify_rejection(db, email)
 
 
@@ -101,14 +87,6 @@ async def _classify_rejection(db: AsyncSession, email: str) -> LoginRejection:
     return LoginRejection.not_provisioned
 
 
-# Stores the latest Entra logout hint when it is present and has changed.
-async def record_logout_hint(db: AsyncSession, user: User, hint: str | None) -> None:
-    if not hint or user.logout_hint == hint:
-        return
-    user.logout_hint = hint
-    await db.commit()
-
-
 _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
     UserStatusEnum.active: frozenset({UserStatusEnum.deactivated, UserStatusEnum.deleted}),
     UserStatusEnum.deactivated: frozenset({UserStatusEnum.active, UserStatusEnum.deleted}),
@@ -116,6 +94,7 @@ _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
 }
 
 
+# Helper function for authorization checks
 def _may_manage(actor: User, target: User) -> bool:
     """Delegation chain as a predicate. _assert_may_manage raises on the same rule."""
     if actor.role == UserRoleEnum.root_admin:
@@ -229,7 +208,24 @@ async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason:
         logger.warning("Actor %s attempted to delete a root_admin.", actor.id)
         raise PermissionError("root_admin accounts cannot be deleted")
 
-    return await _transition(db, actor, target, UserStatusEnum.deleted, reason)
+    deleted = await _transition(db, actor, target, UserStatusEnum.deleted, reason)
+
+    if deleted.auth0_sub is not None:
+        # Hard delete useer account in Auth0, only after local soft-delete succeeds.
+        if await delete_auth0_user(deleted.auth0_sub):
+            # Remove the Auth0 sub in the local row so that when reactivated, provision new account, the Auth0 can be populated again.
+            deleted.auth0_sub = None
+            await db.commit()
+            await db.refresh(deleted)
+        else:
+            logger.error(
+                "User %s was soft-deleted but its Auth0 credential could not be removed - "
+                "re-provisioning this email will fail until it's deleted manually or the M2M "
+                "app's delete:users scope is fixed.",
+                deleted.id,
+            )
+
+    return deleted
 
 
 async def _load_manageable(db: AsyncSession, user_id: uuid.UUID) -> User:
@@ -252,10 +248,7 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
         logger.debug("No user found with ID: %s", user_id)
         return None
 
-    # A non-active user is visible only to someone who could manage them - an
-    # admin has to be able to open the record they are about to reactivate.
-    # Everyone else gets the same None as a missing row, so an ordinary user
-    # cannot tell "never existed" from "was removed".
+    # A non-active user is visible only to someone who could manage them
     if user.status != UserStatusEnum.active and not _may_manage(actor, user):
         logger.debug("Hiding %s user %s from actor %s.", user.status.value, user_id, actor.id)
         return None
@@ -290,15 +283,7 @@ def _can_view_user(actor: User, target: User) -> bool:
         # Exactly what list_users returns for an instructor.
         return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.id
     if actor.role == UserRoleEnum.teaching_assistant:
-        # Their own supervisor, and nobody else.
-        #
-        # The old rule compared two nullable columns - `target.provisioned_by ==
-        # actor.provisioned_by` - and every CLI-provisioned account carries
-        # provisioned_by = NULL, which compares equal in Python. So all seeded
-        # accounts could read each other. Comparing an id against a nullable
-        # column cannot reproduce that: `target.id` is never NULL, so a TA with
-        # no supervisor matches nobody. Do not reintroduce a
-        # provisioned_by-to-provisioned_by comparison here.
+        # TAs only can view their own supervisor.
         return target.id == actor.provisioned_by
     return False
 
@@ -324,22 +309,20 @@ async def _resolve_supervisor(
     the schema has - so it names an instructor or nobody at all. For an instructor
     it records who created them and nothing gates on it.
     """
+    # Only TAs can have a supervisor.
     if role != UserRoleEnum.teaching_assistant:
         if supervisor_id is not None:
             raise InvalidSupervisorError("only a teaching assistant has a supervisor")
         return actor.id
 
     if actor.role == UserRoleEnum.instructor:
-        # An instructor may only place an assistant under themselves. Naming a
-        # colleague would hand them a row this instructor could no longer manage.
+        # An instructor may only place an assistant under themselves.
         if supervisor_id is not None and supervisor_id != actor.id:
             logger.warning("Instructor %s attempted to assign supervisor %s.", actor.id, supervisor_id)
             raise PermissionError(f"role {actor.role} may not assign another instructor")
         return actor.id
 
-    # Root admin. Naming nobody means genuinely unassigned rather than "supervised
-    # by the admin": the assistant cannot screen until someone assigns them, and
-    # the roster says so.
+    # Root admin can create TAs without assigning them to any instructor
     if supervisor_id is None:
         return None
     await _assert_supervisor_available(db, supervisor_id)
@@ -376,10 +359,7 @@ async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supe
 
     target.provisioned_by = supervisor_id
 
-    # Losing a supervisor ends screening access, and the SPA reads that from the
-    # session payload it is already holding. Revoke in the same commit so the
-    # next request re-reads the truth instead of trusting a session minted while
-    # they still had one.
+    # Revoke user's session when they are unassigned from any supervisor.
     if supervisor_id is None:
         await db.execute(
             update(UserSession)
@@ -394,6 +374,8 @@ async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supe
 
 
 # Provisions a new user when the actor has permission to assign the requested role.
+# Auth0 emails the invitee their own password-set link directly. 
+# Disable Sign Ups means that's the only way they get a credential.
 async def create_user(
     db: AsyncSession,
     actor: User,
@@ -404,8 +386,6 @@ async def create_user(
 ) -> User:
     logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
 
-    # Before the duplicate check, so "Ada@smu.edu.sg" cannot be provisioned
-    # alongside an existing "ada@smu.edu.sg" and produce two rows for one person.
     email = normalize_email(email)
 
     if role == UserRoleEnum.root_admin:
@@ -422,16 +402,52 @@ async def create_user(
 
     provisioned_by = await _resolve_supervisor(db, actor, role, supervisor_id)
 
-    existing = await db.execute(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
-    if existing.scalar_one_or_none() is not None:
+    # Every row for this email, most recent first, search for all duplicate roles in case there are duplicates.
+    existing = await db.execute(select(User).where(User.email == email).order_by(User.created_at.desc()))
+    existing_rows = existing.scalars().all()
+    if any(row.status != UserStatusEnum.deleted for row in existing_rows):
         logger.warning("Attempted to provision duplicate email: %s", email)
         raise EmailAlreadyExistsError(email)
+    # reuse the most recently deleted row if it exists, otherwise create a new one. This prevents further duplicates
+    reusable = existing_rows[0] if existing_rows else None
 
-    user = User(
-        email=email, role=role, display_name=normalize_display_name(display_name), provisioned_by=provisioned_by
-    )
-    db.add(user)
-    await db.commit()
+    # Get the Auth0 sub to lazily inject into the local row.
+    auth0_user_id = await invite_user(email)
+
+    # Update the reusable row if it exists
+    if reusable is not None:
+        reusable.role = role
+        reusable.display_name = normalize_display_name(display_name)
+        reusable.provisioned_by = provisioned_by
+        reusable.auth0_sub = auth0_user_id
+        reusable.status = UserStatusEnum.active
+        user = reusable
+        db.add(
+            UserStatusEvent(
+                user_id=user.id,
+                actor_id=actor.id,
+                from_status=UserStatusEnum.deleted,
+                to_status=UserStatusEnum.active,
+                reason="reprovisioned with a new Auth0 credential",
+            )
+        )
+    else:
+        user = User(
+            email=email,
+            role=role,
+            display_name=normalize_display_name(display_name),
+            provisioned_by=provisioned_by,
+            auth0_sub=auth0_user_id,
+        )
+        db.add(user)
+
+    try:
+        await db.commit()
+    except Exception:
+        # Rollback mechanism and log out the user from Auth0 if the commit fails.
+        await db.rollback()
+        await delete_auth0_user(auth0_user_id)
+        raise
     await db.refresh(user)
     logger.info("User created successfully")
 
@@ -468,11 +484,7 @@ async def list_users(
     query = select(User)
 
     if actor.role == UserRoleEnum.instructor:
-        # An instructor's directory is the TAs they provisioned - the same rule
-        # _can_view_user applies. Asking for any other role is refused rather
-        # than answered with an empty page: contradicting the scope with
-        # `role=instructor` used to return [], which reads as "there are none"
-        # when it means "you may not ask that".
+        # An instructor's directory is the TAs they provisioned
         if role is not None and role != UserRoleEnum.teaching_assistant:
             logger.warning("Actor %s may not list role %s.", actor.id, role)
             raise PermissionError(f"role {actor.role} may not list role {role}")
@@ -480,9 +492,7 @@ async def list_users(
     elif role is not None:
         query = query.where(User.role == role)
 
-    # Default is operational: active users only. An administrative caller asks
-    # for other statuses explicitly rather than flipping a boolean whose meaning
-    # changed when a third state appeared.
+    # Default is operational: active users only
     query = query.where(User.status.in_(statuses or {UserStatusEnum.active}))
 
     if cursor is not None:

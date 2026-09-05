@@ -20,8 +20,7 @@ from .users_service import (
     normalize_display_name,
     normalize_email,
     reactivate_user,
-    record_logout_hint,
-    resolve_or_bind_user,
+    resolve_user,
     set_supervisor,
 )
 
@@ -30,8 +29,7 @@ __all__ = [
     "authenticate_session",
     "revoke_all_for_user",
     "sign_out_everywhere",
-    "resolve_or_bind_user",
-    "record_logout_hint",
+    "resolve_user",
     "normalize_display_name",
     "normalize_email",
     "deactivate_user",

@@ -53,7 +53,7 @@ export default function TeachingAssistantsPage() {
       });
       setName("");
       setEmail("");
-      showToast(`${created.email} can now sign in with their SMU account`);
+      showToast(`${created.email} added — Auth0 emailed them a link to set their password`);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError(

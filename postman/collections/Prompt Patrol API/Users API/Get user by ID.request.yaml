@@ -1,6 +1,6 @@
 $kind: http-request
 name: Get user by ID
-url: "{{BASE_URL}}/api/users/ace4ecfa-cc44-48e5-b4be-c74a6d65f786"
+url: "{{BASE_URL}}/api/users/650e7ad7-f0d1-453e-acf4-c1e9fda7fda3"
 method: GET
 headers:
   Cookie: __Host-session={{SESSION_COOKIE}}

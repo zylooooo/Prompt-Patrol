@@ -108,7 +108,7 @@ async def sign_out_everywhere(db: AsyncSession, raw_token: str) -> User | None:
     just the calling browser would leave someone who signed out on a shared
     machine with no remedy at all. The cost is bounded the other way - sessions
     already die after 90 minutes idle or 12 hours absolute, and signing back in
-    is one Entra click.
+    is one Auth0 click.
 
     The user is resolved from a *live* session on purpose: a stale token must not
     be replayable as a "sign this person out everywhere" primitive.

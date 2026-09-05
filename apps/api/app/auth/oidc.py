@@ -1,13 +1,13 @@
 from authlib.integrations.starlette_client import OAuth
 
-from config import ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ENTRA_TENANT_ID
+from config import AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN
 
 oauth = OAuth()
 
 oauth.register(
-    name="entra",
-    client_id=ENTRA_CLIENT_ID,
-    client_secret=ENTRA_CLIENT_SECRET,
-    server_metadata_url=f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration",
+    name="auth0",
+    client_id=AUTH0_CLIENT_ID,
+    client_secret=AUTH0_CLIENT_SECRET,
+    server_metadata_url=f"https://{AUTH0_DOMAIN}/.well-known/openid-configuration",
     client_kwargs={"scope": "openid profile email", "code_challenge_method": "S256"},
 )

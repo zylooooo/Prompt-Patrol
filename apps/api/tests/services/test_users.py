@@ -1,4 +1,3 @@
-import logging
 import uuid
 
 import pytest
@@ -22,9 +21,26 @@ from services.users_service import (
     list_users,
     normalize_email,
     reactivate_user,
-    resolve_or_bind_user,
+    resolve_user,
     set_supervisor,
 )
+
+
+# create_user/delete_user call out to Auth0's Management + Authentication
+# APIs (DECISION LOG [0.9.0]). These tests exercise the local provisioning/
+# deletion logic, not those HTTP calls, so every test gets no-op stubs
+# instead. Individual tests override these via monkeypatch when they need to
+# assert on the Auth0-facing call itself.
+@pytest.fixture(autouse=True)
+def _stub_invite_user(monkeypatch):
+    async def fake_invite_user(email):
+        return f"auth0|{email}"
+
+    async def fake_delete_auth0_user(auth0_user_id):
+        return True
+
+    monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete_auth0_user)
 
 
 def _user(role, provisioned_by=None, email=None, status=UserStatusEnum.active):
@@ -111,158 +127,142 @@ def test_cli_provisioned_accounts_are_not_siblings():
 
 
 @pytest.mark.asyncio
-async def test_resolve_by_oid_when_already_bound(db_session):
-    user = User(id=uuid.uuid4(), email="a@smu.edu.sg", entra_oid="oid-1", role=UserRoleEnum.instructor)
+async def test_resolve_by_sub_when_already_bound(db_session):
+    user = User(id=uuid.uuid4(), email="a@smu.edu.sg", auth0_sub="oid-1", role=UserRoleEnum.instructor)
     db_session.add(user)
     await db_session.commit()
 
-    resolved = await resolve_or_bind_user(db_session, oid="oid-1", email="different@smu.edu.sg")
+    resolved = await resolve_user(db_session, sub="oid-1", email="different@smu.edu.sg")
     assert resolved.id == user.id
-
-
-@pytest.mark.asyncio
-async def test_binds_oid_on_first_login_via_email_fallback(db_session):
-    user = User(id=uuid.uuid4(), email="a@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
-    db_session.add(user)
-    await db_session.commit()
-
-    resolved = await resolve_or_bind_user(db_session, oid="oid-new", email="a@smu.edu.sg")
-    assert resolved.id == user.id
-    assert resolved.entra_oid == "oid-new"
-
-
-@pytest.mark.asyncio
-async def test_oid_match_wins_over_conflicting_email_match(db_session):
-    # Two distinct rows: one matches by entra_oid, a *different* row would
-    # match by email if email were checked first. oid lookup must win and
-    # the email-matching row must be left untouched.
-    oid_user = User(id=uuid.uuid4(), email="oid-owner@smu.edu.sg", entra_oid="oid-shared", role=UserRoleEnum.instructor)
-    email_user = User(id=uuid.uuid4(), email="conflict@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
-    db_session.add_all([oid_user, email_user])
-    await db_session.commit()
-
-    resolved = await resolve_or_bind_user(db_session, oid="oid-shared", email="conflict@smu.edu.sg")
-
-    assert resolved.id == oid_user.id
-    await db_session.refresh(email_user)
-    assert email_user.entra_oid is None
-
-
-@pytest.mark.asyncio
-async def test_email_fallback_does_not_rebind_an_already_bound_row(db_session):
-    # S0. The email claim is mutable and unverified, so it may claim an unbound
-    # row once and never move one that already belongs to an identity. Before
-    # the fix this returned the victim's row and the callback minted a session
-    # on it, handing over the account and its role.
-    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.root_admin)
-    db_session.add(victim)
-    await db_session.commit()
-
-    resolved = await resolve_or_bind_user(db_session, oid="attacker-oid", email="victim@smu.edu.sg")
-
-    assert isinstance(resolved, LoginRejection)
-    await db_session.refresh(victim)
-    assert victim.entra_oid == "victim-oid"
-
-
-@pytest.mark.asyncio
-async def test_owner_still_resolves_after_a_rejected_takeover(db_session):
-    # The rejection must not disturb the row: the real owner signs in as normal.
-    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.instructor)
-    db_session.add(victim)
-    await db_session.commit()
-
-    await resolve_or_bind_user(db_session, oid="attacker-oid", email="victim@smu.edu.sg")
-    resolved = await resolve_or_bind_user(db_session, oid="victim-oid", email="victim@smu.edu.sg")
-
-    assert resolved is not None
-    assert resolved.id == victim.id
-
-
-@pytest.mark.asyncio
-async def test_rejected_takeover_is_indistinguishable_from_unprovisioned(db_session):
-    # Both denials return the same value, so the caller cannot use the response
-    # to discover whether an address is provisioned.
-    bound = User(id=uuid.uuid4(), email="bound@smu.edu.sg", entra_oid="someone-oid", role=UserRoleEnum.instructor)
-    db_session.add(bound)
-    await db_session.commit()
-
-    takeover = await resolve_or_bind_user(db_session, oid="attacker-oid", email="bound@smu.edu.sg")
-    unknown = await resolve_or_bind_user(db_session, oid="attacker-oid", email="nobody@smu.edu.sg")
-
-    assert isinstance(takeover, LoginRejection) and isinstance(unknown, LoginRejection)
-
-
-@pytest.mark.asyncio
-async def test_rejected_takeover_is_logged_as_a_security_event(db_session, caplog):
-    bound = User(id=uuid.uuid4(), email="bound@smu.edu.sg", entra_oid="someone-oid", role=UserRoleEnum.instructor)
-    db_session.add(bound)
-    await db_session.commit()
-
-    with caplog.at_level(logging.WARNING, logger="services.users_service"):
-        await resolve_or_bind_user(db_session, oid="attacker-oid", email="bound@smu.edu.sg")
-
-    assert any("already bound" in record.getMessage() for record in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_unknown_email_is_not_logged_as_a_takeover(db_session, caplog):
-    # A routine miss is not a security event; only a collision with a bound row is.
-    with caplog.at_level(logging.WARNING, logger="services.users_service"):
-        await resolve_or_bind_user(db_session, oid="oid-x", email="nobody@smu.edu.sg")
-
-    assert caplog.records == []
-
-
-@pytest.mark.asyncio
-async def test_an_oid_held_by_a_deactivated_account_fails_closed(db_session):
-    # A deactivated user is still one of ours, so their Entra identity stays
-    # reserved. Binding it to a second row would split one person across two.
-    off = _deactivated_user(UserRoleEnum.instructor, email="old@smu.edu.sg")
-    off.entra_oid = "held-oid"
-    unbound = _user(UserRoleEnum.instructor, email="new@smu.edu.sg")
-    unbound.entra_oid = None
-    await _seed(db_session, off, unbound)
-
-    resolved = await resolve_or_bind_user(db_session, oid="held-oid", email="new@smu.edu.sg")
-
-    assert isinstance(resolved, LoginRejection)
-    await db_session.refresh(unbound)
-    assert unbound.entra_oid is None
-
-
-@pytest.mark.asyncio
-async def test_an_oid_held_by_a_deleted_account_is_free_to_rebind(db_session):
-    # The counterpart: deletion releases the identity so the same person can be
-    # provisioned fresh and sign in normally.
-    gone = _deleted_user(UserRoleEnum.instructor, email="old@smu.edu.sg")
-    gone.entra_oid = "released-oid"
-    fresh = _user(UserRoleEnum.instructor, email="new@smu.edu.sg")
-    fresh.entra_oid = None
-    await _seed(db_session, gone, fresh)
-
-    resolved = await resolve_or_bind_user(db_session, oid="released-oid", email="new@smu.edu.sg")
-
-    assert not isinstance(resolved, LoginRejection)
-    assert resolved.id == fresh.id
-    assert resolved.entra_oid == "released-oid"
 
 
 @pytest.mark.asyncio
 async def test_unprovisioned_email_returns_none(db_session):
-    resolved = await resolve_or_bind_user(db_session, oid="oid-x", email="nobody@smu.edu.sg")
+    resolved = await resolve_user(db_session, sub="oid-x", email="nobody@smu.edu.sg")
     assert isinstance(resolved, LoginRejection)
 
 
 @pytest.mark.asyncio
 async def test_deleted_user_not_resolved(db_session):
     user = _deleted_user(UserRoleEnum.instructor, email="gone@smu.edu.sg")
-    user.entra_oid = "oid-gone"
+    user.auth0_sub = "oid-gone"
     db_session.add(user)
     await db_session.commit()
 
-    resolved = await resolve_or_bind_user(db_session, oid="oid-gone", email="gone@smu.edu.sg")
+    resolved = await resolve_user(db_session, sub="oid-gone", email="gone@smu.edu.sg")
     assert isinstance(resolved, LoginRejection)
+
+
+# --- Auth0 credential creation (DECISION LOG [0.7.0]) -----------------------
+# Disable Sign Ups means an invitee cannot create their own Auth0 credential,
+# so create_user must produce one for them and must not leave a `users` row
+# with no way to ever sign in.
+
+
+@pytest.mark.asyncio
+async def test_create_user_invites_via_auth0(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    created = await create_user(db_session, admin, "invited@smu.edu.sg", UserRoleEnum.instructor)
+
+    assert created.email == "invited@smu.edu.sg"
+    assert created.auth0_sub == "auth0|invited@smu.edu.sg"
+
+
+@pytest.mark.asyncio
+async def test_no_local_row_is_written_when_auth0_credential_creation_fails(db_session, monkeypatch):
+    from exceptions import Auth0ProvisioningError
+
+    async def failing_invite_user(email):
+        raise Auth0ProvisioningError("Auth0 unreachable")
+
+    monkeypatch.setattr("services.users_service.invite_user", failing_invite_user)
+
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    with pytest.raises(Auth0ProvisioningError):
+        await create_user(db_session, admin, "orphaned@smu.edu.sg", UserRoleEnum.instructor)
+
+    result = await db_session.execute(select(User).where(User.email == "orphaned@smu.edu.sg"))
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_orphaned_auth0_user_is_deleted_when_local_commit_fails(db_session, monkeypatch):
+    """The inverse of test_no_local_row_is_written_when_auth0_credential_creation_fails:
+    invite_user() succeeds but the local commit right after it doesn't. Without
+    a compensating delete, that email is permanently stuck - Auth0 already has
+    the credential, so every retry's create call 400s on Auth0's own
+    duplicate-email check, even though no `users` row for it ever existed."""
+
+    async def fake_invite_user(email):
+        return "auth0|stub-id"
+
+    monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+
+    deleted_ids = []
+
+    async def fake_delete_auth0_user(auth0_user_id):
+        deleted_ids.append(auth0_user_id)
+
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete_auth0_user)
+
+    admin = _user(UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    async def failing_commit():
+        raise RuntimeError("db exploded")
+
+    monkeypatch.setattr(db_session, "commit", failing_commit)
+
+    with pytest.raises(RuntimeError):
+        await create_user(db_session, admin, "orphaned2@smu.edu.sg", UserRoleEnum.instructor)
+
+    assert deleted_ids == ["auth0|stub-id"]
+
+
+@pytest.mark.asyncio
+async def test_create_user_reuses_a_previously_deleted_row(db_session):
+    # Repeated delete + re-provision of the same email must not pile up
+    # duplicate rows that differ only in which one holds the live auth0_sub.
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    first = await create_user(db_session, admin, "recycled@smu.edu.sg", UserRoleEnum.instructor)
+    first_id = first.id
+    await delete_user(db_session, admin, first_id)
+
+    second = await create_user(db_session, admin, "recycled@smu.edu.sg", UserRoleEnum.teaching_assistant)
+
+    assert second.id == first_id
+    assert second.status == UserStatusEnum.active
+    assert second.role == UserRoleEnum.teaching_assistant
+
+    rows = (await db_session.execute(select(User).where(User.email == "recycled@smu.edu.sg"))).scalars().all()
+    assert len(rows) == 1
+
+    events = (
+        (await db_session.execute(select(UserStatusEvent).where(UserStatusEvent.user_id == first_id)))
+        .scalars()
+        .all()
+    )
+    assert any(e.from_status == UserStatusEnum.deleted and e.to_status == UserStatusEnum.active for e in events)
+
+
+@pytest.mark.asyncio
+async def test_create_user_still_rejects_a_live_duplicate_email(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    await create_user(db_session, admin, "taken@smu.edu.sg", UserRoleEnum.instructor)
+
+    with pytest.raises(EmailAlreadyExistsError):
+        await create_user(db_session, admin, "taken@smu.edu.sg", UserRoleEnum.instructor)
 
 
 @pytest.mark.asyncio
@@ -344,7 +344,7 @@ async def test_create_user_persists_row(db_session):
 
 
 # display_name is a label, never an identifier. It has no uniqueness, nothing
-# looks a user up by it, and Entra's `name` claim overwrites it on first login.
+# looks a user up by it, and Auth0's `name` claim overwrites it on first login.
 
 
 @pytest.mark.asyncio
@@ -384,7 +384,7 @@ async def test_a_blank_display_name_is_stored_as_null(db_session):
 @pytest.mark.asyncio
 async def test_display_name_does_not_have_to_be_unique(db_session):
     # Two real people share a name far more often than two email addresses do;
-    # the partial unique indexes from 0004 cover email and entra_oid only.
+    # the partial unique indexes from 0004 cover email and auth0_sub only.
     admin = _user(UserRoleEnum.root_admin)
     db_session.add(admin)
     await db_session.commit()
@@ -507,39 +507,12 @@ def test_normalize_email_folds_case_and_trims(raw, expected):
 
 
 @pytest.mark.asyncio
-async def test_login_binds_when_entra_sends_a_different_case_than_provisioned(db_session):
-    # The reported symptom: provisioned lowercase, Entra sends mixed case, and
-    # the user was rejected as unprovisioned with nothing able to explain why.
-    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
-    db_session.add(user)
-    await db_session.commit()
-
-    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="Ada@SMU.edu.sg")
-
-    assert resolved is not None
-    assert resolved.id == user.id
-    assert resolved.entra_oid == "oid-ada"
-
-
-@pytest.mark.asyncio
 async def test_login_matches_an_already_bound_row_regardless_of_claim_case(db_session):
-    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid="oid-ada", role=UserRoleEnum.instructor)
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", auth0_sub="oid-ada", role=UserRoleEnum.instructor)
     db_session.add(user)
     await db_session.commit()
 
-    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="ADA@SMU.EDU.SG")
-
-    assert resolved is not None
-    assert resolved.id == user.id
-
-
-@pytest.mark.asyncio
-async def test_login_tolerates_a_padded_email_claim(db_session):
-    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", entra_oid=None, role=UserRoleEnum.instructor)
-    db_session.add(user)
-    await db_session.commit()
-
-    resolved = await resolve_or_bind_user(db_session, oid="oid-ada", email="  ada@smu.edu.sg  ")
+    resolved = await resolve_user(db_session, sub="oid-ada", email="ADA@SMU.EDU.SG")
 
     assert resolved is not None
     assert resolved.id == user.id
@@ -549,15 +522,15 @@ async def test_login_tolerates_a_padded_email_claim(db_session):
 async def test_case_folding_does_not_let_an_email_claim_take_a_bound_row(db_session):
     # The S0 guard must survive normalisation: folding case must not turn a
     # rejected rebind into an accepted one.
-    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", entra_oid="victim-oid", role=UserRoleEnum.root_admin)
+    victim = User(id=uuid.uuid4(), email="victim@smu.edu.sg", auth0_sub="victim-oid", role=UserRoleEnum.root_admin)
     db_session.add(victim)
     await db_session.commit()
 
-    resolved = await resolve_or_bind_user(db_session, oid="attacker-oid", email="VICTIM@smu.edu.sg")
+    resolved = await resolve_user(db_session, sub="attacker-oid", email="VICTIM@smu.edu.sg")
 
     assert isinstance(resolved, LoginRejection)
     await db_session.refresh(victim)
-    assert victim.entra_oid == "victim-oid"
+    assert victim.auth0_sub == "victim-oid"
 
 
 @pytest.mark.asyncio
@@ -637,6 +610,69 @@ async def test_active_to_deleted(db_session):
 async def test_deactivated_to_deleted(db_session):
     admin = _user(UserRoleEnum.root_admin)
     ta = _deactivated_user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, ta)
+
+    result = await delete_user(db_session, admin, ta.id)
+
+    assert result.status == UserStatusEnum.deleted
+
+
+@pytest.mark.asyncio
+async def test_delete_user_removes_the_auth0_credential(db_session, monkeypatch):
+    deleted_ids = []
+
+    async def fake_delete_auth0_user(auth0_user_id):
+        deleted_ids.append(auth0_user_id)
+        return True
+
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete_auth0_user)
+
+    admin = _user(UserRoleEnum.root_admin)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    ta.auth0_sub = "auth0|ta-sub"
+    await _seed(db_session, admin, ta)
+
+    result = await delete_user(db_session, admin, ta.id)
+
+    assert deleted_ids == ["auth0|ta-sub"]
+    assert result.auth0_sub is None
+
+
+@pytest.mark.asyncio
+async def test_delete_user_keeps_the_sub_when_auth0_delete_fails(db_session, monkeypatch):
+    # A failed Auth0 delete (e.g. the M2M app missing delete:users) must not
+    # be recorded as a success - clearing auth0_sub anyway would hide a still
+    # -live Auth0 credential behind a row that looks fully cleaned up, and a
+    # later re-provision of this email would 400 on Auth0's own duplicate
+    # check with nothing left here to explain why.
+    async def fake_delete_auth0_user(auth0_user_id):
+        return False
+
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete_auth0_user)
+
+    admin = _user(UserRoleEnum.root_admin)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    ta.auth0_sub = "auth0|ta-sub"
+    await _seed(db_session, admin, ta)
+
+    result = await delete_user(db_session, admin, ta.id)
+
+    assert result.status == UserStatusEnum.deleted
+    assert result.auth0_sub == "auth0|ta-sub"
+
+
+@pytest.mark.asyncio
+async def test_delete_user_skips_auth0_call_when_never_logged_in(db_session, monkeypatch):
+    # Guards against a regression back to no-op-on-None silently swallowing a
+    # real id instead of only skipping a genuinely absent one.
+    async def fail_if_called(auth0_user_id):
+        raise AssertionError("should not call Auth0 for a user with no auth0_sub")
+
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fail_if_called)
+
+    admin = _user(UserRoleEnum.root_admin)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    ta.auth0_sub = None
     await _seed(db_session, admin, ta)
 
     result = await delete_user(db_session, admin, ta.id)
@@ -835,7 +871,9 @@ async def test_a_refused_transition_records_nothing(db_session):
 @pytest.mark.asyncio
 async def test_a_deleted_users_email_can_be_provisioned_again(db_session):
     # Deletion is terminal, so the address must be released - otherwise removing
-    # someone bars them from ever holding an account again.
+    # someone bars them from ever holding an account again. The deleted row is
+    # reused rather than replaced (see test_create_user_reuses_a_previously_
+    # deleted_row for that mechanism in detail).
     admin = _user(UserRoleEnum.root_admin)
     ta = _user(UserRoleEnum.teaching_assistant, email="returning@smu.edu.sg")
     await _seed(db_session, admin, ta)
@@ -843,7 +881,7 @@ async def test_a_deleted_users_email_can_be_provisioned_again(db_session):
 
     fresh = await create_user(db_session, admin, "returning@smu.edu.sg", UserRoleEnum.instructor)
 
-    assert fresh.id != ta.id
+    assert fresh.id == ta.id
     assert fresh.status == UserStatusEnum.active
 
 
@@ -868,9 +906,9 @@ async def test_login_tells_deactivated_and_deleted_apart(db_session):
     deleted = _deleted_user(UserRoleEnum.instructor, email="gone@smu.edu.sg")
     await _seed(db_session, deactivated, deleted)
 
-    assert await resolve_or_bind_user(db_session, oid="o1", email="off@smu.edu.sg") is LoginRejection.deactivated
-    assert await resolve_or_bind_user(db_session, oid="o2", email="gone@smu.edu.sg") is LoginRejection.deleted
-    assert await resolve_or_bind_user(db_session, oid="o3", email="nobody@smu.edu.sg") is LoginRejection.not_provisioned
+    assert await resolve_user(db_session, sub="o1", email="off@smu.edu.sg") is LoginRejection.deactivated
+    assert await resolve_user(db_session, sub="o2", email="gone@smu.edu.sg") is LoginRejection.deleted
+    assert await resolve_user(db_session, sub="o3", email="nobody@smu.edu.sg") is LoginRejection.not_provisioned
 
 
 # --- query defaults --------------------------------------------------------
