@@ -12,10 +12,7 @@ logger = logging.getLogger(__name__)
 REPORT_PATH = OUTPUT_PATH.parent.parent / "profile_report.json"
 
 TEXT_COLUMNS = ["question", "instructor_answer", "student_answer"]
-
-# uncurl_quotes is off: ftfy's default also normalizes 'curly' typographic
-# quotes to straight ASCII ones, which is a style choice, not encoding
-# corruption - it would otherwise drown out genuine artifacts in the report.
+ 
 _ENCODING_ARTIFACT_CONFIG = TextFixerConfig(uncurl_quotes=False)
 
 
