@@ -347,7 +347,9 @@ async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supe
     if target.status == UserStatusEnum.deleted:
         raise InvalidStatusTransitionError("cannot reassign a deleted user")
 
-    if actor.role == UserRoleEnum.instructor and (supervisor_id is not None or target.provisioned_by != actor.id):
+    if actor.role == UserRoleEnum.instructor and (
+        target.provisioned_by != actor.id or supervisor_id not in (None, actor.id)
+    ):
         logger.warning("Instructor %s may not set supervisor %s on %s.", actor.id, supervisor_id, target.id)
         raise PermissionError(f"role {actor.role} may only release their own assistant")
 

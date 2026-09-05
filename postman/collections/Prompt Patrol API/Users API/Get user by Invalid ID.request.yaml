@@ -1,0 +1,11 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/00000000-0000-0000-0000-000000000000"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: pm.test("404", () => pm.response.to.have.status(404));
+    language: text/javascript
+examples: .resources/Get user by Invalid ID.resources/examples
+order: 1044

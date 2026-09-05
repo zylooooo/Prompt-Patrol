@@ -1,0 +1,19 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"200\", () => pm.response.to.have.status(200));\r
+
+      const body = pm.response.json();\r
+
+      pm.test(\"default excludes non-active\", () => \r
+
+      \    body.items.every(u => u.status === \"active\") &&
+      pm.expect(true).to.be.true\r
+
+      );"
+    language: text/javascript
+order: 11000

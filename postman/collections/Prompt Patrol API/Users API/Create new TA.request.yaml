@@ -1,0 +1,23 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: "{\r
+
+    \    \"email\": \"zhiyi.loo.2023@scis.smu.edu.sg\",\r
+
+    \    \"role\": \"teaching_assistant\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"201 created\", () => pm.response.to.have.status(201));\r
+
+      const body = pm.response.json();\r
+
+      pm.globals.set(\"TA_USER_ID\", body.id);"
+    language: text/javascript
+order: 5000

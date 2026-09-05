@@ -1,6 +1,5 @@
 $kind: http-request
-name: Health Check
 description: ""
-url: "{{BASE_URL}}/health"
+url: http://localhost:8000/health
 method: GET
 order: 1786777412709

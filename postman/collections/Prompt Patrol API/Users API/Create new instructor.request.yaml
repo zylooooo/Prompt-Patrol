@@ -1,0 +1,23 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: "{\r
+
+    \    \"email\": \"ashloozhiyi5@gmail.com\",\r
+
+    \    \"role\": \"instructor\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"201 created\", () => pm.response.to.have.status(201));\r
+
+      const body = pm.response.json();\r
+
+      pm.globals.set(\"INSTRUCTOR_USER_ID\", body.id);"
+    language: text/javascript
+order: 6000
