@@ -1,4 +1,5 @@
 import {
+  changeUserRole,
   createAccount,
   deactivateInstructor,
   deleteUser,
@@ -12,7 +13,7 @@ import {
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
-import type { CreateAccountInput, DeactivationPlan } from "../types";
+import type { CreateAccountInput, DeactivationPlan, UserRole } from "../types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function useActor(): User | null {
@@ -64,6 +65,14 @@ export function useSetSupervisor() {
   return useRosterMutation(
     ({ id, supervisorId }: { id: string; supervisorId: string | null }) =>
       setSupervisor(requireActor(actor), id, supervisorId),
+  );
+}
+
+export function useChangeUserRole() {
+  const actor = useActor();
+  return useRosterMutation(
+    ({ id, role }: { id: string; role: Exclude<UserRole, "root_admin"> }) =>
+      changeUserRole(requireActor(actor), id, role),
   );
 }
 
