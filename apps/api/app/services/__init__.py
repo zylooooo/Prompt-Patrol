@@ -1,4 +1,4 @@
-from .checks import (
+from .checks_service import (
     DETECTOR_CAPABILITIES,
     THRESHOLDS,
     DetectorTimeoutError,

@@ -3,11 +3,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from db import get_db
 from main import app
-from models import User, UserRoleEnum
-from routes.checks import require_any_user, require_screening
+from models import Check, User, UserRoleEnum
+from routes.checks_routes import require_any_user, require_screening
 from services.detector_client import MODEL_VERSION, Score
 
 
@@ -69,7 +70,7 @@ async def test_create_check_happy_path(client, db_session):
     user = await _signed_in(client, db_session, email="ta@smu.edu.sg")
 
     with patch(
-        "services.checks.score_text",
+        "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
         response = client.post(
@@ -92,7 +93,7 @@ async def test_create_check_abstains_on_short_answer(client, db_session):
     await _signed_in(client, db_session, email="ta2@smu.edu.sg")
 
     with patch(
-        "services.checks.score_text",
+        "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
         response = client.post(
@@ -151,7 +152,7 @@ async def test_detector_status_without_session_returns_401(client):
 async def test_detector_status_reports_ready(client, db_session):
     await _signed_in(client, db_session, email="ta6@smu.edu.sg")
 
-    with patch("routes.checks.detector_health", new=AsyncMock(return_value="ready")):
+    with patch("routes.checks_routes.detector_health", new=AsyncMock(return_value="ready")):
         response = client.get("/api/detector/status")
 
     assert response.status_code == 200
@@ -165,7 +166,7 @@ async def test_a_detector_that_cannot_score_is_still_a_200(client, db_session, r
     moment it has something worth saying, so the trouble goes in the body."""
     await _signed_in(client, db_session, email=f"ta-{reported}@smu.edu.sg")
 
-    with patch("routes.checks.detector_health", new=AsyncMock(return_value=reported)):
+    with patch("routes.checks_routes.detector_health", new=AsyncMock(return_value=reported)):
         response = client.get("/api/detector/status")
 
     assert response.status_code == 200
@@ -176,7 +177,7 @@ SCORED = AsyncMock(return_value=Score(raw_score=0.9, truncated=False))
 
 
 async def _make_check(client, **body):
-    with patch("services.checks.score_text", new=SCORED):
+    with patch("services.checks_service.score_text", new=SCORED):
         return client.post("/api/checks", json={"answer_text": AI_LIKE, **body})
 
 
@@ -218,6 +219,132 @@ async def test_listing_returns_only_your_own_checks(client, db_session):
     items = client.get("/api/checks").json()["items"]
 
     assert [i["external_ref"] for i in items] == ["MINE"]
+
+
+@pytest.mark.asyncio
+async def test_listing_filters_by_verdict(client, db_session):
+    await _signed_in(client, db_session)
+    await _make_check(client, external_ref="AI")
+    with patch("services.checks_service.score_text", new=AsyncMock(return_value=Score(raw_score=0.1, truncated=False))):
+        client.post("/api/checks", json={"answer_text": HUMAN_LIKE, "external_ref": "HUMAN"})
+
+    items = client.get("/api/checks?verdict=ai_generated").json()["items"]
+
+    assert [i["external_ref"] for i in items] == ["AI"]
+
+
+@pytest.mark.asyncio
+async def test_listing_filters_by_batch_id(client, db_session):
+    await _signed_in(client, db_session)
+    batch_id = str(uuid.uuid4())
+    await _make_check(client, external_ref="IN_BATCH", batch_id=batch_id)
+    await _make_check(client, external_ref="NOT_IN_BATCH")
+
+    items = client.get(f"/api/checks?batch_id={batch_id}").json()["items"]
+
+    assert [i["external_ref"] for i in items] == ["IN_BATCH"]
+
+
+@pytest.mark.asyncio
+async def test_listing_filters_by_date_range_inclusive(client, db_session):
+    await _signed_in(client, db_session)
+    created = (await _make_check(client, external_ref="R")).json()
+    created_at = created["created_at"]
+
+    on_boundary = client.get(f"/api/checks?from={created_at}&to={created_at}").json()["items"]
+    before = client.get("/api/checks?to=2000-01-01T00:00:00Z").json()["items"]
+
+    assert [i["external_ref"] for i in on_boundary] == ["R"]
+    assert before == []
+
+
+@pytest.mark.asyncio
+async def test_listing_inverted_date_range_is_just_empty_not_an_error(client, db_session):
+    await _signed_in(client, db_session)
+    await _make_check(client)
+
+    response = client.get("/api/checks?from=2099-01-01T00:00:00Z&to=2000-01-01T00:00:00Z")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_actor_id_filter_is_silently_ignored_for_a_non_admin(client, db_session):
+    """Override rather than reject - rejecting would confirm the other id
+    exists."""
+    mine = await _signed_in(client, db_session, email="mine2@smu.edu.sg")
+    await _make_check(client, external_ref="MINE")
+
+    await _signed_in(client, db_session, email="theirs2@smu.edu.sg")
+    theirs = await _make_check(client, external_ref="THEIRS")
+    theirs_actor_id = theirs.json()["actor_id"]
+
+    async def back_to_mine():
+        return mine
+
+    client.app.dependency_overrides[require_any_user] = back_to_mine
+    items = client.get(f"/api/checks?actor_id={theirs_actor_id}").json()["items"]
+
+    assert [i["external_ref"] for i in items] == ["MINE"]
+
+
+@pytest.mark.asyncio
+async def test_actor_id_filter_is_honoured_for_a_root_admin(client, db_session):
+    await _signed_in(client, db_session, email="someone2@smu.edu.sg")
+    someone = await _make_check(client, external_ref="SOMEONE")
+    someone_actor_id = someone.json()["actor_id"]
+
+    await _signed_in(client, db_session, email="other@smu.edu.sg")
+    await _make_check(client, external_ref="OTHER")
+
+    await _signed_in(client, db_session, role=UserRoleEnum.root_admin, email="admin2@smu.edu.sg")
+    items = client.get(f"/api/checks?actor_id={someone_actor_id}").json()["items"]
+
+    assert [i["external_ref"] for i in items] == ["SOMEONE"]
+
+
+@pytest.mark.asyncio
+async def test_listing_includes_summary_fields_the_history_table_needs(client, db_session):
+    """raw_score, strictness_applied, and batch_file_name are flattened onto
+    CheckSummary (not just CheckResult) so the history table's Score column,
+    per-batch strictness tag, and batch file name survive a reload - see
+    openapi.yaml DECISION LOG [0.5.8]."""
+    await _signed_in(client, db_session)
+    batch_id = str(uuid.uuid4())
+    await _make_check(
+        client, strictness="strict", batch_id=batch_id, batch_file_name="midterm.csv"
+    )
+
+    item = client.get("/api/checks").json()["items"][0]
+
+    assert item["raw_score"] == 0.9
+    assert item["strictness_applied"] == "strict"
+    assert item["answer_text"] == AI_LIKE
+    assert item["batch_file_name"] == "midterm.csv"
+
+
+@pytest.mark.asyncio
+async def test_answer_char_len_is_captured_regardless_of_retention(client, db_session):
+    """Not on the wire (DB-only, for E3's reliability-vs-answer-length
+    analysis) - captured before any conditional nulling so it survives a
+    future purge of answer_text."""
+    await _signed_in(client, db_session)
+    kept = (await _make_check(client, external_ref="KEPT")).json()
+    dropped = (await _make_check(client, external_ref="DROPPED", retain_answer=False)).json()
+
+    kept_row = (
+        await db_session.execute(select(Check).where(Check.id == uuid.UUID(kept["check_id"])))
+    ).scalar_one()
+    dropped_row = (
+        await db_session.execute(select(Check).where(Check.id == uuid.UUID(dropped["check_id"])))
+    ).scalar_one()
+
+    assert kept_row.answer_char_len == len(AI_LIKE)
+    assert kept_row.retain_answer is True
+    assert dropped_row.answer_char_len == len(AI_LIKE)
+    assert dropped_row.retain_answer is False
+    assert dropped_row.answer_text is None
 
 
 @pytest.mark.asyncio
@@ -349,7 +476,7 @@ async def test_a_supervised_assistant_can_screen(client, db_session):
     await _really_signed_in(client, db_session, provisioned_by=instructor.id)
 
     with patch(
-        "services.checks.score_text",
+        "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
         response = client.post("/api/checks", json={"answer_text": AI_LIKE})
@@ -364,7 +491,7 @@ async def test_an_instructor_screens_without_a_supervisor_of_their_own(client, d
     await _really_signed_in(client, db_session, role=UserRoleEnum.instructor)
 
     with patch(
-        "services.checks.score_text",
+        "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
         response = client.post("/api/checks", json={"answer_text": AI_LIKE})
@@ -377,7 +504,7 @@ async def test_a_root_admin_screens_without_a_supervisor(client, db_session):
     await _really_signed_in(client, db_session, role=UserRoleEnum.root_admin)
 
     with patch(
-        "services.checks.score_text",
+        "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
         response = client.post("/api/checks", json={"answer_text": AI_LIKE})
