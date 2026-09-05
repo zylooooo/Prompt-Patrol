@@ -1,2 +1,8 @@
 name: Globals
-values: []
+values:
+  - key: INSTRUCTOR_USER_ID
+    value: ''
+    enabled: true
+  - key: TA_USER_ID
+    value: ''
+    enabled: true

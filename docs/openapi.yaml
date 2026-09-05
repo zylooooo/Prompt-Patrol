@@ -3,17 +3,95 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.7 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.11.0 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
 #   [x] users     — provisioning, roles, RBAC primitives
 #   [x] checks    — single-answer detection + history   (this draft)
 #   [ ] batches   — async batch submission + polling
-#   [ ] audit     — audit log retrieval
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
+# There is no standalone `audit` module and none is planned. See DECISION LOG
+# [0.11.0] — checks rows are already self-auditing, and per-domain event
+# tables (e.g. `UserStatusEvent`, planned `UserRoleEvent`) cover identity
+# lifecycle history. A generic audit log would be a second, redundant store.
+#
 # CHANGELOG
+#   0.11.0 Dropped the `audit` module from the TODO list and removed the
+#          "audit table" / "audit entry" references in the checks module
+#          (info.description's service-boundary diagram, the `checks` tag
+#          description, `POST /api/checks`, and `CheckCreateRequest.
+#          retain_answer`) — none of them described a real, separately
+#          written store; checks rows already carry every field the text
+#          claimed the audit entry recorded. See DECISION LOG [0.11.0].
+#   0.10.0 Invite email copy fixed via an Auth0 app_metadata flag + Liquid
+#          branch on the Change Password template, instead of a second
+#          endpoint. No wire-format change. See DECISION LOG [0.10.0].
+#   0.9.0  BREAKING. POST /api/users no longer returns `activation_url` -
+#          static server-declared config (requires_question_text, length
+#          limits, strictness levels) and has no live-detector-dependent
+#          failure mode to report. Detector reachability is already
+#          GET /api/detector/status's job, and that endpoint is deliberately
+#          always 200. See DECISION LOG [0.5.9].
+#   0.5.8  CheckSummary (the GET /api/checks list row) widened: added
+#          raw_score, strictness_applied (flattened out of detector, same as
+#          model_version already was), and batch_file_name. Reverted the
+#          answer_preview truncation back to full answer_text. All of these
+#          exist so the SPA's history table doesn't regress on reload
+#          relative to what it shows right after a submission. See DECISION
+#          LOG [0.5.8].
+#   0.9.0  BREAKING. POST /api/users no longer returns `activation_url` -
+#          `UserProvisionResponse` is retired and the endpoint returns a
+#          plain `User`. Auth0 now emails the invitee their own
+#          password-set link directly instead of handing one back for the
+#          admin to relay by hand. See DECISION LOG [0.9.0].
+#   0.8.0  BREAKING. POST /api/users now also creates the invitee's Auth0
+#          credential and returns a one-time activation link
+#          (`UserProvisionResponse.activation_url`, new `502` response).
+#          [0.7.0]'s Database connection + Disable Sign Ups closed
+#          self-service signup, which also silently closed the only path
+#          that used to create an Auth0 identity: the invitee's own first
+#          login (auto-created by whichever social IdP they already had an
+#          account with). A `users` row alone is no longer enough to get
+#          someone in - discovered when a real provisioned user could not
+#          sign in despite a correct `users` row. `scripts.provision_user`
+#          gets the same fix, printing the activation link to stdout
+#          instead of returning it in a response body. See DECISION LOG
+#          [0.8.0].
+#   0.7.0  BREAKING. Auth0 connection swapped from the Microsoft social
+#          connection to a Database (email/password) connection. The social
+#          connection kept reproducing the exact bug class this app cannot
+#          afford mid-capstone: a second IdP hop (Auth0 -> Microsoft) with
+#          its own redirect-chain/CSP interactions and account-type
+#          inconsistency (personal vs. work Microsoft accounts behaving
+#          differently). A Database connection removes that hop entirely —
+#          Auth0's own hosted login page, no federation. Invite-first
+#          provisioning is unchanged: `users` row must exist before a login
+#          can bind, same as before. Self-service signup is closed at the
+#          connection level (**Disable Sign Ups**, Auth0's documented
+#          invite-only pattern for Database connections) plus Attack
+#          Protection (Bot Detection, Suspicious IP Throttling, Brute-force
+#          Protection) enabled tenant-wide, per Auth0's own guidance that
+#          Disable Sign Ups alone is not sufficient hardening. No backend
+#          code changes — the app already speaks to Auth0 generically
+#          (`server_metadata_url` discovery, no Microsoft-specific claims
+#          handling). See DECISION LOG [0.7.0].
+#   0.6.0  BREAKING. Identity provider swapped from Microsoft Entra ID to
+#          Auth0 (Microsoft social connection). The sponsor could not get the
+#          app whitelisted (app registration + admin consent) in the
+#          university's own Entra tenant — registering against Auth0's tenant
+#          instead removes that dependency on university IT while instructors
+#          keep signing in with the same Microsoft account. Nothing else in
+#          the auth architecture changes: still an OIDC Relying Party, still
+#          no access/refresh token stored, still the BFF pattern, still the
+#          opaque `__Host-` session cookie, still invite-first provisioning
+#          keyed on email before first login. `users.entra_oid` renamed to
+#          `users.auth0_sub` (root_admin now seeded on Auth0's `sub` claim,
+#          not Entra's `oid`/`tid`). The Entra-specific `logout_hint`
+#          claim-replay mechanism is dropped — Auth0's logout endpoint
+#          (`/v2/logout?client_id=...&returnTo=...`) takes no per-user hint,
+#          unlike Entra's `end_session_endpoint`. See DECISION LOG [0.6.0].
 #   0.5.7  POST /api/checks refuses a teaching_assistant with no supervisor
 #          (`403`). The refusal existed only in the SPA, which decides it from
 #          the session payload it already holds — so the rule was a courtesy,
@@ -124,7 +202,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.5.1
+  version: 0.8.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -133,7 +211,8 @@ info:
 
     Prompt Patrol is an **OpenID Connect Relying Party**, not an OAuth client.
     It has no third-party resource server and requests no delegated authority.
-    Entra ID answers exactly one question, once per login: *who is this person?*
+    Auth0 answers exactly one question, once per login: *who is this
+    person?*
 
     Consequence: **no access token, no refresh token, and no JWT is stored
     anywhere.** The ID token is validated, its claims extracted, and the token
@@ -144,11 +223,23 @@ info:
     identifier in a cookie; that value is a database lookup key, meaningless
     outside this system.
 
-    The authority is **tenant-scoped**
-    (`login.microsoftonline.com/{tenant-id}/...`), never `/common`. With
-    `/common`, any Microsoft account could complete the flow, and a personal
-    account with a colliding email address could claim a provisioned slot
-    before the intended user's first login. See "Provisioning" below.
+    The Auth0 application is configured with **exactly one connection
+    enabled: a Database (email/password) connection**, with **Disable Sign
+    Ups** turned on. There is no self-service account-creation surface at
+    all — Auth0's hosted login page accepts only credentials that already
+    exist, and credentials are created for an instructor only after their
+    `users` row is provisioned (see "Provisioning" below), never by the
+    instructor themselves. Disable Sign Ups is Auth0's own documented pattern
+    for an invite-only Database connection, but Auth0's docs also note it is
+    not sufficient hardening on its own (it narrows but does not close an
+    enumeration surface) — so **Attack Protection** (Bot Detection,
+    Suspicious IP Throttling, Brute-force Protection) is enabled tenant-wide
+    as a second layer. This replaces the tenant-scoping guarantee the
+    previous Entra ID integration provided a different way (Entra: restrict
+    the authority to the university's own tenant so no arbitrary Microsoft
+    account could complete the flow; Auth0: restrict the application's
+    enabled connections and close self-registration instead — same property,
+    enforced at a different layer). See "Provisioning" below.
 
     ## Authentication vs authorization — module boundary
 
@@ -192,21 +283,21 @@ info:
     | Absolute cap      | 4 h    | Set at creation, **never extended**      |
 
     A session dies when either clock fires. The absolute cap bounds the window
-    during which a disabled Entra account retains access — Entra provides no
-    push-based revocation for custom applications (no CAE, no OIDC
-    back-channel logout), so this cap is the primary control, with
-    administrative revocation as the compensating control.
+    during which a disabled upstream account retains access — this
+    integration has no push-based revocation configured (no OIDC back-channel
+    logout), so this cap is the primary control, with administrative
+    revocation as the compensating control.
 
     ## Provisioning — invite-first
 
     **There is no default role and no self-service registration.** A user
     record exists because someone with authority created it. Authentication
-    against Entra is necessary but not sufficient for access.
+    against Auth0 is necessary but not sufficient for access.
 
     Delegation chain:
 
     ```
-    root_admin  (seeded via migration, keyed on Entra `oid`)
+    root_admin  (seeded via migration, keyed on Auth0 `sub`)
         └── provisions ──> instructor
                               └── provisions ──> teaching_assistant
     ```
@@ -216,13 +307,13 @@ info:
     question worth being able to answer.
 
     Records are created **before** first login, keyed on email. First login
-    binds the Entra `oid`/`tid` to the pre-provisioned row permanently;
-    thereafter `email` is display data only.
+    binds the Auth0 `sub` to the pre-provisioned row permanently; thereafter
+    `email` is display data only.
 
     ## Detection — service boundary
 
     **This API is not the detector's API.** The backend owns persistence,
-    instructor identity, authorization, audit, and calibration policy. The
+    instructor identity, authorization, and calibration policy. The
     detector service owns exactly one thing: text in, normalised score out.
 
     ```
@@ -230,9 +321,14 @@ info:
                                     │           (stateless, no DB,
                                     │            no user identity,
                                     │            no threshold policy)
-                                    ├──> checks table   (result + optional text)
-                                    └──> audit table    (unconditional)
+                                    └──> checks table   (result, unconditional;
+                                                         answer_text optional)
     ```
+
+    There is no separate audit table. Checks rows are immutable and never
+    soft-deleted — `actor_id`, `model_version`, `verdict`, and `created_at`
+    are written unconditionally on every row and survive even when
+    `retain_answer` is false. See DECISION LOG [0.11.0].
 
     The detector never sees a `user_id`, never writes to Postgres, and never
     decides a verdict — it returns a score. Thresholding, abstention, and
@@ -400,8 +496,8 @@ tags:
 
       Owns the *decision*, not the *score* — see "Detection — service boundary"
       in `info.description`. The detector service is called synchronously and
-      returns a normalised score; thresholding, abstention, verdict assignment,
-      persistence, and audit all happen here.
+      returns a normalised score; thresholding, abstention, verdict
+      assignment, and persistence all happen here.
 
       `CheckResult` is shared with the batches module: a batch result row and a
       single check are the same object, so the SPA has one renderer.
@@ -421,8 +517,10 @@ paths:
       description: |
         Generates `state`, `nonce`, and a PKCE `code_verifier`, persists them
         server-side keyed by a short-lived transaction id, and redirects the
-        browser to Entra's `/authorize` endpoint on the **tenant-scoped**
-        authority.
+        browser to Auth0's `/authorize` endpoint, which serves Auth0's own
+        hosted login page (the Database connection is the only connection
+        enabled on this Auth0 application — no federation hop to a third
+        party).
 
         **Frontend contract:** `window.location.href = '/api/auth/login'`.
         Do not call this with `fetch()` or Axios.
@@ -451,13 +549,13 @@ paths:
             example: /history?page=2
       responses:
         "302":
-          description: Redirect to the Entra ID authorization endpoint.
+          description: Redirect to the Auth0 authorization endpoint.
           headers:
             Location:
               schema:
                 type: string
                 format: uri
-                example: https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?client_id=...&response_type=code&code_challenge=...
+                example: https://{auth0-domain}/authorize?client_id=...&response_type=code&code_challenge=...
         "400":
           $ref: "#/components/responses/BadRequest"
 
@@ -466,29 +564,28 @@ paths:
     get:
       tags: [auth]
       operationId: handleCallback
-      summary: OIDC redirect URI — called by Entra, not by the SPA
+      summary: OIDC redirect URI — called by Auth0, not by the SPA
       x-auth-enforcement: NONE
-      x-called-by: Microsoft Entra ID (browser redirect)
+      x-called-by: Auth0 (browser redirect)
       description: |
-        Registered in the Entra app registration as a **Web** redirect URI.
-        Not `SPA` — that platform type disables client secrets, and this is a
-        confidential client.
+        Registered in the Auth0 application as a **Regular Web Application**.
+        Not `SPA` — that application type disables client secrets, and this is
+        a confidential client.
 
         Server-side sequence:
         1. Validate `state` against the stored transaction. Mismatch → 403.
-        2. Exchange `code` + `code_verifier` + client secret at Entra's
-           `/token` endpoint. *(egress required)*
+        2. Exchange `code` + `code_verifier` + client secret at Auth0's
+           `/oauth/token` endpoint. *(egress required)*
         3. Fetch JWKS on cache miss or `kid` rotation. *(egress required)*
         4. Validate the ID token: signature, `iss`, `aud`, `exp`, `nonce`.
-           Reject if `tid` is not the configured SMU tenant.
-        5. Extract `oid`, `tid`, `email`, `name`, `sid`, `login_hint`.
+        5. Extract `sub`, `email`, `name`.
         6. **Delegate to the users module** —
-           `users.resolve_or_reject(oid, tid, email)`. See below.
+           `users.resolve_or_reject(sub, email)`. See below.
         7. Insert a fresh `sessions` row — a **new** session id on every login,
            which defeats session fixation.
         8. **Discard the ID token.** It is not persisted.
 
-        Steps 2 and 3 are the *only* backend-to-Entra traffic in the entire
+        Steps 2 and 3 are the *only* backend-to-Auth0 traffic in the entire
         system, and the sole justification for the NAT Gateway.
 
         ### Step 6 — provisioning resolution
@@ -497,15 +594,15 @@ paths:
         session row. It therefore **asks**:
 
         ```python
-        user = await users.resolve_or_reject(oid=..., tid=..., email=...)
+        user = await users.resolve_or_reject(sub=..., email=...)
         ```
 
         The users module resolves in this order:
 
         | Case | Match | Action |
         |------|-------|--------|
-        | Returning user | `(tenant_id, external_id)`, `deleted_at IS NULL` | Return the row |
-        | First login | `email` (case-insensitive) where `external_id IS NULL` and `deleted_at IS NULL` | Bind `oid`/`tid`, set `display_name`, stamp `first_login_at`, return |
+        | Returning user | `external_id` (Auth0 `sub`), `deleted_at IS NULL` | Return the row |
+        | First login | `email` (case-insensitive) where `external_id IS NULL` and `deleted_at IS NULL` | Bind `sub`, set `display_name`, stamp `first_login_at`, return |
         | Deactivated | match found (by either rule above) but `deleted_at IS NOT NULL` | **Reject** — `deactivated`, not `not_provisioned` |
         | Unprovisioned | no match at all | **Reject** — `not_provisioned` |
 
@@ -531,7 +628,7 @@ paths:
         - name: error
           in: query
           schema: { type: string }
-          description: Present instead of `code` when Entra rejects the request.
+          description: Present instead of `code` when Auth0 rejects the request.
           example: access_denied
         - name: error_description
           in: query
@@ -545,7 +642,7 @@ paths:
             On rejected provisioning: **no cookie**, redirect to the SPA
             `not_provisioned` route.
 
-            On an Entra-side error: redirect to the SPA error route with a
+            On an Auth0-side error: redirect to the SPA error route with a
             safe, non-reflected error code. Never render `error_description`
             back to the browser unescaped.
           headers:
@@ -557,14 +654,13 @@ paths:
               schema: { type: string, format: uri }
         "403":
           description: |
-            `state` mismatch, missing, or expired, or `tid` is not the
-            configured tenant. Indicates CSRF against the redirect URI, a stale
-            browser tab, or a cross-tenant attempt. Logged as a security event.
+            `state` mismatch, missing, or expired. Indicates CSRF against the
+            redirect URI or a stale browser tab. Logged as a security event.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "502":
-          description: Entra token endpoint unreachable or returned an error.
+          description: Auth0 token endpoint unreachable or returned an error.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -626,66 +722,53 @@ paths:
         usable indefinitely as a "sign this person out everywhere" primitive.
 
         ### Two-step logout — the server completes it
-        Revoking the local sessions is not sufficient. The Entra SSO session
+        Revoking the local sessions is not sufficient. The Auth0 SSO session
         survives, so the user can click "log in" and be silently readmitted.
         This looks like a logout bug and is not.
 
-        **Implemented as a redirect, not a header (corrected 2026-08-17).**
-        This endpoint answers `303` straight to the Entra sign-out URL, and
-        `SignOutForm.tsx` submits a native form POST rather than an XHR.
+        **Implemented as a redirect, not a header.** This endpoint answers
+        `303` straight to the Auth0 sign-out URL, and `SignOutForm.tsx`
+        submits a native form POST rather than an XHR. The full document
+        navigation is what discards the in-memory query cache, and the
+        redirect works with no JavaScript at all.
 
-        The originally specified shape — `204` plus an `X-Entra-Logout-Url`
-        header for the SPA to follow in JavaScript — was **not** built, on
-        purpose. The full document navigation is what discards the in-memory
-        query cache, and the redirect works with no JavaScript at all. The
-        implementation is the better design; this text was corrected to match
-        it rather than the reverse.
+        Either way the URL is built server-side, so Auth0 domain/client
+        configuration never enters the frontend bundle and does not vary
+        between environments.
 
-        Either way the URL is built server-side, so tenant configuration never
-        enters the frontend bundle and does not vary between environments.
-
-        ### On `logout_hint`
-        The URL includes `logout_hint` when available, suppressing Entra's
-        account-picker prompt. Its value is the `login_hint` **claim issued by
-        Entra**, captured at callback.
-
-        It is *not* `users.id` and *not* the UPN. Both are ignored by Entra —
-        `users.id` is a UUID this system mints that Entra has never seen, and
-        Microsoft's documentation explicitly warns against passing UPNs. Either
-        substitution silently produces the account picker.
-
-        Requires the `login_hint` optional claim to be enabled on the ID token
-        in the Entra app registration (Token configuration).
-
-        ### Residual behaviour — document, do not fix
-        On domain-joined machines holding a valid Primary Refresh Token, the
-        next sign-in may complete silently even after a correct
-        `end_session_endpoint` redirect. That is device SSO working as
-        designed. Note it in the test plan so nobody spends a day on it.
+        ### Auth0's `/v2/logout` — no per-user hint needed
+        Unlike Entra's `end_session_endpoint` (RP-Initiated Logout,
+        `id_token_hint`/`logout_hint`), Auth0 does not implement that OIDC
+        spec for its own session. It exposes a proprietary
+        `/v2/logout?client_id=...&returnTo=...` endpoint instead, which needs
+        no per-user hint to determine whose Auth0 session to end — it reads
+        that from Auth0's own session cookie on the browser making the
+        request. This endpoint is built directly from static config
+        (`AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `FRONTEND_URL`), with no discovery
+        document lookup and nothing stored per-user for it — the
+        Entra-specific `logout_hint` capture-at-callback-and-replay-at-logout
+        mechanism (`users.logout_hint`) is gone along with it.
       responses:
         "303":
           description: |
             All live sessions for this user revoked; cookie cleared; browser
-            redirected onward to Entra sign-out.
+            redirected onward to Auth0 sign-out.
 
             Returned even when the cookie is absent or already revoked — the
             endpoint never reports whether a session existed, and the user ends
-            up signed out of Entra either way.
+            up signed out of Auth0 either way.
           headers:
             Location:
               required: true
               schema:
                 type: string
                 format: uri
-                example: https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/logout?post_logout_redirect_uri=https%3A%2F%2Fpromptpatrol.smu.edu.sg&logout_hint=...
+                example: https://{auth0-domain}/v2/logout?client_id=...&returnTo=https%3A%2F%2Fpromptpatrol.smu.edu.sg
               description: |
-                `post_logout_redirect_uri` must be registered in the Entra app
-                registration, or Entra silently ignores it and strands the user
-                on a generic Microsoft page. Register production and
-                `http://localhost:5173` for development.
-
-                Falls back to `{FRONTEND_URL}/login` if the discovery document
-                cannot be reached — the local sessions are revoked regardless.
+                `returnTo` must be registered in the Auth0 application's
+                "Allowed Logout URLs", or Auth0 rejects the redirect and
+                strands the user on an Auth0 error page. Register production
+                and `http://localhost:5173` for development.
             Set-Cookie:
               schema:
                 type: string
@@ -705,7 +788,7 @@ paths:
       x-authorization: users module — require_role('root_admin')
       description: |
         Administrative visibility into active sessions. This is the compensating
-        control for the absence of push-based revocation from Entra — the only
+        control for the absence of push-based revocation from Auth0 — the only
         way to terminate access inside the 4-hour absolute cap.
 
         Restricted to `root_admin`. **Not** instructors: the ability to
@@ -713,7 +796,7 @@ paths:
         escalation path in a tool that produces integrity accusations.
 
         Bootstrap is resolved — the root admin is seeded by migration, keyed on
-        a hardcoded Entra `oid`. Auditable, in version control, reproducible.
+        a hardcoded Auth0 `sub`. Auditable, in version control, reproducible.
 
         Still to add: `GET /api/auth/sessions`, returning only the caller's
         own sessions ("sign out my other devices"). Needs no role check and
@@ -821,9 +904,19 @@ paths:
         users module — delegation-scoped, see table below. Not a single
         require_role() call.
       description: |
-        Creates a `users` row keyed on `email`, with `external_id`/`tenant_id`
-        left NULL — first login binds them (see `/api/auth/callback` step 6).
-        No session is created here; this is invitation, not authentication.
+        Creates a `users` row keyed on `email`, with `auth0_sub` left NULL —
+        first login binds it (see `/api/auth/callback`). No session is
+        created here; this is invitation, not authentication.
+
+        Also creates the matching Auth0 Database-connection credential via
+        the Management API, then has Auth0 email the invitee a one-time
+        password-set link directly — see DECISION LOG [0.9.0]. Disable Sign
+        Ups means the invitee has no way to create that credential
+        themselves, so this call must do both halves or the invitee is
+        provisioned with no way to ever sign in. The Auth0 call happens
+        **before** the local row is committed: if it fails, nothing is
+        saved, rather than leaving a `users` row for an email that can
+        never log in.
 
         `provisioned_by` carries the supervision edge for a
         `teaching_assistant` — see DECISION LOG [0.5.6]. It is derived, never
@@ -869,7 +962,11 @@ paths:
             schema: { $ref: "#/components/schemas/UserCreateRequest" }
       responses:
         "201":
-          description: User provisioned. `first_login_at` is null until they sign in.
+          description: |
+            User provisioned. `first_login_at` is null until they sign in.
+            Auth0 has already emailed the invitee a one-time link to set
+            their own password — there is nothing further for this response
+            to hand back.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
@@ -891,6 +988,13 @@ paths:
             existing account and provisioning a new one are different
             audited actions, and collapsing them into upsert semantics here
             would blur that distinction in the audit trail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: |
+            Could not create the Auth0-side credential (Management API call
+            failed). Nothing was saved locally — retry the request.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1268,6 +1372,12 @@ paths:
         Cache for the session. A model swap mid-session is not a scenario worth
         engineering for — the values change on deploy, and the 4-hour absolute
         session cap bounds staleness.
+
+        Answers with static, server-declared config — nothing here depends on
+        the detector being reachable, so there is no 503 to give. Detector
+        reachability is `GET /api/detector/status`'s job, which is
+        deliberately always `200` (a down detector is a state to render, not
+        a failed request). See DECISION LOG [0.5.9].
       responses:
         "200":
           description: Current detector capabilities.
@@ -1276,14 +1386,6 @@ paths:
               schema: { $ref: "#/components/schemas/DetectorCapabilities" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "503":
-          description: |
-            Detector service unreachable. The SPA should disable submission
-            rather than let an instructor type an answer into a form that
-            cannot be submitted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   /api/checks:
     post:
@@ -1315,7 +1417,7 @@ paths:
         academic-integrity accusations is a forgery primitive; whoever ran the
         check is whoever's session ran it.
 
-        > Note the deliberate asymmetry with the audit module, where an
+        > Note the deliberate asymmetry with `GET /api/checks`, where an
         > instructor-supplied `actor_id` *filter* is silently overridden rather
         > than rejected. That override prevents existence enumeration. Here
         > there is nothing to enumerate, so failing loudly on a client bug is
@@ -1323,7 +1425,7 @@ paths:
 
         ### Why 201 and not 200
         A check is a persisted resource with an identifier, retrievable at
-        `GET /api/checks/{id}` and listed in history. The audit row is written
+        `GET /api/checks/{id}` and listed in history. The row is written
         unconditionally even when `retain_answer` is false. This is a creation,
         not an RPC call.
 
@@ -1345,9 +1447,9 @@ paths:
 
         ### Retention
         `retain_answer` governs **only** whether `answer_text` is persisted on
-        the checks row. It does not govern the audit entry, which records actor,
-        timestamp, model version, and verdict unconditionally and is not
-        client-controllable.
+        the checks row. `actor_id`, `created_at`, `model_version`, and
+        `verdict` are written unconditionally and are not client-controllable
+        — see DECISION LOG [0.11.0].
 
         > **OPEN — PDPA / retention policy.** Storing student answers requires a
         > documented retention period and a purge job, and sponsor sign-off.
@@ -1431,10 +1533,9 @@ paths:
 
         Object-level scoping is applied server-side from the authorizer context.
         An `actor_id` filter from a non-`root_admin` caller is **silently
-        overridden** to the caller's own `user_id`, never rejected — same
-        rationale as the audit module: a `403` on someone else's id confirms
-        that id exists, which is an enumeration oracle. Silent scoping leaks
-        nothing.
+        overridden** to the caller's own `user_id`, never rejected — a `403`
+        on someone else's id would confirm that id exists, which is an
+        enumeration oracle. Silent scoping leaks nothing.
 
         This is OWASP API1 territory and cannot be enforced at the gateway,
         which has no idea which rows belong to whom. See DECISION LOG [0.3.0].
@@ -1558,7 +1659,7 @@ components:
           type: string
           format: uuid
           description: |
-            Internal identifier. Never sent to Entra — Entra has no knowledge
+            Internal identifier. Never sent to Auth0 — Auth0 has no knowledge
             of it. Use as the key for `GET /api/users/me`.
         session_expires_at:
           type: string
@@ -1613,7 +1714,7 @@ components:
         display_name:
           type: string
           nullable: true
-          description: NULL until first login; set from the Entra `name` claim thereafter.
+          description: NULL until first login; set from the Auth0 `name` claim thereafter.
         role:
           type: string
           enum: [root_admin, instructor, teaching_assistant]
@@ -1653,7 +1754,7 @@ components:
           type: string
           description: |
             Optional admin-UI placeholder shown before first login.
-            Overwritten by the Entra `name` claim on first login — never
+            Overwritten by the Auth0 `name` claim on first login — never
             treat this value as authoritative.
         supervisor_id:
           type: string
@@ -1875,10 +1976,9 @@ components:
             Whether `answer_text` is persisted on the checks row and visible in
             history.
 
-            **Does not affect the audit entry**, which records actor, timestamp,
-            model version, and verdict unconditionally. Two stores, two
-            retention policies — a client-controllable audit trail would defeat
-            the purpose of having one.
+            **Does not affect the rest of the row** — `actor_id`, `created_at`,
+            `model_version`, and `verdict` are written unconditionally and are
+            not client-controllable. See DECISION LOG [0.11.0].
 
             Renamed from the proposed `save_to_history` to make that boundary
             explicit at the call site.
@@ -2015,26 +2115,52 @@ components:
 
     CheckSummary:
       type: object
-      required: [check_id, verdict, created_at, actor_id]
+      required:
+        [check_id, verdict, raw_score, strictness_applied, created_at, actor_id]
       description: |
-        History table row. Deliberately excludes `answer_text`, `explanation`,
-        and `spans` — a history list should not ship every stored student answer
-        to the browser to render a table. Drill down via `GET /api/checks/{id}`.
+        History table row. A trimmed `CheckResult` — excludes `question_text`,
+        `abstain_reason`, `truncated`, `calibration_version`,
+        `threshold_applied`, `target_fpr`, `used_question_text`, `latency_ms`,
+        `explanation`, and `spans`, none of which the history table renders.
+        Drill down via `GET /api/checks/{id}` for the full record.
+
+        `raw_score` and `strictness_applied` are flattened out of `detector`,
+        same convention as `model_version`, rather than nesting a partial
+        `DetectorInfo`. `batch_file_name` rides alongside `batch_id` for the
+        same reload-survival reason. `answer_text` is intentionally full-text
+        here, not a preview. See DECISION LOG [0.5.8] for all three.
       properties:
         check_id: { type: string, format: uuid }
         actor_id: { type: string, format: uuid }
         batch_id: { type: string, format: uuid, nullable: true }
-        external_ref: { type: string, nullable: true }
-        verdict: { $ref: "#/components/schemas/Verdict" }
-        confidence: { type: number, format: float, nullable: true }
-        model_version: { type: string }
-        answer_preview:
+        batch_file_name:
           type: string
           nullable: true
           description: |
-            First ~120 characters of the answer, for visual identification in
-            the table. NULL when `retain_answer` was false — there is nothing
-            to preview.
+            NULL for single checks. Carried here for the same reason as
+            `raw_score`/`strictness_applied` — the history table names a batch
+            from this field, and without it the name falls back to a generic
+            placeholder the moment the batch is reloaded rather than freshly
+            submitted. See DECISION LOG [0.5.8].
+        external_ref: { type: string, nullable: true }
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        raw_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: |
+            Same normalisation contract as `CheckResult.raw_score` —
+            monotonically increasing in AI-likelihood, NOT a probability, MUST
+            NOT be rendered as a percentage.
+        confidence: { type: number, format: float, nullable: true }
+        strictness_applied:
+          $ref: "#/components/schemas/Strictness"
+        model_version: { type: string }
+        answer_text:
+          type: string
+          nullable: true
+          description: NULL if `retain_answer` was false. See DECISION LOG [0.5.8].
         created_at: { type: string, format: date-time }
 
     DetectorCapabilities:
@@ -2131,8 +2257,8 @@ components:
             - invalid_request
             - unauthenticated # 401 — no valid session (auth, gateway)
             - session_expired # 401 — session existed, clock fired (auth)
-            - not_provisioned # authenticated at Entra, no user record (users)
-            - deactivated # authenticated at Entra, user record exists
+            - not_provisioned # authenticated at Auth0, no user record (users)
+            - deactivated # authenticated at Auth0, user record exists
               # but soft-deleted (users)
             - forbidden # 403 — valid session, insufficient role (users)
             - not_found
@@ -2151,7 +2277,7 @@ components:
           type: string
           description: |
             Human-readable. Never interpolates unsanitised upstream input
-            (notably Entra's `error_description`).
+            (notably Auth0's `error_description`).
         request_id:
           type: string
           description: Correlates with CloudWatch logs and the audit trail.
@@ -2201,6 +2327,368 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.11.0] Dropped the planned `audit` module; no separate audit store.
+#
+#   PROBLEM. The module TODO list carried `[ ] audit — audit log retrieval`,
+#   and the checks module's own text (info.description's service-boundary
+#   diagram, the `checks` tag description, `POST /api/checks`, and
+#   `CheckCreateRequest.retain_answer`) described a per-check "audit
+#   table"/"audit entry" written unconditionally alongside the checks row,
+#   holding actor_id/timestamp/model_version/verdict. No such second table
+#   was ever implemented, and on inspection it would have been pure
+#   duplication, not a second source of truth: checks rows are already
+#   immutable, never soft-deleted, and already carry every one of those
+#   fields unconditionally — `retain_answer: false` only nulls `answer_text`,
+#   nothing else. A written-but-never-built module description left the
+#   contract claiming a store that does not exist and was never going to earn
+#   its keep.
+#
+#   The same discussion surfaced a real gap this decision closes rather than
+#   defers: `PATCH /api/users/{id}/role` (~L1108) promises it is audited
+#   (`actor_id`, `old_role`, `new_role`, `timestamp`), but no event table for
+#   it exists. `UserStatusEvent` already covers the equivalent for
+#   deactivate/reactivate/delete. Folding role events into it (extra nullable
+#   columns, or a discriminator + generic payload) was considered and
+#   rejected: `UserStatusEnum`/`UserRoleEnum` don't share column shape, a
+#   merged table would undermine the contract's own stated reason for giving
+#   role changes a distinct endpoint ("always its own distinct, audited
+#   action"), and a second ~10-line table mirroring `UserStatusEvent`'s shape
+#   costs about the same as the discriminator plumbing anyway.
+#
+#   DECISION. No standalone `audit` module, now or later. Removed it from the
+#   module TODO list and the "audit table"/"audit entry" text in the checks
+#   module — checks rows are already self-auditing, per CheckResult's Tier 1
+#   guarantee that actor_id/verdict/created_at/model_version are always
+#   present. Per-domain append-only event tables are the pattern instead:
+#   `UserStatusEvent` today, and a same-shaped `UserRoleEvent`
+#   (actor_id/from_role/to_role/created_at) to be added when
+#   `PATCH /api/users/{id}/role` is implemented. A combined "everything that
+#   happened to this user" timeline, if ever needed, is a `UNION ALL` / view
+#   across the two event tables at query time — not a reason to merge them
+#   now. No wire-format or behaviour change; this only corrects what the
+#   contract claimed existed. See
+#   `docs/superpowers/specs/2026-09-05-batches-worker-detector-design.md`
+#   Decision 2 for the full writeup this entry summarises.
+#
+# [0.10.0] Invite email copy is wrong, and reset is coming later - fix both
+#          with one flag instead of two endpoints.
+#
+#   PROBLEM. [0.9.0]'s invite email is Auth0's stock Change Password copy
+#   ("You have submitted a password change request!") - false for a brand
+#   new account. The instinct to fix this by finding an Auth0 "temporary
+#   password" primitive (Cognito-style) doesn't work: Auth0 has none for a
+#   Database connection. Repurposing the password-change flow as the
+#   invitation IS Auth0's own documented pattern for an invite-only Database
+#   connection (auth0.com/docs/customize/email/send-email-invitations-for-
+#   application-signup), not a workaround - so the fix is to do that pattern
+#   properly, not to replace it.
+#
+#   DECISION. `invite_user`'s `POST /api/v2/users` call now also sets
+#   `app_metadata: { pending_activation: true }`. The Change Password email
+#   template (Auth0 dashboard, requires an external SMTP provider to
+#   customize - built-in Auth0 email cannot use custom templates) branches
+#   on that flag via Liquid to send invite copy instead of reset copy. A
+#   dashboard-side Post-Login Action clears the flag on first sign-in. Both
+#   dashboard steps are configuration, not code, and are not part of this
+#   repo. `/dbconnections/change_password` - the same call `invite_user`
+#   already makes - stays the one endpoint for both cases; a future
+#   self-service "forgot password" link calls it directly from the
+#   frontend (no token involved, so no BFF boundary crossed) and gets reset
+#   copy for free because the flag is already cleared by then.
+#
+#   REJECTED. The Management API's `POST /api/v2/tickets/password-change`
+#   (what [0.8.0] replaced) has `mark_email_as_verified`/`result_url`
+#   options this app doesn't need, and doesn't send the email itself -
+#   back to manual relay. Auth0 Organizations invitations are B2B
+#   multi-tenant machinery (org membership, org switcher) for a flat
+#   instructor/TA roster with no tenancy concept - wrong shape.
+#
+#   NOT DONE YET. The email template edit, SMTP provider, and Post-Login
+#   Action are dashboard configuration only - no self-service reset feature
+#   exists yet to need them beyond making the copy correct, so they aren't
+#   built speculatively here.
+#
+# [0.9.0] Auth0 emails the invitee directly instead of returning a link
+#         for the admin to relay by hand.
+#
+#   PROBLEM. [0.8.0]'s `activation_url` worked, but only by pushing a manual
+#   step onto the admin: copy the one-time link out of the `POST /api/users`
+#   response and send it to the invitee themselves (email, chat, whatever).
+#   That's avoidable friction and an easy way to lose the link, since it is
+#   never shown again after the create call.
+#
+#   DECISION. `invite_user` now calls the Authentication API's
+#   `POST /dbconnections/change_password` (public, keyed on `AUTH0_CLIENT_ID`,
+#   no bearer token) instead of `POST /api/v2/tickets/password-change`. Auth0
+#   sends the invitee their own password-set email directly - there is no URL
+#   left for this app to hand back. `UserProvisionResponse` is retired;
+#   `POST /api/users` now returns a plain `User` like every other write.
+#
+#   CONSEQUENCE. The Management API user-creation call now also sets
+#   `verify_email: false` (alongside the existing `email_verified: false`) -
+#   without it, Auth0 separately auto-fires its own "Verify Your Account"
+#   email on creation, which only marks the address verified and does
+#   nothing for login. That stray email was a real symptom during testing:
+#   an invitee received a "Verify Your Account" email but no way to set a
+#   password, because the actual activation link was sitting unread in the
+#   admin's Postman response.
+#
+# [0.8.0] Provisioning now also creates the Auth0 credential.
+#
+#   PROBLEM. [0.7.0] closed self-service signup (Disable Sign Ups), which was
+#   the right call for security but had an unnoticed side effect:
+#   provisioning a `users` row used to be sufficient because the *other*
+#   half - an Auth0 identity - got created automatically, for free, on the
+#   invitee's own first login (whichever social IdP they already had an
+#   account with created it). Disable Sign Ups removes that free half. A
+#   `users` row with no matching Auth0 credential is a silent, permanent
+#   lockout: the person is "provisioned" by every signal this app can show
+#   an admin, and cannot sign in, ever, with no error pointing at why. Found
+#   by hitting it directly - a correctly provisioned account had no way in.
+#
+#   DECISION. `create_user` (POST /api/users) and `scripts.provision_user`
+#   both now create the Auth0-side Database-connection credential as part of
+#   provisioning, using Auth0's own documented invitation pattern
+#   (auth0.com/docs/customize/email/send-email-invitations-for-application-
+#   signup): create the user via the Management API with a throwaway
+#   password neither we nor the invitee ever see, then generate a
+#   password-change ticket (a one-time link) via the same API. The invitee
+#   opens the link and sets their own password - Auth0 never learns a
+#   password we chose, and we never learn the one they choose.
+#
+#   ORDERING. The Auth0 call happens before the local `users` row is
+#   committed, not after. A `users` row with no Auth0 credential is the
+#   exact failure this decision exists to prevent, so create_user must not
+#   produce that state on a partial failure - if Auth0 credential creation
+#   fails, the request fails and nothing is saved locally. The reverse
+#   ordering (commit first, create Auth0 credential second) would recreate
+#   the same lockout on any Auth0-side failure, just one line later.
+#
+#   NEW CONFIG. `AUTH0_M2M_CLIENT_ID` / `AUTH0_M2M_CLIENT_SECRET` - a
+#   separate Auth0 application (client_credentials grant, authorized for the
+#   Management API, `create:users` scope at minimum) from the
+#   `AUTH0_CLIENT_ID`/`AUTH0_CLIENT_SECRET` pair used for the login flow
+#   itself. Required at startup, same "refuse to boot rather than run
+#   half-broken" pattern as the other four AUTH0_* vars - without it,
+#   provisioning is silently broken in exactly the way this decision exists
+#   to prevent.
+#
+#   CONSEQUENCES.
+#     - `UserProvisionResponse` (`User` + `activation_url`) is a new schema,
+#       returned only from `POST /api/users`'s `201` - never persisted,
+#       never returned again. The admin who provisions someone is the only
+#       route the link has to reach them.
+#     - New `502` response on `POST /api/users`: Auth0 Management API
+#       failure. Distinct from `409` (local duplicate) - this is an
+#       upstream failure, not a caller mistake.
+#     - `scripts.provision_user` prints the same link to stdout instead of
+#       returning it, since it has no HTTP response to put it in.
+#     - Root admin seeding is unaffected in shape (still a `users` row with
+#       `auth0_sub` NULL until first login) but must now also go through
+#       this path or an equivalent manual Auth0 dashboard credential
+#       creation - a bare `users` row is no longer sufficient for anyone,
+#       root admin included.
+#
+# [0.7.0] Auth0 connection swapped from Microsoft social to Database
+#         (email/password).
+#
+#   PROBLEM. The Microsoft social connection ([0.6.0]) reintroduced the same
+#   class of problem it was supposed to sidestep: a federation hop with its
+#   own failure surface. Concretely, hit during local integration testing:
+#     - The redirect chain through the Microsoft hop interacts with the
+#       frontend's CSP `form-action` directive in ways that are easy to
+#       misconfigure and hard to debug (a stale Entra-era `form-action`
+#       value silently blocked the post-login redirect with no console
+#       error — the failure mode looked like a dead form, not a CSP block).
+#     - Behavior was inconsistent between personal and work/school Microsoft
+#       accounts, which is exactly the ambiguity Auth0 was meant to remove.
+#   Neither problem is inherent to OIDC or to this app's architecture — both
+#   are specific to routing through a second identity provider.
+#
+#   DECISION. Reconfigure the Auth0 application to exactly one connection: a
+#   Database (email/password) connection, hosted entirely on Auth0's own
+#   login page — no second IdP hop. Everything above the connection layer is
+#   unchanged: OIDC Relying Party, no access/refresh token stored, BFF
+#   pattern, opaque `__Host-` session cookie, invite-first provisioning
+#   keyed on email, `users.auth0_sub` schema from [0.6.0] untouched (Auth0
+#   assigns a `sub` claim — `auth0|...` — to Database-connection users the
+#   same way it assigned one to Microsoft-federated users; the column's
+#   nullable-until-first-login semantics don't change).
+#
+#   No backend code changes. `apps/api/app/auth/oidc.py` already registers
+#   the client generically via `server_metadata_url` discovery and never
+#   parsed a Microsoft-specific claim — the connection swap is entirely an
+#   Auth0 dashboard change.
+#
+#   SELF-SERVICE SIGNUP — verified against Auth0's own docs before deciding,
+#   because a Database connection changes the sign-up-surface question a
+#   social connection doesn't have:
+#     - **Disable Sign Ups** (Authentication > Database > connection
+#       settings) is Auth0's own documented mechanism for an invite-only
+#       Database connection (Auth0 Support: "Restrict Sign-Ups to Just
+#       Invited Users"; multiple Auth0 Community threads confirm the same
+#       pattern). Turning it on removes the sign-up option from Universal
+#       Login entirely — credentials can only be created by us (dashboard or
+#       Management API), never by a visitor.
+#     - Auth0's own passwordless best-practices doc carries an explicit
+#       caveat on the same toggle: "When Disable Sign Ups is enabled, your
+#       application may become vulnerable to user enumeration attacks... If
+#       you do enable it, Brute-force Protection may mitigate the threat...
+#       but it does not fully protect your application"
+#       (auth0.com/docs/authenticate/passwordless/best-practices). Read
+#       literally this is a warning *against* enabling it, but the
+#       Community/Support-documented invite-only pattern above enables it
+#       anyway — the resolution is that Disable Sign Ups is still correct
+#       (it is *more* restrictive than open sign-up, not less), but must not
+#       be the only control.
+#     - DECISION: enable Disable Sign Ups **and** enable Attack Protection
+#       tenant-wide (Bot Detection, Suspicious IP Throttling, Brute-force
+#       Protection — all free dashboard toggles, per Auth0's own Signup
+#       Attack Playbook). This is defense in depth on top of the
+#       backend-side gate that already exists independent of Auth0 config:
+#       `resolve_user` only issues a session for a sub already tied to an
+#       active `users` row — an Auth0 credential existing is necessary but
+#       never sufficient to get in.
+#
+#   ALTERNATIVE CONSIDERED: keep the Microsoft social connection, chase the
+#   redirect-chain bugs to ground instead of switching connection type.
+#   Rejected — those bugs are inherent to the federation hop (a second
+#   party's redirect/consent behavior, outside this app's control), not a
+#   one-time misconfiguration; switching removes the whole bug class instead
+#   of patching instances of it.
+#
+#   ALTERNATIVE CONSIDERED: a different social IdP (Google) instead of
+#   Microsoft. Rejected — no SSO requirement exists (users are individually
+#   invited by email regardless of provider; there is no institutional
+#   Google/Microsoft tenant this app needs to trust), so swapping one
+#   federation hop for another buys nothing and keeps the same class of risk.
+#
+#   CONSEQUENCES.
+#     - `info.description` "Authentication model": "Microsoft social
+#       connection" language replaced with "Database connection, Disable
+#       Sign Ups enabled, Attack Protection enabled".
+#     - `GET /api/auth/login` description: no longer mentions federating to
+#       a third-party connection.
+#     - `POST /api/auth/logout` "Residual behaviour" note (Microsoft session
+#       persisting after logout) removed — there is no upstream federated
+#       session to leave dangling. The "Two-step logout" rationale
+#       (Auth0's own SSO session surviving a local session revoke) still
+#       holds and is unchanged.
+#     - Root admin provisioning: the `users` row is still seeded the same
+#       way; the matching Auth0 credential is now created via the
+#       Database connection (dashboard or Management API) instead of
+#       relying on the admin's first Microsoft sign-in to mint one.
+#
+# [0.6.0] Identity provider swapped from Entra ID to Auth0.
+#
+#   PROBLEM. The Entra ID integration required registering the app in the
+#   university's own Entra tenant (app registration + admin consent). The
+#   sponsor could not get that approval — a capstone project has no path to
+#   university IT sign-off on this timeline. The blocker was specifically
+#   the app-registration/tenant-whitelisting step, not the OIDC/BFF
+#   architecture itself, and not the user population (allowlisted
+#   instructors/TAs, admin pre-provisions by email, no self-service signup).
+#
+#   DECISION. Swap the identity broker to Auth0, configured with exactly one
+#   connection: the Microsoft social connection. Instructors still sign in
+#   with their Microsoft account; the app registration lives in Auth0's own
+#   tenant instead of the university's, which removes the dependency on
+#   university IT entirely. Everything else stands: OIDC Relying Party, no
+#   access/refresh token stored, BFF pattern, opaque `__Host-` session
+#   cookie, invite-first provisioning keyed on email.
+#
+#   ALTERNATIVE CONSIDERED: Firebase Auth. Rejected — Firebase's SDK is built
+#   around handing an ID token to browser JS by design, which fights the
+#   "token structurally unreadable to JS" property the BFF exists for.
+#
+#   ALTERNATIVE CONSIDERED: pivot away from BFF to JWT-in-browser storage,
+#   prompted by a generic Auth0 SPA quickstart. Rejected after checking
+#   Auth0's own token-storage guidance
+#   (auth0.com/docs/secure/security-guidance/data-security/token-storage),
+#   which recommends server-side/BFF handling as the *most* secure option
+#   whenever a backend exists — the SPA quickstart guidance is the fallback
+#   for backend-less apps, not a recommendation to abandon BFF here.
+#
+#   CONSEQUENCES.
+#     - `users.entra_oid` -> `users.auth0_sub`; root_admin reseeded on a
+#       hardcoded Auth0 `sub` instead of an Entra `oid`.
+#     - The `login_hint`-claim-replay-at-logout mechanism (`users.logout_hint`,
+#       `record_logout_hint`) is dropped, not ported. It existed to suppress
+#       Entra's account-picker prompt on sign-out via its RP-Initiated Logout
+#       (`end_session_endpoint`, `logout_hint` param). Auth0 does not
+#       implement that OIDC mechanism for its own session — it exposes
+#       `/v2/logout?client_id=...&returnTo=...` instead, which reads Auth0's
+#       own session cookie and needs no per-user hint. Nothing is lost:
+#       there was no equivalent to carry forward.
+#     - The "force account chooser on second login after logout" behavior
+#       (added in the login-hotfix that shipped `force_account_chooser`)
+#       moves from Entra's `prompt=select_account` to Auth0's `prompt=login`
+#       — same goal (a second login must not silently reuse a stale SSO
+#       session), the closest primitive Auth0 actually exposes.
+#     - `GET /api/detector` capability-flag pattern, `strictness` enum,
+#       checks/detector module boundary, RBAC delegation chain, session
+#       lifetime rules: all untouched. None of this was Entra-specific.
+#
+# [0.5.9] GET /api/detector's 503 removed.
+#
+#   PROBLEM. The response was documented as "Detector service unreachable",
+#   but GET /api/detector's whole purpose per [0.5.1] below is to hand back
+#   static server-declared config - requires_question_text, min/max answer
+#   length, strictness levels, which Tier 3 modules to render. Nothing in
+#   answering it touches the live detector; DETECTOR_CAPABILITIES is a plain
+#   dict built from constants. There was no failure mode that could actually
+#   produce this response.
+#
+#   Worse, the 503 as written would have reintroduced a pattern already
+#   argued against for the sibling endpoint: GET /api/detector/status owns
+#   detector reachability and is deliberately always 200, because a down
+#   detector is a state to render (a status badge), not a failed request.
+#   Wiring a live health check into GET /api/detector to produce this 503
+#   would fail that judgement on the one endpoint fetched at SPA bootstrap
+#   alongside session/user info - a transient detector blip at login would
+#   fail the whole app load, for a payload that does not need the detector
+#   to be up to answer correctly.
+#
+#   DECISION. Removed the 503. The response's own stated intent - "the SPA
+#   should disable submission" - is already served by GET /api/detector/status,
+#   which the SPA polls. No behaviour change on either endpoint; this only
+#   corrects what GET /api/detector's contract claimed it could do.
+#
+# [0.5.8] CheckSummary widened: raw_score + strictness_applied +
+#   batch_file_name added, answer_preview reverted to full answer_text.
+#
+#   PROBLEM. CheckSummary (0.5.0) was leaner than what the SPA's history
+#   table actually renders. The table's Score column reads raw_score; the
+#   per-batch strictness tag (built by grouping checks client-side on
+#   batch_id — there is no separate batches resource, see [0.5.0] below) reads
+#   detector.strictness_applied; the batch's displayed file name reads
+#   batch_file_name. None of the three exist on CheckSummary as originally
+#   specified. Because a check or batch is rendered from the full CheckResult
+#   POST /api/checks returns at submission time, and only from CheckSummary on
+#   every reload after that, the gap wouldn't show up in normal use — the row
+#   would render correctly, then go blank (or fall back to a generic "Batch"
+#   label) on exactly those fields the moment the page is refreshed or
+#   revisited later. A regression that only appears a step removed from the
+#   action that causes it.
+#
+#   DECISION. Add raw_score, strictness_applied, and batch_file_name to
+#   CheckSummary. The first two are flattened out of detector the same way
+#   model_version already is; batch_file_name rides alongside the existing
+#   batch_id. All three are cheap, non-privacy-sensitive scalars — not a
+#   reason to nest a partial DetectorInfo or invent a batches lookup.
+#
+#   Also reverted answer_preview back to full answer_text. The rationale for
+#   excluding full answer text from a list response — payload size, not
+#   shipping every stored student answer to the browser just to draw a table
+#   — still holds in principle. But the history search box currently does a
+#   full-text client-side substring match against answer_text, and
+#   GET /api/checks has no server-side search parameter to fall back to.
+#   Truncating to a ~120-character preview here would silently stop search
+#   from matching anything past that point — a quiet regression, not a loud
+#   one, and worse for it. Deferred rather than solved: when a server-side
+#   search parameter lands on GET /api/checks, answer_text should come back
+#   out of CheckSummary in favour of answer_preview or nothing.
 #
 # [0.5.6] `provisioned_by` is the supervision edge, and it is settable.
 #
@@ -2696,8 +3184,8 @@ components:
 #   -- answer_text must not destroy the length data that E3's reliability-vs-
 #   -- answer-length analysis depends on.
 #
-# Seed migration creates exactly one root_admin, keyed on a hardcoded Entra
-# `oid`, with provisioned_by = NULL.
+# Seed migration creates exactly one root_admin, keyed on a hardcoded Auth0
+# `sub`, with provisioned_by = NULL.
 #
 # No table stores an ID token, access token, or refresh token.
 # =============================================================================

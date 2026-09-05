@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import require_role
 from db import get_db
 from exceptions import (
+    Auth0ProvisioningError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
@@ -105,6 +106,8 @@ async def provision_user(
 ):
     """
     Create new user endpoint. Authorization checks performed in service layer.
+
+    Auth0 emails the invitee their own password-set link directly.
     """
     try:
         user = await create_user(
@@ -129,6 +132,11 @@ async def provision_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A user with this email already exists.",
+        )
+    except Auth0ProvisioningError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not create an Auth0 credential for this user. Nothing was saved - try again.",
         )
     return user
 

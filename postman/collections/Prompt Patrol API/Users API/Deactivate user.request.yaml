@@ -1,0 +1,23 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/deactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+        "reason": "Testing deactivation via Postman"
+    }
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"200 and status flips\", () => {\r
+
+      \  pm.response.to.have.status(200);\r
+
+      \  pm.expect(pm.response.json().status).to.eql(\"deactivated\");\r
+
+      });\r\n"
+    language: text/javascript
+order: 4000

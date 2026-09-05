@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from auth import SessionFailure
-from config import FRONTEND_URL
+from config import AUTH0_CLIENT_ID, AUTH0_DOMAIN, FRONTEND_URL
 from db import get_db
 from main import app
-from models import User, UserRoleEnum, UserSession
+from models import User, UserRoleEnum, UserSession, UserStatusEnum
 from services import authenticate_session, create_session
 from services.sessions import SESSION_IDLE_TTL
 
@@ -29,12 +29,12 @@ def client(db_session):
 
 @pytest.mark.asyncio
 async def test_callback_creates_session_for_provisioned_user(client, db_session):
-    user = User(id=uuid.uuid4(), email="prov@smu.edu.sg", role=UserRoleEnum.instructor)
+    user = User(id=uuid.uuid4(), email="prov@smu.edu.sg", auth0_sub="oid-prov", role=UserRoleEnum.instructor)
     db_session.add(user)
     await db_session.commit()
 
-    fake_token = {"userinfo": {"oid": "oid-prov", "email": "prov@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    fake_token = {"userinfo": {"sub": "oid-prov", "email": "prov@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
@@ -46,16 +46,16 @@ async def test_callback_creates_session_for_provisioned_user(client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_callback_signs_in_when_entra_sends_a_different_email_case(client, db_session):
+async def test_callback_signs_in_when_auth0_sends_a_different_email_case(client, db_session):
     # End to end version of the provisioning-case bug: the row is correct, the
     # person is real, and the only difference is capitalisation in the claim.
     # This used to land on /login?error=not_provisioned.
-    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", role=UserRoleEnum.instructor)
+    user = User(id=uuid.uuid4(), email="ada@smu.edu.sg", auth0_sub="oid-ada", role=UserRoleEnum.instructor)
     db_session.add(user)
     await db_session.commit()
 
-    fake_token = {"userinfo": {"oid": "oid-ada", "email": "Ada@SMU.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    fake_token = {"userinfo": {"sub": "oid-ada", "email": "Ada@SMU.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
@@ -65,12 +65,19 @@ async def test_callback_signs_in_when_entra_sends_a_different_email_case(client,
 
 @pytest.mark.asyncio
 async def test_callback_redirects_unprovisioned_user(client, db_session):
-    fake_token = {"userinfo": {"oid": "oid-x", "email": "nobody@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    # Auth0 already completed its own login before we ever see the rejection,
+    # so the rejection must route through Auth0 logout - otherwise Auth0's SSO
+    # cookie survives and the next /login silently re-authenticates the same
+    # identity instead of letting the user pick a different one.
+    fake_token = {"userinfo": {"sub": "oid-x", "email": "nobody@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=not_provisioned"
+    location = response.headers["location"]
+    assert location.startswith(f"https://{AUTH0_DOMAIN}/v2/logout")
+    assert f"client_id={AUTH0_CLIENT_ID}" in location
+    assert quote(f"{FRONTEND_URL}/login?error=not_provisioned", safe="") in location
     assert "__Host-session" not in response.cookies
     result = await db_session.execute(select(UserSession))
     assert result.scalars().all() == []
@@ -81,22 +88,47 @@ async def test_callback_issues_no_session_on_attempted_account_takeover(client, 
     victim = User(
         id=uuid.uuid4(),
         email="victim@smu.edu.sg",
-        entra_oid="victim-oid",
+        auth0_sub="victim-oid",
         role=UserRoleEnum.root_admin,
     )
     db_session.add(victim)
     await db_session.commit()
 
-    attacker = {"userinfo": {"oid": "attacker-oid", "email": "victim@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=attacker)):
+    attacker = {"userinfo": {"sub": "attacker-oid", "email": "victim@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=attacker)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=not_provisioned"
+    location = response.headers["location"]
+    assert location.startswith(f"https://{AUTH0_DOMAIN}/v2/logout")
+    assert quote(f"{FRONTEND_URL}/login?error=not_provisioned", safe="") in location
     assert "__Host-session" not in response.cookies
     assert (await db_session.execute(select(UserSession))).scalars().all() == []
     await db_session.refresh(victim)
-    assert victim.entra_oid == "victim-oid"
+    assert victim.auth0_sub == "victim-oid"
+
+
+@pytest.mark.asyncio
+async def test_callback_signs_out_of_auth0_for_a_deactivated_account(client, db_session):
+    user = User(
+        id=uuid.uuid4(),
+        email="off@smu.edu.sg",
+        auth0_sub="oid-off",
+        role=UserRoleEnum.instructor,
+        status=UserStatusEnum.deactivated,
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    fake_token = {"userinfo": {"sub": "oid-off", "email": "off@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        response = client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert location.startswith(f"https://{AUTH0_DOMAIN}/v2/logout")
+    assert quote(f"{FRONTEND_URL}/login?error=deactivated", safe="") in location
+    assert "__Host-session" not in response.cookies
 
 
 def test_login_is_silent_sso_by_default(client):
@@ -104,7 +136,7 @@ def test_login_is_silent_sso_by_default(client):
     # is documented as intentional, not a bug, outside the post-logout window -
     # a plain visit to /login must keep using it.
     with patch(
-        "routes.auth_routes.oauth.entra.authorize_redirect",
+        "routes.auth_routes.oauth.auth0.authorize_redirect",
         new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
     ) as mock_redirect:
         client.get("/api/auth/login", follow_redirects=False)
@@ -114,7 +146,7 @@ def test_login_is_silent_sso_by_default(client):
 
 def test_login_forwards_login_hint_when_not_forcing_the_chooser(client):
     with patch(
-        "routes.auth_routes.oauth.entra.authorize_redirect",
+        "routes.auth_routes.oauth.auth0.authorize_redirect",
         new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
     ) as mock_redirect:
         client.get("/api/auth/login?login_hint=ada@smu.edu.sg", follow_redirects=False)
@@ -123,35 +155,34 @@ def test_login_forwards_login_hint_when_not_forcing_the_chooser(client):
     assert "prompt" not in mock_redirect.call_args.kwargs
 
 
-def test_login_forces_the_account_chooser_right_after_our_own_logout(client):
-    # Regression: without prompt=select_account, a live Microsoft SSO cookie
-    # right after our own logout makes Entra silently re-authenticate instead
-    # of showing an interactive screen, so the user never appears to leave
-    # our login page.
+def test_login_forces_reauth_right_after_our_own_logout(client):
+    # Regression: without prompt=login, a live Auth0 SSO cookie right after our
+    # own logout makes Auth0 silently re-authenticate instead of showing an
+    # interactive screen, so the user never appears to leave our login page.
     with patch(
-        "routes.auth_routes.oauth.entra.authorize_redirect",
-        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+        "routes.auth_routes.oauth.auth0.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://example.auth0.com/authorize", 302)),
     ) as mock_redirect:
         client.get("/api/auth/login?force_account_chooser=1", follow_redirects=False)
 
-    assert mock_redirect.call_args.kwargs["prompt"] == "select_account"
+    assert mock_redirect.call_args.kwargs["prompt"] == "login"
 
 
-def test_login_ignores_login_hint_when_forcing_the_chooser(client):
-    # Microsoft's docs: prompt=select_account can't be combined with
-    # login_hint, so a login_hint on our own endpoint must not be forwarded.
+def test_login_forwards_login_hint_when_forcing_reauth(client):
+    # Regression: forcing an interactive Auth0 login after our own logout must
+    # not also throw away an email the frontend already has cached - Auth0's
+    # /authorize accepts login_hint and prompt=login together.
     with patch(
-        "routes.auth_routes.oauth.entra.authorize_redirect",
-        new=AsyncMock(return_value=RedirectResponse("https://login.microsoftonline.com/authorize", 302)),
+        "routes.auth_routes.oauth.auth0.authorize_redirect",
+        new=AsyncMock(return_value=RedirectResponse("https://example.auth0.com/authorize", 302)),
     ) as mock_redirect:
         client.get(
             "/api/auth/login?login_hint=ada@smu.edu.sg&force_account_chooser=1",
             follow_redirects=False,
         )
 
-    assert mock_redirect.call_args.kwargs["prompt"] == "select_account"
-    assert "login_hint" not in mock_redirect.call_args.kwargs
-    assert "login_hint" not in mock_redirect.call_args.kwargs
+    assert mock_redirect.call_args.kwargs["prompt"] == "login"
+    assert mock_redirect.call_args.kwargs["login_hint"] == "ada@smu.edu.sg"
 
 
 def test_me_without_session_returns_401(client):
@@ -190,10 +221,10 @@ async def test_me_with_valid_session_returns_user(client, db_session):
 
 def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
     # Regression: this used to redirect to /api/auth/login, which re-enters the
-    # Entra redirect immediately - a user who cancelled was thrown back at the
+    # Auth0 redirect immediately - a user who cancelled was thrown back at the
     # prompt they had just dismissed and could never reach our own login page.
     error = OAuthError(error="access_denied", description="user cancelled")
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
@@ -203,7 +234,7 @@ def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
 
 def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
     error = OAuthError(error="mismatching_state", description="CSRF Warning!")
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303
@@ -211,7 +242,7 @@ def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
     assert "__Host-session" not in response.cookies
 
 
-def test_callback_never_redirects_back_into_the_entra_flow(client):
+def test_callback_never_redirects_back_into_the_auth0_flow(client):
     # The loop guard. No callback failure may point the browser at a URL that
     # restarts the OIDC redirect - the user must always land somewhere with a
     # way out.
@@ -220,18 +251,18 @@ def test_callback_never_redirects_back_into_the_entra_flow(client):
         OAuthError(error="mismatching_state", description="CSRF Warning!"),
         OAuthError(description='Missing "state" parameter'),
     ):
-        with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+        with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
             response = client.get("/api/auth/callback", follow_redirects=False)
 
         assert "/api/auth/login" not in response.headers["location"]
         assert response.headers["location"].startswith(f"{FRONTEND_URL}/login?error=")
 
 
-def test_callback_does_not_reflect_entra_error_text_into_the_url(client):
+def test_callback_does_not_reflect_auth0_error_text_into_the_url(client):
     # error_description is provider-controlled. It must never reach a URL the
     # browser lands on.
     error = OAuthError(error="invalid_client", description="<script>alert(1)</script>")
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(side_effect=error)):
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     location = response.headers["location"]
@@ -242,8 +273,8 @@ def test_callback_does_not_reflect_entra_error_text_into_the_url(client):
 
 @pytest.mark.asyncio
 async def test_callback_ignores_stale_cookie(client, db_session):
-    fake_token = {"userinfo": {"oid": "oid-stale", "email": "stale@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    fake_token = {"userinfo": {"sub": "oid-stale", "email": "stale@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         client.cookies.set("__Host-session", "not-a-real-token")
         response = client.get("/api/auth/callback", follow_redirects=False)
 
@@ -315,7 +346,7 @@ def test_no_gateway_header_trust_remains_in_the_auth_dependency():
         assert "ENVIRONMENT" not in code
 
 
-def test_entra_routes_are_always_mounted():
+def test_auth0_routes_are_always_mounted():
     assert {"/api/auth/login", "/api/auth/callback"} <= set(app.openapi()["paths"])
 
 
@@ -371,12 +402,6 @@ async def test_me_reports_a_null_provisioner_for_a_seeded_account(client, db_ses
 # most side effects: it revokes a row, clears a cookie, and hands the browser to
 # a third party.
 
-END_SESSION = "https://login.microsoftonline.com/tid/oauth2/v2.0/logout"
-
-
-def _discovery(monkeypatch_target="routes.auth_routes.oauth.entra.load_server_metadata"):
-    return patch(monkeypatch_target, new=AsyncMock(return_value={"end_session_endpoint": END_SESSION}))
-
 
 async def _signed_in_client(client, db_session, **user_kwargs):
     user = User(id=uuid.uuid4(), email="out@smu.edu.sg", role=UserRoleEnum.instructor, **user_kwargs)
@@ -391,8 +416,7 @@ async def _signed_in_client(client, db_session, **user_kwargs):
 async def test_logout_revokes_the_session(client, db_session):
     user, raw_token = await _signed_in_client(client, db_session)
 
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
+    response = client.post("/api/auth/logout", follow_redirects=False)
 
     assert response.status_code == 303
     assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
@@ -407,8 +431,7 @@ async def test_logout_ends_this_users_other_sessions_too(client, db_session):
     other_device = await create_session(db_session, user.id)
     third_device = await create_session(db_session, user.id)
 
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
+    response = client.post("/api/auth/logout", follow_redirects=False)
 
     assert response.status_code == 303
     for token in (raw_token, other_device, third_device):
@@ -423,8 +446,7 @@ async def test_logout_leaves_other_users_sessions_alone(client, db_session):
     await db_session.commit()
     bystander_token = await create_session(db_session, bystander.id)
 
-    with _discovery():
-        client.post("/api/auth/logout", follow_redirects=False)
+    client.post("/api/auth/logout", follow_redirects=False)
 
     assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
     assert not isinstance(await authenticate_session(db_session, bystander_token), SessionFailure)
@@ -435,14 +457,12 @@ async def test_a_stale_token_cannot_sign_someone_out_again(client, db_session):
     # The token is resolved through a live session only. Otherwise a copied
     # cookie stays usable forever as a "sign this person out everywhere" button.
     user, raw_token = await _signed_in_client(client, db_session)
-    with _discovery():
-        client.post("/api/auth/logout", follow_redirects=False)
+    client.post("/api/auth/logout", follow_redirects=False)
 
     fresh_login = await create_session(db_session, user.id)
 
     client.cookies.set("__Host-session", raw_token)
-    with _discovery():
-        replay = client.post("/api/auth/logout", follow_redirects=False)
+    replay = client.post("/api/auth/logout", follow_redirects=False)
 
     assert replay.status_code == 303
     assert not isinstance(await authenticate_session(db_session, fresh_login), SessionFailure)
@@ -454,8 +474,7 @@ async def test_logout_clears_the_cookie_with_matching_attributes(client, db_sess
     # keeps the original cookie and the user stays signed in locally.
     await _signed_in_client(client, db_session)
 
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
+    response = client.post("/api/auth/logout", follow_redirects=False)
 
     header = response.headers["set-cookie"]
     assert "__Host-session=" in header
@@ -466,117 +485,26 @@ async def test_logout_clears_the_cookie_with_matching_attributes(client, db_sess
 
 
 @pytest.mark.asyncio
-async def test_logout_uses_the_discovered_end_session_endpoint(client, db_session):
-    # Not a hardcoded login.microsoftonline.com URL - the endpoint comes from the
-    # provider's own metadata, which is what makes non-global Azure clouds work.
+async def test_logout_redirects_to_the_auth0_logout_endpoint(client, db_session):
+    # Built directly from static config, unlike Entra's discovery-based
+    # end_session_endpoint - no per-user hint, no network call at logout time.
     await _signed_in_client(client, db_session)
 
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
+    response = client.post("/api/auth/logout", follow_redirects=False)
 
     location = response.headers["location"]
-    assert location.startswith(END_SESSION)
+    assert location.startswith(f"https://{AUTH0_DOMAIN}/v2/logout")
+    assert f"client_id={AUTH0_CLIENT_ID}" in location
     assert quote(FRONTEND_URL, safe="") in location.replace("%2F", "%2F")
-
-
-@pytest.mark.asyncio
-async def test_logout_sends_logout_hint_when_one_was_captured(client, db_session):
-    # Without this parameter Entra asks "which account do you want to sign out
-    # from?" instead of just signing the user out.
-    await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
-
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
-
-    assert "logout_hint=opaque-hint-from-entra" in response.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_logout_omits_logout_hint_when_none_was_captured(client, db_session):
-    # The optional claim may not be enabled on the app registration. That
-    # degrades to the account picker; it must not break sign-out.
-    await _signed_in_client(client, db_session)
-
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
-
-    assert response.status_code == 303
-    assert "logout_hint" not in response.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_logout_never_sends_our_own_user_id_as_the_hint(client, db_session):
-    # Entra has never seen this UUID. Passing it looks plausible and silently
-    # produces the account picker, so it must never leak into the URL.
-    user, _ = await _signed_in_client(client, db_session, logout_hint="opaque-hint-from-entra")
-
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
-
-    assert str(user.id) not in response.headers["location"]
-    assert user.email not in response.headers["location"]
+    # No per-user hint - the Entra-specific logout_hint mechanism is gone.
+    assert "logout_hint" not in location
 
 
 def test_logout_without_a_session_still_completes(client):
-    with _discovery():
-        response = client.post("/api/auth/logout", follow_redirects=False)
+    response = client.post("/api/auth/logout", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"].startswith(END_SESSION)
-
-
-@pytest.mark.asyncio
-async def test_logout_survives_an_unreachable_discovery_document(client, db_session):
-    # The local session is revoked before the provider URL is built. A provider
-    # outage must not turn that into a 500 that tells the user sign-out failed
-    # when it actually succeeded.
-    user, raw_token = await _signed_in_client(client, db_session)
-
-    with patch(
-        "routes.auth_routes.oauth.entra.load_server_metadata",
-        new=AsyncMock(side_effect=RuntimeError("metadata unreachable")),
-    ):
-        response = client.post("/api/auth/logout", follow_redirects=False)
-
-    assert response.status_code == 303
-    assert response.headers["location"] == f"{FRONTEND_URL}/login"
-    assert await authenticate_session(db_session, raw_token) is SessionFailure.session_revoked
-
-
-@pytest.mark.asyncio
-async def test_callback_captures_the_login_hint_claim(client, db_session):
-    user = User(id=uuid.uuid4(), email="hinted@smu.edu.sg", role=UserRoleEnum.instructor)
-    db_session.add(user)
-    await db_session.commit()
-
-    fake_token = {"userinfo": {"oid": "oid-h", "email": "hinted@smu.edu.sg", "login_hint": "opaque-hint"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
-        client.get("/api/auth/callback", follow_redirects=False)
-
-    await db_session.refresh(user)
-    assert user.logout_hint == "opaque-hint"
-
-
-@pytest.mark.asyncio
-async def test_callback_without_the_login_hint_claim_keeps_any_stored_hint(client, db_session):
-    # The claim is optional and can be absent from one login. A usable stored
-    # hint beats overwriting it with NULL.
-    user = User(
-        id=uuid.uuid4(),
-        email="kept@smu.edu.sg",
-        entra_oid="oid-k",
-        role=UserRoleEnum.instructor,
-        logout_hint="previously-captured",
-    )
-    db_session.add(user)
-    await db_session.commit()
-
-    fake_token = {"userinfo": {"oid": "oid-k", "email": "kept@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
-        client.get("/api/auth/callback", follow_redirects=False)
-
-    await db_session.refresh(user)
-    assert user.logout_hint == "previously-captured"
+    assert response.headers["location"].startswith(f"https://{AUTH0_DOMAIN}/v2/logout")
 
 
 @pytest.mark.asyncio
@@ -586,16 +514,16 @@ async def test_a_new_login_leaves_other_sessions_alive(db_session, client):
     # accumulate - see the note on GuestRoute in 08-auth-and-security.md.
     #
     # It is also not fixable at the callback: __Host-session is SameSite=strict
-    # and /api/auth/callback is reached by a cross-site redirect from Microsoft,
+    # and /api/auth/callback is reached by a cross-site redirect from Auth0,
     # so the browser withholds the existing cookie and the server has no way to
     # tell which prior session belonged to this browser.
-    user = User(id=uuid.uuid4(), email="two@smu.edu.sg", entra_oid="oid-two", role=UserRoleEnum.instructor)
+    user = User(id=uuid.uuid4(), email="two@smu.edu.sg", auth0_sub="oid-two", role=UserRoleEnum.instructor)
     db_session.add(user)
     await db_session.commit()
     first_device = await create_session(db_session, user.id)
 
-    fake_token = {"userinfo": {"oid": "oid-two", "email": "two@smu.edu.sg"}}
-    with patch("routes.auth_routes.oauth.entra.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+    fake_token = {"userinfo": {"sub": "oid-two", "email": "two@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
         response = client.get("/api/auth/callback", follow_redirects=False)
 
     assert response.status_code == 303

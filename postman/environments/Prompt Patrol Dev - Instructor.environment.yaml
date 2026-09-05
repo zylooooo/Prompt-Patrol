@@ -1,4 +1,4 @@
-name: Prompt Patrol Dev
+name: Prompt Patrol Dev - Instructor
 values:
   - key: SESSION_COOKIE
     secret: true

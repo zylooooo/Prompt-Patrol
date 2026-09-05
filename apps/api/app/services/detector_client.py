@@ -23,7 +23,7 @@ HEALTH_TIMEOUT_SECONDS = 2.0
 Status = Literal["ready", "loading", "unavailable"]
 
 # httpx defaults to a 5s read timeout, shorter than the 10s budget
-# services.checks enforces via asyncio.wait_for around this call. Set
+# services.checks_service enforces via asyncio.wait_for around this call. Set
 # generously long here so that outer wait_for - not this client - is always
 # what decides a slow detector is a timeout (504) rather than a spurious
 # "unavailable" (503) from httpx cutting the request off first.

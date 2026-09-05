@@ -68,9 +68,9 @@ def test_rejects_urls_without_a_scheme_and_host(frontend, redirect):
 def test_the_running_configuration_is_valid():
     # settings.py runs this at import time, so reaching this line already proves
     # it passed. Named so the reason a bad .env fails at collection is obvious.
-    from config import ENTRA_REDIRECT_URI, FRONTEND_URL
+    from config import AUTH0_REDIRECT_URI, FRONTEND_URL
 
-    validate_session_cookie_hosts(FRONTEND_URL, ENTRA_REDIRECT_URI)
+    validate_session_cookie_hosts(FRONTEND_URL, AUTH0_REDIRECT_URI)
 
 
 # SESSION_SECRET signs the 'ppauthflow' cookie carrying OAuth state - the

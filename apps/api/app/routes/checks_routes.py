@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -10,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import require_role, require_screening_access
 from config import request_id_ctx_var
 from db import get_db
-from models import User, UserRoleEnum
-from schemas import CheckListResponse, CheckResponse
+from models import User, UserRoleEnum, VerdictEnum
+from schemas import CheckListResponse, CheckResponse, CheckSummary
 from services import (
     DETECTOR_CAPABILITIES,
     MODEL_VERSION,
@@ -120,16 +121,33 @@ async def create_check_route(
 async def list_checks_route(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: str | None = None,
+    actor_id: uuid.UUID | None = None,
+    verdict: VerdictEnum | None = None,
+    batch_id: uuid.UUID | None = None,
+    created_from: Annotated[datetime | None, Query(alias="from")] = None,
+    created_to: Annotated[datetime | None, Query(alias="to")] = None,
     user: User = Depends(require_any_user),
     db: AsyncSession = Depends(get_db),
 ):
     """The caller's own checks, newest first. A root admin sees everyone's -
-    checks carry student answer text, so nobody else does."""
+    checks carry student answer text, so nobody else does. `actor_id` is
+    silently ignored for anyone but a root admin - a 403 on someone else's id
+    would confirm that id exists, so override rather than reject."""
     try:
-        items, next_cursor = await list_checks(db, user, limit, cursor)
+        items, next_cursor = await list_checks(
+            db,
+            user,
+            limit,
+            cursor,
+            actor_id=actor_id,
+            verdict=verdict,
+            batch_id=batch_id,
+            created_from=created_from,
+            created_to=created_to,
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor")
-    return CheckListResponse(items=[CheckResponse.of(c) for c in items], next_cursor=next_cursor)
+    return CheckListResponse(items=[CheckSummary.of(c) for c in items], next_cursor=next_cursor)
 
 
 @router.get("/checks/{check_id}", response_model=CheckResponse)

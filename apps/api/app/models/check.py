@@ -29,12 +29,8 @@ class AbstainReasonEnum(str, enum.Enum):
 
 
 class Check(Base):
-    """One screening result, as it was decided at the time.
-
-    Every detector-dependent value is stored, not looked up later: the model
-    version, the threshold, the target FPR. A check is a record of a judgement
-    someone acted on, so re-deriving it against whatever the detector says today
-    would rewrite history the moment the model is recalibrated.
+    """
+    Each Check stores a screening result for a single answer.
     """
 
     __tablename__ = "checks"
@@ -77,15 +73,15 @@ class Check(Base):
     # than one that says "the text was not kept".
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Captured at write time, independent of whether answer_text itself is
+    # kept - survives a future purge, which answer_text does not.
+    answer_char_len: Mapped[int] = mapped_column(Integer, nullable=False)
+    retain_answer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Written by the application, not left to the database, because this column
-    # orders the history page. `func.now()` is second-granularity on SQLite, so
-    # a burst of checks shared one timestamp and the keyset cursor could not
-    # tell them apart - it paged over the same rows forever. It also wrote a
-    # different string format than the bound Python value, which made
-    # `created_at < :anchor` true for rows at the *same* instant.
-    # `server_default` stays so a row inserted outside the app still gets one.
+    # The timestamp the check is created, written by the API server, not the database.
+    # server_default is kept so that if a row is inserted outside the app, there is
+    # still a default value.
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(UTC), server_default=func.now()
     )

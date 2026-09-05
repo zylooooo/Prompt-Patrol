@@ -1,5 +1,13 @@
 $kind: http-request
-name: Get current user profile
 url: "{{BASE_URL}}/api/users/me"
 method: GET
-order: 4457785419271230
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"200\", () => pm.response.to.have.status(200));\r
+
+      pm.test(\"has role\", () =>
+      pm.expect(pm.response.json()).to.have.property(\"role\"));"
+    language: text/javascript
+order: 9000

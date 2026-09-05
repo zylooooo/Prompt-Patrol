@@ -3,10 +3,12 @@ import base64
 import binascii
 import time
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exceptions import DetectorTimeoutError, DetectorUnavailableError
 from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 
 from .detector_client import MODEL_VERSION, score_text
@@ -30,14 +32,6 @@ DETECTOR_CAPABILITIES: dict = {
     "supports_explanation": False,
     "supports_spans": False,
 }
-
-
-class DetectorTimeoutError(Exception):
-    """The detector call exceeded DETECTOR_TIMEOUT_SECONDS."""
-
-
-class DetectorUnavailableError(Exception):
-    """The detector call failed for any other reason."""
 
 
 def _decide(raw_score: float, threshold: float, word_count: int) -> tuple[str, str | None]:
@@ -92,6 +86,8 @@ async def create_check(
         # The judgement is recorded either way; only the text is withheld.
         answer_text=answer_text if retain_answer else None,
         question_text=question_text,
+        answer_char_len=len(answer_text),
+        retain_answer=retain_answer,
         latency_ms=latency_ms,
     )
     db.add(check)
@@ -123,13 +119,33 @@ async def list_checks(
     actor: User,
     limit: int = 50,
     cursor: str | None = None,
+    actor_id: uuid.UUID | None = None,
+    verdict: VerdictEnum | None = None,
+    batch_id: uuid.UUID | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
 ) -> tuple[list[Check], str | None]:
     """Newest first. Keyset-paginated on `created_at, id` rather than `id`
     alone: ids are random UUIDs, so paging by id would hand back rows in an
-    order nobody asked for and the history page reads chronologically."""
+    order nobody asked for and the history page reads chronologically.
+
+    `actor_id` is only honoured for a caller who may already read any check
+    (root_admin) - silently ignored otherwise. A 403 on someone else's id
+    would confirm that id exists, so override rather than reject."""
     query = select(Check)
     if not _may_read_any_check(actor):
         query = query.where(Check.actor_id == actor.id)
+    elif actor_id is not None:
+        query = query.where(Check.actor_id == actor_id)
+
+    if verdict is not None:
+        query = query.where(Check.verdict == verdict)
+    if batch_id is not None:
+        query = query.where(Check.batch_id == batch_id)
+    if created_from is not None:
+        query = query.where(Check.created_at >= created_from)
+    if created_to is not None:
+        query = query.where(Check.created_at <= created_to)
 
     if cursor is not None:
         anchor_id = _decode_cursor(cursor)
