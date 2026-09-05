@@ -3,17 +3,41 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.5.7 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.6.0 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
 #   [x] users     — provisioning, roles, RBAC primitives
 #   [x] checks    — single-answer detection + history   (this draft)
 #   [ ] batches   — async batch submission + polling
-#   [ ] audit     — audit log retrieval
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
+# There is no standalone `audit` module and none is planned. See DECISION LOG
+# [0.6.0] — checks rows are already self-auditing, and per-domain event
+# tables (e.g. `UserStatusEvent`, planned `UserRoleEvent`) cover identity
+# lifecycle history. A generic audit log would be a second, redundant store.
+#
 # CHANGELOG
+#   0.6.0  Dropped the `audit` module from the TODO list and removed the
+#          "audit table" / "audit entry" references in the checks module
+#          (info.description's service-boundary diagram, the `checks` tag
+#          description, `POST /api/checks`, and `CheckCreateRequest.
+#          retain_answer`) — none of them described a real, separately
+#          written store; checks rows already carry every field the text
+#          claimed the audit entry recorded. See DECISION LOG [0.6.0].
+#   0.5.9  Removed the 503 response from GET /api/detector. It answers with
+#          static server-declared config (requires_question_text, length
+#          limits, strictness levels) and has no live-detector-dependent
+#          failure mode to report. Detector reachability is already
+#          GET /api/detector/status's job, and that endpoint is deliberately
+#          always 200. See DECISION LOG [0.5.9].
+#   0.5.8  CheckSummary (the GET /api/checks list row) widened: added
+#          raw_score, strictness_applied (flattened out of detector, same as
+#          model_version already was), and batch_file_name. Reverted the
+#          answer_preview truncation back to full answer_text. All of these
+#          exist so the SPA's history table doesn't regress on reload
+#          relative to what it shows right after a submission. See DECISION
+#          LOG [0.5.8].
 #   0.5.7  POST /api/checks refuses a teaching_assistant with no supervisor
 #          (`403`). The refusal existed only in the SPA, which decides it from
 #          the session payload it already holds — so the rule was a courtesy,
@@ -222,7 +246,7 @@ info:
     ## Detection — service boundary
 
     **This API is not the detector's API.** The backend owns persistence,
-    instructor identity, authorization, audit, and calibration policy. The
+    instructor identity, authorization, and calibration policy. The
     detector service owns exactly one thing: text in, normalised score out.
 
     ```
@@ -230,9 +254,14 @@ info:
                                     │           (stateless, no DB,
                                     │            no user identity,
                                     │            no threshold policy)
-                                    ├──> checks table   (result + optional text)
-                                    └──> audit table    (unconditional)
+                                    └──> checks table   (result, unconditional;
+                                                         answer_text optional)
     ```
+
+    There is no separate audit table. Checks rows are immutable and never
+    soft-deleted — `actor_id`, `model_version`, `verdict`, and `created_at`
+    are written unconditionally on every row and survive even when
+    `retain_answer` is false. See DECISION LOG [0.6.0].
 
     The detector never sees a `user_id`, never writes to Postgres, and never
     decides a verdict — it returns a score. Thresholding, abstention, and
@@ -400,8 +429,8 @@ tags:
 
       Owns the *decision*, not the *score* — see "Detection — service boundary"
       in `info.description`. The detector service is called synchronously and
-      returns a normalised score; thresholding, abstention, verdict assignment,
-      persistence, and audit all happen here.
+      returns a normalised score; thresholding, abstention, verdict
+      assignment, and persistence all happen here.
 
       `CheckResult` is shared with the batches module: a batch result row and a
       single check are the same object, so the SPA has one renderer.
@@ -1268,6 +1297,12 @@ paths:
         Cache for the session. A model swap mid-session is not a scenario worth
         engineering for — the values change on deploy, and the 4-hour absolute
         session cap bounds staleness.
+
+        Answers with static, server-declared config — nothing here depends on
+        the detector being reachable, so there is no 503 to give. Detector
+        reachability is `GET /api/detector/status`'s job, which is
+        deliberately always `200` (a down detector is a state to render, not
+        a failed request). See DECISION LOG [0.5.9].
       responses:
         "200":
           description: Current detector capabilities.
@@ -1276,14 +1311,6 @@ paths:
               schema: { $ref: "#/components/schemas/DetectorCapabilities" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "503":
-          description: |
-            Detector service unreachable. The SPA should disable submission
-            rather than let an instructor type an answer into a form that
-            cannot be submitted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   /api/checks:
     post:
@@ -1315,7 +1342,7 @@ paths:
         academic-integrity accusations is a forgery primitive; whoever ran the
         check is whoever's session ran it.
 
-        > Note the deliberate asymmetry with the audit module, where an
+        > Note the deliberate asymmetry with `GET /api/checks`, where an
         > instructor-supplied `actor_id` *filter* is silently overridden rather
         > than rejected. That override prevents existence enumeration. Here
         > there is nothing to enumerate, so failing loudly on a client bug is
@@ -1323,7 +1350,7 @@ paths:
 
         ### Why 201 and not 200
         A check is a persisted resource with an identifier, retrievable at
-        `GET /api/checks/{id}` and listed in history. The audit row is written
+        `GET /api/checks/{id}` and listed in history. The row is written
         unconditionally even when `retain_answer` is false. This is a creation,
         not an RPC call.
 
@@ -1345,9 +1372,9 @@ paths:
 
         ### Retention
         `retain_answer` governs **only** whether `answer_text` is persisted on
-        the checks row. It does not govern the audit entry, which records actor,
-        timestamp, model version, and verdict unconditionally and is not
-        client-controllable.
+        the checks row. `actor_id`, `created_at`, `model_version`, and
+        `verdict` are written unconditionally and are not client-controllable
+        — see DECISION LOG [0.6.0].
 
         > **OPEN — PDPA / retention policy.** Storing student answers requires a
         > documented retention period and a purge job, and sponsor sign-off.
@@ -1431,10 +1458,9 @@ paths:
 
         Object-level scoping is applied server-side from the authorizer context.
         An `actor_id` filter from a non-`root_admin` caller is **silently
-        overridden** to the caller's own `user_id`, never rejected — same
-        rationale as the audit module: a `403` on someone else's id confirms
-        that id exists, which is an enumeration oracle. Silent scoping leaks
-        nothing.
+        overridden** to the caller's own `user_id`, never rejected — a `403`
+        on someone else's id would confirm that id exists, which is an
+        enumeration oracle. Silent scoping leaks nothing.
 
         This is OWASP API1 territory and cannot be enforced at the gateway,
         which has no idea which rows belong to whom. See DECISION LOG [0.3.0].
@@ -1875,10 +1901,9 @@ components:
             Whether `answer_text` is persisted on the checks row and visible in
             history.
 
-            **Does not affect the audit entry**, which records actor, timestamp,
-            model version, and verdict unconditionally. Two stores, two
-            retention policies — a client-controllable audit trail would defeat
-            the purpose of having one.
+            **Does not affect the rest of the row** — `actor_id`, `created_at`,
+            `model_version`, and `verdict` are written unconditionally and are
+            not client-controllable. See DECISION LOG [0.6.0].
 
             Renamed from the proposed `save_to_history` to make that boundary
             explicit at the call site.
@@ -2015,26 +2040,52 @@ components:
 
     CheckSummary:
       type: object
-      required: [check_id, verdict, created_at, actor_id]
+      required:
+        [check_id, verdict, raw_score, strictness_applied, created_at, actor_id]
       description: |
-        History table row. Deliberately excludes `answer_text`, `explanation`,
-        and `spans` — a history list should not ship every stored student answer
-        to the browser to render a table. Drill down via `GET /api/checks/{id}`.
+        History table row. A trimmed `CheckResult` — excludes `question_text`,
+        `abstain_reason`, `truncated`, `calibration_version`,
+        `threshold_applied`, `target_fpr`, `used_question_text`, `latency_ms`,
+        `explanation`, and `spans`, none of which the history table renders.
+        Drill down via `GET /api/checks/{id}` for the full record.
+
+        `raw_score` and `strictness_applied` are flattened out of `detector`,
+        same convention as `model_version`, rather than nesting a partial
+        `DetectorInfo`. `batch_file_name` rides alongside `batch_id` for the
+        same reload-survival reason. `answer_text` is intentionally full-text
+        here, not a preview. See DECISION LOG [0.5.8] for all three.
       properties:
         check_id: { type: string, format: uuid }
         actor_id: { type: string, format: uuid }
         batch_id: { type: string, format: uuid, nullable: true }
-        external_ref: { type: string, nullable: true }
-        verdict: { $ref: "#/components/schemas/Verdict" }
-        confidence: { type: number, format: float, nullable: true }
-        model_version: { type: string }
-        answer_preview:
+        batch_file_name:
           type: string
           nullable: true
           description: |
-            First ~120 characters of the answer, for visual identification in
-            the table. NULL when `retain_answer` was false — there is nothing
-            to preview.
+            NULL for single checks. Carried here for the same reason as
+            `raw_score`/`strictness_applied` — the history table names a batch
+            from this field, and without it the name falls back to a generic
+            placeholder the moment the batch is reloaded rather than freshly
+            submitted. See DECISION LOG [0.5.8].
+        external_ref: { type: string, nullable: true }
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        raw_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: |
+            Same normalisation contract as `CheckResult.raw_score` —
+            monotonically increasing in AI-likelihood, NOT a probability, MUST
+            NOT be rendered as a percentage.
+        confidence: { type: number, format: float, nullable: true }
+        strictness_applied:
+          $ref: "#/components/schemas/Strictness"
+        model_version: { type: string }
+        answer_text:
+          type: string
+          nullable: true
+          description: NULL if `retain_answer` was false. See DECISION LOG [0.5.8].
         created_at: { type: string, format: date-time }
 
     DetectorCapabilities:
@@ -2201,6 +2252,109 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.6.0] Dropped the planned `audit` module; no separate audit store.
+#
+#   PROBLEM. The module TODO list carried `[ ] audit — audit log retrieval`,
+#   and the checks module's own text (info.description's service-boundary
+#   diagram, the `checks` tag description, `POST /api/checks`, and
+#   `CheckCreateRequest.retain_answer`) described a per-check "audit
+#   table"/"audit entry" written unconditionally alongside the checks row,
+#   holding actor_id/timestamp/model_version/verdict. No such second table
+#   was ever implemented, and on inspection it would have been pure
+#   duplication, not a second source of truth: checks rows are already
+#   immutable, never soft-deleted, and already carry every one of those
+#   fields unconditionally — `retain_answer: false` only nulls `answer_text`,
+#   nothing else. A written-but-never-built module description left the
+#   contract claiming a store that does not exist and was never going to earn
+#   its keep.
+#
+#   The same discussion surfaced a real gap this decision closes rather than
+#   defers: `PATCH /api/users/{id}/role` (~L1108) promises it is audited
+#   (`actor_id`, `old_role`, `new_role`, `timestamp`), but no event table for
+#   it exists. `UserStatusEvent` already covers the equivalent for
+#   deactivate/reactivate/delete. Folding role events into it (extra nullable
+#   columns, or a discriminator + generic payload) was considered and
+#   rejected: `UserStatusEnum`/`UserRoleEnum` don't share column shape, a
+#   merged table would undermine the contract's own stated reason for giving
+#   role changes a distinct endpoint ("always its own distinct, audited
+#   action"), and a second ~10-line table mirroring `UserStatusEvent`'s shape
+#   costs about the same as the discriminator plumbing anyway.
+#
+#   DECISION. No standalone `audit` module, now or later. Removed it from the
+#   module TODO list and the "audit table"/"audit entry" text in the checks
+#   module — checks rows are already self-auditing, per CheckResult's Tier 1
+#   guarantee that actor_id/verdict/created_at/model_version are always
+#   present. Per-domain append-only event tables are the pattern instead:
+#   `UserStatusEvent` today, and a same-shaped `UserRoleEvent`
+#   (actor_id/from_role/to_role/created_at) to be added when
+#   `PATCH /api/users/{id}/role` is implemented. A combined "everything that
+#   happened to this user" timeline, if ever needed, is a `UNION ALL` / view
+#   across the two event tables at query time — not a reason to merge them
+#   now. No wire-format or behaviour change; this only corrects what the
+#   contract claimed existed. See
+#   `docs/superpowers/specs/2026-09-05-batches-worker-detector-design.md`
+#   Decision 2 for the full writeup this entry summarises.
+#
+# [0.5.9] GET /api/detector's 503 removed.
+#
+#   PROBLEM. The response was documented as "Detector service unreachable",
+#   but GET /api/detector's whole purpose per [0.5.1] below is to hand back
+#   static server-declared config - requires_question_text, min/max answer
+#   length, strictness levels, which Tier 3 modules to render. Nothing in
+#   answering it touches the live detector; DETECTOR_CAPABILITIES is a plain
+#   dict built from constants. There was no failure mode that could actually
+#   produce this response.
+#
+#   Worse, the 503 as written would have reintroduced a pattern already
+#   argued against for the sibling endpoint: GET /api/detector/status owns
+#   detector reachability and is deliberately always 200, because a down
+#   detector is a state to render (a status badge), not a failed request.
+#   Wiring a live health check into GET /api/detector to produce this 503
+#   would fail that judgement on the one endpoint fetched at SPA bootstrap
+#   alongside session/user info - a transient detector blip at login would
+#   fail the whole app load, for a payload that does not need the detector
+#   to be up to answer correctly.
+#
+#   DECISION. Removed the 503. The response's own stated intent - "the SPA
+#   should disable submission" - is already served by GET /api/detector/status,
+#   which the SPA polls. No behaviour change on either endpoint; this only
+#   corrects what GET /api/detector's contract claimed it could do.
+#
+# [0.5.8] CheckSummary widened: raw_score + strictness_applied +
+#   batch_file_name added, answer_preview reverted to full answer_text.
+#
+#   PROBLEM. CheckSummary (0.5.0) was leaner than what the SPA's history
+#   table actually renders. The table's Score column reads raw_score; the
+#   per-batch strictness tag (built by grouping checks client-side on
+#   batch_id — there is no separate batches resource, see [0.5.0] below) reads
+#   detector.strictness_applied; the batch's displayed file name reads
+#   batch_file_name. None of the three exist on CheckSummary as originally
+#   specified. Because a check or batch is rendered from the full CheckResult
+#   POST /api/checks returns at submission time, and only from CheckSummary on
+#   every reload after that, the gap wouldn't show up in normal use — the row
+#   would render correctly, then go blank (or fall back to a generic "Batch"
+#   label) on exactly those fields the moment the page is refreshed or
+#   revisited later. A regression that only appears a step removed from the
+#   action that causes it.
+#
+#   DECISION. Add raw_score, strictness_applied, and batch_file_name to
+#   CheckSummary. The first two are flattened out of detector the same way
+#   model_version already is; batch_file_name rides alongside the existing
+#   batch_id. All three are cheap, non-privacy-sensitive scalars — not a
+#   reason to nest a partial DetectorInfo or invent a batches lookup.
+#
+#   Also reverted answer_preview back to full answer_text. The rationale for
+#   excluding full answer text from a list response — payload size, not
+#   shipping every stored student answer to the browser just to draw a table
+#   — still holds in principle. But the history search box currently does a
+#   full-text client-side substring match against answer_text, and
+#   GET /api/checks has no server-side search parameter to fall back to.
+#   Truncating to a ~120-character preview here would silently stop search
+#   from matching anything past that point — a quiet regression, not a loud
+#   one, and worse for it. Deferred rather than solved: when a server-side
+#   search parameter lands on GET /api/checks, answer_text should come back
+#   out of CheckSummary in favour of answer_preview or nothing.
 #
 # [0.5.6] `provisioned_by` is the supervision edge, and it is settable.
 #

@@ -95,8 +95,23 @@ export async function getDetectorStatus(
   return toDetectorStatus(body?.status);
 }
 
+interface CheckSummaryResponse {
+  check_id: string;
+  actor_id: string;
+  batch_id: string | null;
+  batch_file_name: string | null;
+  external_ref: string | null;
+  verdict: string;
+  raw_score: number;
+  confidence: number | null;
+  strictness_applied: string;
+  model_version: string;
+  answer_text: string | null;
+  created_at: string;
+}
+
 interface CheckListResponse {
-  items: CheckResponse[];
+  items: CheckSummaryResponse[];
   next_cursor: string | null;
 }
 
@@ -133,14 +148,14 @@ function toBatchRun(rows: SingleCheck[], fileName: string): BatchRun {
   };
 }
 
-function toHistory(rows: CheckResponse[]): HistoryEntry[] {
+function toHistory(rows: CheckSummaryResponse[]): HistoryEntry[] {
   const entries: HistoryEntry[] = [];
   const batches = new Map<string, SingleCheck[]>();
   const names = new Map<string, string>();
   const slots = new Map<string, number>();
 
   for (const row of rows) {
-    const entry = toSingleCheck(row, "standard");
+    const entry = toSingleCheckFromSummary(row, "standard");
     if (row.batch_id === null) {
       entries.push(entry);
       continue;
@@ -167,7 +182,7 @@ export async function listHistory(
   _actor: User,
   signal?: AbortSignal,
 ): Promise<HistoryEntry[]> {
-  const rows: CheckResponse[] = [];
+  const rows: CheckSummaryResponse[] = [];
   let cursor: string | null = null;
 
   do {
@@ -270,6 +285,42 @@ function toSingleCheck(row: CheckResponse, asked: Strictness): SingleCheck {
     explanation: cues.length > 0 ? { cues } : null,
     createdAt: row.created_at,
     latencyMs: row.latency_ms,
+  };
+}
+
+// GET /api/checks returns CheckSummary, not the full CheckResult - see
+// openapi.yaml DECISION LOG [0.5.8]. Fields it doesn't carry (abstain_reason,
+// truncated, question_text, explanation, latency_ms, and the rest of
+// detector) default rather than forking SingleCheck into list/detail shapes.
+function toSingleCheckFromSummary(
+  row: CheckSummaryResponse,
+  asked: Strictness,
+): SingleCheck {
+  return {
+    kind: "single",
+    checkId: row.check_id,
+    actorId: row.actor_id,
+    batchId: row.batch_id,
+    externalRef: row.external_ref,
+    verdict: known<Verdict>(VERDICT_TEXT, row.verdict) ?? "uncertain",
+    rawScore: row.raw_score,
+    confidence: row.confidence,
+    abstainReason: null,
+    truncated: null,
+    detector: {
+      modelVersion: row.model_version,
+      calibrationVersion: null,
+      strictnessApplied:
+        known<Strictness>(STRICTNESS_TEXT, row.strictness_applied) ?? asked,
+      thresholdApplied: null,
+      targetFpr: null,
+      usedQuestionText: false,
+    },
+    answerText: row.answer_text,
+    questionText: null,
+    explanation: null,
+    createdAt: row.created_at,
+    latencyMs: null,
   };
 }
 

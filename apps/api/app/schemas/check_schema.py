@@ -68,6 +68,42 @@ class CheckResponse(BaseModel):
         )
 
 
+class CheckSummary(BaseModel):
+    """History table row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    check_id: uuid.UUID
+    actor_id: uuid.UUID
+    batch_id: uuid.UUID | None
+    batch_file_name: str | None
+    external_ref: str | None
+    verdict: VerdictEnum
+    raw_score: float
+    confidence: float | None
+    strictness_applied: StrictnessEnum
+    model_version: str
+    answer_text: str | None
+    created_at: datetime
+
+    @classmethod
+    def of(cls, check: Check) -> "CheckSummary":
+        return cls(
+            check_id=check.id,
+            actor_id=check.actor_id,
+            batch_id=check.batch_id,
+            batch_file_name=check.batch_file_name,
+            external_ref=check.external_ref,
+            verdict=check.verdict,
+            raw_score=check.raw_score,
+            confidence=check.confidence,
+            strictness_applied=check.strictness_applied,
+            model_version=check.model_version,
+            answer_text=check.answer_text,
+            created_at=check.created_at,
+        )
+
+
 class CheckListResponse(BaseModel):
-    items: list[CheckResponse]
+    items: list[CheckSummary]
     next_cursor: str | None = None
