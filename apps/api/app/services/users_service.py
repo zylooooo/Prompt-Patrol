@@ -15,7 +15,7 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import User, UserRoleEnum, UserSession, UserStatusEnum, UserStatusEvent
+from models import User, UserRoleEnum, UserRoleEvent, UserSession, UserStatusEnum, UserStatusEvent
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,30 @@ async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason:
             )
 
     return deleted
+
+
+async def change_user_role(db: AsyncSession, actor: User, user_id: uuid.UUID, new_role: UserRoleEnum) -> User:
+    """
+    Root-admin-only role reassignment, isolated from provisioning
+    (`create_user`) so a role change is always its own distinct, audited
+    action (`user_role_events`, mirroring `user_status_events`).
+
+    `root_admin` is never a valid target, in either direction - the route's
+    request schema already excludes it as the new role, so only the existing
+    role needs checking here.
+    """
+    target = await _load_manageable(db, user_id)
+    if target.role == UserRoleEnum.root_admin:
+        logger.warning("Actor %s attempted to change a root_admin's role.", actor.id)
+        raise PermissionError("root_admin accounts cannot have their role changed")
+
+    from_role = target.role
+    target.role = new_role
+    db.add(UserRoleEvent(user_id=target.id, actor_id=actor.id, from_role=from_role, to_role=new_role))
+    await db.commit()
+    await db.refresh(target)
+    logger.info("User %s role changed %s -> %s by %s.", target.id, from_role.value, new_role.value, actor.id)
+    return target
 
 
 async def _load_manageable(db: AsyncSession, user_id: uuid.UUID) -> User:

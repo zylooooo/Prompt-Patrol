@@ -9,11 +9,12 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
+from models import User, UserRoleEnum, UserRoleEvent, UserStatusEnum, UserStatusEvent
 from services.users_service import (
     LoginRejection,
     _can_view_user,
     _may_manage,
+    change_user_role,
     create_user,
     deactivate_user,
     delete_user,
@@ -697,6 +698,37 @@ async def test_deleted_is_terminal(db_session):
         await deactivate_user(db_session, admin, ta.id)
     with pytest.raises(InvalidStatusTransitionError):
         await delete_user(db_session, admin, ta.id)
+
+
+# --- role changes -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_change_user_role_records_an_event(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, ta)
+
+    result = await change_user_role(db_session, admin, ta.id, UserRoleEnum.instructor)
+
+    assert result.role == UserRoleEnum.instructor
+    events = (
+        await db_session.execute(select(UserRoleEvent).where(UserRoleEvent.user_id == ta.id))
+    ).scalars().all()
+    assert len(events) == 1
+    assert events[0].actor_id == admin.id
+    assert events[0].from_role == UserRoleEnum.teaching_assistant
+    assert events[0].to_role == UserRoleEnum.instructor
+
+
+@pytest.mark.asyncio
+async def test_change_user_role_cannot_target_root_admin(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    other_admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin, other_admin)
+
+    with pytest.raises(PermissionError):
+        await change_user_role(db_session, admin, other_admin.id, UserRoleEnum.instructor)
 
 
 @pytest.mark.asyncio

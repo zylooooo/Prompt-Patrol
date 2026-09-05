@@ -6,6 +6,7 @@ from .user_schema import (
     UserCreateRequest,
     UserListResponse,
     UserResponse,
+    UserRolePatchRequest,
 )
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "UserResponse",
     "UserCreateRequest",
     "UserListResponse",
+    "UserRolePatchRequest",
     "StatusChangeRequest",
     "SupervisorChangeRequest",
     "CheckResponse",

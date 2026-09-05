@@ -20,8 +20,10 @@ from schemas import (
     UserCreateRequest,
     UserListResponse,
     UserResponse,
+    UserRolePatchRequest,
 )
 from services import (
+    change_user_role,
     create_user,
     deactivate_user,
     delete_user,
@@ -139,6 +141,28 @@ async def provision_user(
             detail="Could not create an Auth0 credential for this user. Nothing was saved - try again.",
         )
     return user
+
+
+@router.patch("/{user_id}/role", response_model=UserResponse)
+async def change_user_role_route(
+    user_id: uuid.UUID,
+    body: UserRolePatchRequest,
+    actor: User = Depends(require_role(UserRoleEnum.root_admin)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Root-admin-only, isolated from provisioning (`POST /api/users`) so a role
+    change is always its own distinct, audited action.
+    """
+    try:
+        return await change_user_role(db, actor, user_id, body.role)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="root_admin accounts cannot have their role changed.",
+        )
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
 
 @router.post("/{user_id}/supervisor", response_model=UserResponse)
