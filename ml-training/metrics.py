@@ -20,6 +20,7 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     log_loss,
+    matthews_corrcoef,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -54,17 +55,14 @@ def threshold_at_fpr(y_true, y_prob, target_fpr=0.01):
 
     valid = np.where(fpr <= target_fpr)[0]
 
-    if len(valid) == 0:
-        return float(np.nextafter(np.max(y_prob), np.inf))
+    thr = float(thresholds[valid[np.argmax(tpr[valid])]]) if len(valid) else np.inf
 
-    # among thresholds inside the budget, take the one with the best TPR
-    best = valid[np.argmax(tpr[valid])]
-    thr = float(thresholds[best])
-
-    # roc_curve prepends an artificial +inf threshold. Landing on it means no
-    # real threshold meets the budget, so the only in-budget policy is to flag
-    # nothing - return just above the top score rather than 1.0, which would
-    # still flag every answer scored exactly 1.0 and blow the budget.
+    # Two ways to end up with no usable threshold: a slice with no negatives
+    # at all (roc_curve returns nan FPR, valid is empty - happens in
+    # leave-one-generator-out), or landing on the artificial +inf threshold
+    # roc_curve prepends, meaning no real threshold meets the budget. Either
+    # way the only in-budget policy is to flag nothing, so sit just above the
+    # top score - returning 1.0 would still flag answers scored exactly 1.0.
     if not np.isfinite(thr):
         return float(np.nextafter(float(np.max(y_prob)), np.inf))
 
@@ -119,18 +117,33 @@ def operating_point_metrics(y_true, y_prob, threshold):
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     n_neg, n_pos = tn + fp, tp + fn
 
+    recall = float(recall_score(y_true, y_pred, zero_division=0))
+    tnr = float(tn / n_neg) if n_neg else float("nan")
+
     return {
         "threshold": float(threshold),
         "accuracy": float((tp + tn) / max(len(y_true), 1)),
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+        "recall": recall,
         "f1": float(f1_score(y_true, y_pred, zero_division=0)),
         # the realised FPR on this split: proves the frozen threshold held
         "fpr": float(fp / n_neg) if n_neg else float("nan"),
-        "tnr": float(tn / n_neg) if n_neg else float("nan"),
+        "tnr": tnr,
+        # the missed-AI rate. Redundant with recall, logged anyway because
+        # "we miss 65% of AI answers" is how the limitation should be stated
+        # to the sponsor, and it reads differently from "TPR 0.35"
+        "fnr": float(fn / n_pos) if n_pos else float("nan"),
+        # robust to class imbalance, but note that at a fixed 1% FPR the TNR
+        # term is pinned near 0.99, so this is close to a rescaled recall
+        "balanced_accuracy": float((recall + tnr) / 2) if n_neg else float("nan"),
+        # the single-number summary a reviewer asks for when given only F1
+        "mcc": float(matthews_corrcoef(y_true, y_pred)),
         "tp": float(tp), "fp": float(fp), "tn": float(tn), "fn": float(fn),
         "n": float(len(y_true)),
         "n_positive": float(n_pos),
+        # what fraction of THIS split is AI. Precision is only interpretable
+        # against it - see deployed_ppv_at_prevalence_* in evaluate()
+        "prevalence": float(n_pos / len(y_true)) if len(y_true) else float("nan"),
     }
 
 
@@ -202,35 +215,44 @@ def abstention_metrics(y_true, y_prob, threshold, abstain_low, abstain_high):
 # uncertainty
 # --------------------------------------------------------------------------
 
-def bootstrap_ci(y_true, y_prob, fn, n=1000, alpha=0.05, seed=42):
+def bootstrap_cis(y_true, y_prob, fns, n=1000, alpha=0.05, seed=42):
     """
-    Stratified bootstrap CI for any metric fn(y_true, y_prob) -> float.
-    With ~2.3k answers the test split is small enough that a headline number
-    without an interval will read as overclaiming.
+    Stratified bootstrap CIs for several metrics in ONE resampling pass.
+
+    `fns` maps a metric name to fn(y_true, y_prob) -> float. Sharing the
+    resamples across metrics is both cheaper and more honest: the intervals
+    are then correlated the same way the point estimates are.
+
+    With ~2.3k answers the test split is small enough that any headline
+    number quoted without an interval reads as overclaiming.
     """
     y_true, y_prob = _as_arrays(y_true, y_prob)
     rng = np.random.default_rng(seed)
     pos, neg = np.where(y_true == 1)[0], np.where(y_true == 0)[0]
 
-    samples = []
+    samples = {name: [] for name in fns}
     for _ in range(n):
         idx = np.concatenate([
             rng.choice(pos, size=len(pos), replace=True),
             rng.choice(neg, size=len(neg), replace=True),
         ])
-        try:
-            samples.append(fn(y_true[idx], y_prob[idx]))
-        except ValueError:
+        yt, yp = y_true[idx], y_prob[idx]
+        for name, fn in fns.items():
+            try:
+                samples[name].append(fn(yt, yp))
+            except ValueError:
+                continue
+
+    out = {}
+    for name, draws in samples.items():
+        if not draws:
+            out[name] = (float("nan"), float("nan"))
             continue
-
-    if not samples:
-        return float("nan"), float("nan")
-
-    return (
-        float(np.percentile(samples, 100 * alpha / 2)),
-        float(np.percentile(samples, 100 * (1 - alpha / 2))),
-    )
-
+        out[name] = (
+            float(np.percentile(draws, 100 * alpha / 2)),
+            float(np.percentile(draws, 100 * (1 - alpha / 2))),
+        )
+    return out
 
 # --------------------------------------------------------------------------
 # the standard bundle
@@ -241,6 +263,8 @@ def evaluate(
     y_prob,
     threshold,
     target_fprs=(0.001, 0.01, 0.05),
+    headline_fpr=0.01,
+    deployment_prevalence=(0.05, 0.10, 0.20),
     abstain_low=None,
     abstain_high=None,
     bootstrap_n=1000,
@@ -256,28 +280,49 @@ def evaluate(
     out |= operating_point_metrics(y_true, y_prob, threshold)
     out |= calibration_metrics(y_true, y_prob)
 
-    for fpr in target_fprs:
-        # oracle: best case if the threshold were tuned on this very split
-        out[f"tpr_at_fpr_{fpr:g}_oracle"] = oracle_tpr_at_fpr(y_true, y_prob, fpr)
+    # The pair the report leads with. deployed_* is what an instructor
+    # actually gets: the frozen val threshold applied here. deployed_fpr is
+    # the promise being kept or broken - if it drifts above target_fpr, the
+    # 1% false-accusation budget did not survive the val -> test transfer,
+    # and that gap is itself a finding.
+    out["deployed_tpr"] = out["recall"]
+    out["deployed_fpr"] = out["fpr"]
+    out["deployed_precision"] = out["precision"]
 
-    # headline: the frozen threshold, so tpr_at_fpr_0.01 pairs with `fpr` above
-    out["tpr_at_fixed_threshold"] = out["recall"]
+    # Precision measured on a ~50/50 corpus badly overstates what an
+    # instructor sees, because real classes are nowhere near balanced. These
+    # project the SAME deployed TPR/FPR onto plausible real AI rates:
+    #   PPV = TPR*pi / (TPR*pi + FPR*(1-pi))
+    # At 1% FPR and 5% prevalence, a flag can still be wrong half the time.
+    # This is the number that speaks to wrongful accusation, not `precision`.
+    for pi in deployment_prevalence:
+        hits = out["deployed_tpr"] * pi
+        false_alarms = out["deployed_fpr"] * (1 - pi)
+        denom = hits + false_alarms
+        out[f"deployed_ppv_at_prevalence_{pi:g}"] = (
+            float(hits / denom) if denom > 0 else float("nan")
+        )
+
+    for fpr in target_fprs:
+        # oracle: best case if the threshold were retuned on this very split.
+        # Upper bound only - the gap to deployed_tpr is the cost of not
+        # getting to see the test labels.
+        out[f"oracle_tpr_at_fpr_{fpr:g}"] = oracle_tpr_at_fpr(y_true, y_prob, fpr)
 
     if bootstrap_n:
-        lo, hi = bootstrap_ci(
+        cis = bootstrap_cis(
             y_true, y_prob,
-            lambda t, p: oracle_tpr_at_fpr(t, p, 0.01),
+            {
+                "deployed_tpr": lambda t, p: operating_point_metrics(t, p, threshold)["recall"],
+                "deployed_fpr": lambda t, p: operating_point_metrics(t, p, threshold)["fpr"],
+                f"oracle_tpr_at_fpr_{headline_fpr:g}":
+                    lambda t, p: oracle_tpr_at_fpr(t, p, headline_fpr),
+                "auroc": lambda t, p: float(roc_auc_score(t, p)),
+            },
             n=bootstrap_n, seed=seed,
         )
-        out["tpr_at_fpr_0.01_ci_low"] = lo
-        out["tpr_at_fpr_0.01_ci_high"] = hi
-
-        lo, hi = bootstrap_ci(
-            y_true, y_prob,
-            lambda t, p: float(roc_auc_score(t, p)),
-            n=bootstrap_n, seed=seed,
-        )
-        out["auroc_ci_low"], out["auroc_ci_high"] = lo, hi
+        for name, (lo, hi) in cis.items():
+            out[f"{name}_ci_low"], out[f"{name}_ci_high"] = lo, hi
 
     if abstain_low is not None and abstain_high is not None:
         out |= abstention_metrics(y_true, y_prob, threshold, abstain_low, abstain_high)
@@ -307,7 +352,10 @@ def slice_report(df, y_true_col="y_true", y_prob_col="y_prob",
         else:
             row |= ranking_metrics(y_true, y_prob)
             row |= operating_point_metrics(y_true, y_prob, threshold)
-            row["tpr_at_fpr_0.01_oracle"] = oracle_tpr_at_fpr(y_true, y_prob, 0.01)
+            row["oracle_tpr_at_fpr_0.01"] = oracle_tpr_at_fpr(y_true, y_prob, 0.01)
+
+        row["deployed_tpr"] = row["recall"]
+        row["deployed_fpr"] = row["fpr"]
 
         rows.append(row)
 
