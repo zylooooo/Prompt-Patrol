@@ -16,7 +16,7 @@ import {
   useUsers,
 } from "../hooks/useUsers";
 import DataTable, {
-  TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
+  TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
   TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
@@ -25,6 +25,9 @@ import { useAuth } from "../hooks/useAuth";
 import Button from "../components/ui/Button";
 import { useToast } from "../hooks/useToast";
 import RowAction from "../components/ui/RowAction";
+import RowActionMenu, {
+  type RowActionMenuItem,
+} from "../components/ui/RowActionMenu";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
@@ -34,6 +37,7 @@ import { SECTION_LABEL } from "../components/ui/section-label";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
+import ChangeRoleDialog from "../components/ChangeRoleDialog";
 
 type Filter = "all" | "instructors" | "assistants" | "unassigned";
 
@@ -76,6 +80,7 @@ export default function UsersPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [assigning, setAssigning] = useState<AppUser | null>(null);
   const [deactivating, setDeactivating] = useState<AppUser | null>(null);
+  const [changingRole, setChangingRole] = useState<AppUser | null>(null);
 
   const instructors = useMemo(
     () => (users ?? []).filter((u) => u.role === "instructor"),
@@ -212,7 +217,7 @@ export default function UsersPage() {
     {
       id: "actions",
       header: "Actions",
-      width: TABLE_ACTIONS_WIDE_COLUMN_WIDTH,
+      width: TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
       align: "right",
       cell: (u) => {
         const isSelf = actor?.email.toLowerCase() === u.email.toLowerCase();
@@ -224,23 +229,39 @@ export default function UsersPage() {
             </span>
           );
         }
+        if (u.status === "deleted") return null;
+
+        const menuItems: RowActionMenuItem[] = [];
+        if (u.role === "teaching_assistant") {
+          menuItems.push({
+            label: "Change supervisor",
+            onClick: () => setAssigning(u),
+          });
+        }
+        if (isRootAdmin && u.role !== "root_admin") {
+          menuItems.push({
+            label: "Change role",
+            onClick: () => setChangingRole(u),
+          });
+        }
+        if (isRootAdmin) {
+          menuItems.push({
+            label: "Delete account",
+            onClick: () => setDeleting(u),
+            destructive: true,
+          });
+        }
+
         return (
           <span className="flex items-center justify-end gap-1">
-            {u.role === "teaching_assistant" && u.status !== "deleted" && (
-              <RowAction onClick={() => setAssigning(u)} disabled={busy}>
-                Supervisor
-              </RowAction>
-            )}
-            {u.status !== "deleted" && (
-              <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
-                {canReactivate(u) ? "Reactivate" : "Deactivate"}
-              </RowAction>
-            )}
-            {isRootAdmin && u.status !== "deleted" && (
-              <RowAction onClick={() => setDeleting(u)} disabled={busy}>
-                Delete
-              </RowAction>
-            )}
+            <RowAction onClick={() => onStatusClick(u)} disabled={busy}>
+              {canReactivate(u) ? "Reactivate" : "Deactivate"}
+            </RowAction>
+            <RowActionMenu
+              items={menuItems}
+              ariaLabel={`More actions for ${displayName(u)}`}
+              disabled={busy}
+            />
           </span>
         );
       },
@@ -385,6 +406,13 @@ export default function UsersPage() {
           instructor={deactivating}
           allUsers={users ?? []}
           onClose={() => setDeactivating(null)}
+        />
+      )}
+
+      {changingRole && (
+        <ChangeRoleDialog
+          user={changingRole}
+          onClose={() => setChangingRole(null)}
         />
       )}
 
