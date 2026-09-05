@@ -84,3 +84,16 @@ class UserStatusEvent(Base):
     to_status: Mapped[UserStatusEnum] = mapped_column(Enum(UserStatusEnum, native_enum=False), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class UserRoleEvent(Base):
+    """Append-only record of every role reassignment. Sole purpose is for auditing trial. Never updated or deleted."""
+
+    __tablename__ = "user_role_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    from_role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
+    to_role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

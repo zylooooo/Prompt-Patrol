@@ -1,4 +1,5 @@
 import {
+  changeUserRole,
   createAccount,
   deactivateInstructor,
   deleteUser,
@@ -248,6 +249,21 @@ describe("setSupervisor", () => {
       supervisor_id: null,
     });
     expect(user.provisionedBy).toBeNull();
+  });
+});
+
+describe("changeUserRole", () => {
+  it("patches the user's own role route", async () => {
+    const mock = route(() => row("ta-1", { role: "instructor" }));
+
+    const user = await changeUserRole(ADMIN, "ta-1", "instructor");
+
+    expect(mock.mock.calls[0][0]).toBe("/api/users/ta-1/role");
+    expect(mock.mock.calls[0][1]).toMatchObject({ method: "PATCH" });
+    expect(JSON.parse(mock.mock.calls[0][1]?.body as string)).toEqual({
+      role: "instructor",
+    });
+    expect(user.role).toBe("instructor");
   });
 });
 

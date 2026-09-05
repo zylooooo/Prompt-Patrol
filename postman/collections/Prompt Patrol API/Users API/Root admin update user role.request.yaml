@@ -1,0 +1,17 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/{{INSTRUCTOR_USER_ID}}/role"
+method: PATCH
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: "{\r
+
+    \    \"role\": \"instructor\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: pm.test("200", () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 740582343320551

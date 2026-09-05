@@ -21,7 +21,7 @@ export type DataTableSortOrder = "asc" | "desc";
 export const TABLE_ICON_COLUMN_WIDTH = "4.75rem";
 export const TABLE_ACTION_COLUMN_WIDTH = "7rem";
 export const TABLE_STATUS_COLUMN_WIDTH = "8.5rem";
-export const TABLE_ACTIONS_WIDE_COLUMN_WIDTH = "19rem";
+export const TABLE_ACTIONS_COMPACT_COLUMN_WIDTH = "10rem";
 
 interface DataTableProps<T> {
   columns: readonly DataTableColumn<T>[];

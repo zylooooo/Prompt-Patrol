@@ -132,6 +132,19 @@ export async function setSupervisor(
   );
 }
 
+export async function changeUserRole(
+  _actor: User,
+  id: string,
+  role: Exclude<UserRole, "root_admin">,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}/role`, {
+      method: "PATCH",
+      body: { role },
+    }),
+  );
+}
+
 export async function setUserActive(
   _actor: User,
   id: string,

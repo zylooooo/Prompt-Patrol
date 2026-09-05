@@ -12,6 +12,7 @@ from .detector_client import health as detector_health
 from .sessions import SESSION_IDLE_TTL, authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
 from .users_service import (
     LoginRejection,
+    change_user_role,
     create_user,
     deactivate_user,
     delete_user,
@@ -39,6 +40,7 @@ __all__ = [
     "create_user",
     "list_users",
     "set_supervisor",
+    "change_user_role",
     "SESSION_IDLE_TTL",
     "LoginRejection",
     "DETECTOR_CAPABILITIES",

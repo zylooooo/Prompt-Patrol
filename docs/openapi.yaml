@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.11.0 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.12.0 — DRAFT. Auth + users + checks modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -14,10 +14,14 @@ openapi: 3.0.3
 #
 # There is no standalone `audit` module and none is planned. See DECISION LOG
 # [0.11.0] — checks rows are already self-auditing, and per-domain event
-# tables (e.g. `UserStatusEvent`, planned `UserRoleEvent`) cover identity
-# lifecycle history. A generic audit log would be a second, redundant store.
+# tables (`UserStatusEvent`, `UserRoleEvent`) cover identity lifecycle
+# history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.12.0 PATCH /api/users/{id}/role is now implemented: `user_role_events`
+#          table (alembic 0009), `change_user_role` service function,
+#          `UserRolePatchRequest` schema. Closes the gap [0.11.0] identified.
+#          No wire-format change. See DECISION LOG [0.12.0].
 #   0.11.0 Dropped the `audit` module from the TODO list and removed the
 #          "audit table" / "audit entry" references in the checks module
 #          (info.description's service-boundary diagram, the `checks` tag
@@ -2327,6 +2331,25 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.12.0] Implemented `PATCH /api/users/{id}/role`'s audit trail.
+#
+#   `user_role_events` (alembic 0009_user_role_events) mirrors
+#   `user_status_events`'s shape exactly: id, user_id, actor_id, from_role,
+#   to_role, created_at. No `reason` column - the endpoint's request body
+#   never carried one, unlike the status transitions' optional free-text
+#   note, so there was nothing to persist.
+#
+#   `change_user_role` (users_service.py) is root_admin-only per
+#   `require_role` at the route, and separately rejects a target whose
+#   *current* role is root_admin - the request schema (`UserRolePatchRequest`,
+#   `Literal[instructor, teaching_assistant]`) already makes root_admin
+#   impossible as the *new* role, so only the existing-role side needs a
+#   runtime check. No row lock like `_transition`'s: unlike status, every
+#   role transition between instructor/teaching_assistant is valid from every
+#   other one, so there is no invariant a race could violate - the worst
+#   case is a benign lost update between two admins editing the same row at
+#   once.
 #
 # [0.11.0] Dropped the planned `audit` module; no separate audit store.
 #
