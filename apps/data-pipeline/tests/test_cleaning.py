@@ -31,8 +31,6 @@ def test_clean_fixes_encoding_and_drops_duplicates():
 
 
 def test_clean_fixes_encoding_before_deduping():
-    # These two rows are only identical once the entity is unescaped -
-    # cleaning should catch that and drop the second as a duplicate.
     df = pd.DataFrame(
         [
             _row("a.1", "Q1", "x &lt; y"),
