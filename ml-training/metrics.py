@@ -32,6 +32,21 @@ from sklearn.metrics import (
 # that wrongly accuses a student, and the one we hold to a fixed budget.
 POSITIVE_LABEL = "ai_generated"
 
+# ---- evaluation protocol -------------------------------------------------
+# Deliberately NOT config fields. These are identical for every run in the
+# project, and they have to be: two runs scored at different FPR budgets, or
+# with different slice cutoffs, are not comparable - which is the whole point
+# of the table they feed. Making them per-run configurable would add a way to
+# break the comparison and no way to benefit. Change them here, once, and
+# every run changes together.
+HEADLINE_FPR = 0.01
+TARGET_FPRS = (0.001, 0.01, 0.05)
+DEPLOYMENT_PREVALENCE = (0.05, 0.10, 0.20)
+LENGTH_BINS = (0, 15, 30, 60, 10_000)
+SLICE_BY = ("generator", "style", "length_bin")
+BOOTSTRAP_N = 1000
+MIN_SLICE_N = 50
+
 
 def _as_arrays(y_true, y_prob):
     y_true = np.asarray(y_true).astype(int).ravel()
@@ -45,7 +60,7 @@ def _as_arrays(y_true, y_prob):
 # operating point selection (fit on val, freeze, apply to test)
 # --------------------------------------------------------------------------
 
-def threshold_at_fpr(y_true, y_prob, target_fpr=0.01):
+def threshold_at_fpr(y_true, y_prob, target_fpr=HEADLINE_FPR):
     """
     Lowest threshold whose FPR still sits at or under the budget.
     Fit this on validation and carry it to test unchanged.
@@ -69,7 +84,7 @@ def threshold_at_fpr(y_true, y_prob, target_fpr=0.01):
     return thr
 
 
-def oracle_tpr_at_fpr(y_true, y_prob, target_fpr=0.01):
+def oracle_tpr_at_fpr(y_true, y_prob, target_fpr=HEADLINE_FPR):
     """
     Best TPR achievable on THIS split at the FPR budget. Optimistic, because
     the threshold is picked with the labels in hand - report it only as the
@@ -215,7 +230,7 @@ def abstention_metrics(y_true, y_prob, threshold, abstain_low, abstain_high):
 # uncertainty
 # --------------------------------------------------------------------------
 
-def bootstrap_cis(y_true, y_prob, fns, n=1000, alpha=0.05, seed=42):
+def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42):
     """
     Stratified bootstrap CIs for several metrics in ONE resampling pass.
 
@@ -262,12 +277,12 @@ def evaluate(
     y_true,
     y_prob,
     threshold,
-    target_fprs=(0.001, 0.01, 0.05),
-    headline_fpr=0.01,
-    deployment_prevalence=(0.05, 0.10, 0.20),
+    target_fprs=TARGET_FPRS,
+    headline_fpr=HEADLINE_FPR,
+    deployment_prevalence=DEPLOYMENT_PREVALENCE,
     abstain_low=None,
     abstain_high=None,
-    bootstrap_n=1000,
+    bootstrap_n=BOOTSTRAP_N,
     seed=42,
 ):
     """
@@ -331,7 +346,7 @@ def evaluate(
 
 
 def slice_report(df, y_true_col="y_true", y_prob_col="y_prob",
-                 by="generator", threshold=0.5, min_n=50):
+                 by="generator", threshold=0.5, min_n=MIN_SLICE_N):
     """
     Per-slice metrics for the E3 reliability map. `df` is the predictions
     table; `by` is a column such as generator, style or length_bin.
