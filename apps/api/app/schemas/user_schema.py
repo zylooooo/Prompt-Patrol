@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,7 +25,7 @@ class UserCreateRequest(BaseModel):
     email: str
     role: UserRoleEnum
     display_name: str | None = Field(default=None, max_length=200)
-    """Optional placeholder shown before first login; Entra's `name` claim
+    """Optional placeholder shown before first login; Auth0's `name` claim
     overwrites it thereafter, so it is never authoritative."""
     supervisor_id: uuid.UUID | None = None
     """The instructor who will supervise a new teaching assistant. Only a root
@@ -38,6 +39,16 @@ class SupervisorChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supervisor_id: uuid.UUID | None = None
+
+
+class UserRolePatchRequest(BaseModel):
+    """Isolated from provisioning and profile updates so a role change is
+    always its own distinct, audited action. `root_admin` cannot be assigned
+    via this endpoint - it is never reassigned via API in or out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal[UserRoleEnum.instructor, UserRoleEnum.teaching_assistant]
 
 
 class StatusChangeRequest(BaseModel):

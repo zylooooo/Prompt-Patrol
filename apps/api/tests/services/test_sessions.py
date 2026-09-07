@@ -12,7 +12,7 @@ from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_ACTIVITY_RESOLUTION,
 
 
 async def _user(db_session, email: str, oid: str, **kwargs) -> User:
-    user = User(id=uuid.uuid4(), email=email, entra_oid=oid, role=UserRoleEnum.instructor, **kwargs)
+    user = User(id=uuid.uuid4(), email=email, auth0_sub=oid, role=UserRoleEnum.instructor, **kwargs)
     db_session.add(user)
     await db_session.commit()
     return user

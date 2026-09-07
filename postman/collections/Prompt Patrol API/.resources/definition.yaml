@@ -1,2 +1,7 @@
 $kind: collection
-name: Prompt Patrol API
+scripts:
+  - type: http:afterResponse
+    code: "pm.test(\"not a 5xx\", () => pm.expect(pm.response.code).to.be.below(500));\r
+
+      pm.test(\"json body\", () => pm.response.to.have.jsonBody());\r\n"
+    language: text/javascript

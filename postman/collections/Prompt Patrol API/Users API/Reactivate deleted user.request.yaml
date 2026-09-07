@@ -1,7 +1,16 @@
 $kind: http-request
-name: Reactivate deleted user
-url: "{{BASE_URL}}/api/users/ace4ecfa-cc44-48e5-b4be-c74a6d65f786/restore"
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/reactivate"
 method: POST
 headers:
   Cookie: __Host-session={{SESSION_COOKIE}}
-order: 3683351111373628
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"200 and status flips\", () => {\r
+
+      \  pm.response.to.have.status(200);\r
+
+      \  pm.expect(pm.response.json().status).to.eql(\"active\");\r
+
+      });"
+    language: text/javascript
+order: 8000

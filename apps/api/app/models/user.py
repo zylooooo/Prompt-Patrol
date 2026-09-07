@@ -36,12 +36,11 @@ class User(Base):
     # reserving it - otherwise deleting someone makes them unprovisionable for
     # ever, and a misclick needs manual SQL to undo.
     email: Mapped[str] = mapped_column(String, nullable=False)
-    entra_oid: Mapped[str | None] = mapped_column(String, nullable=True)
+    auth0_sub: Mapped[str | None] = mapped_column(String, nullable=True)
     # Display label only, never an identifier: an admin placeholder until first
-    # login, then whatever Entra's `name` claim says. Nothing may look a user up
+    # login, then whatever Auth0's `name` claim says. Nothing may look a user up
     # by it, and it carries no uniqueness.
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    logout_hint: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
     status: Mapped[UserStatusEnum] = mapped_column(
         Enum(UserStatusEnum, native_enum=False),
@@ -64,8 +63,8 @@ class User(Base):
             sqlite_where=text("status <> 'deleted'"),
         ),
         Index(
-            "uq_users_entra_oid_live",
-            "entra_oid",
+            "uq_users_auth0_sub_live",
+            "auth0_sub",
             unique=True,
             postgresql_where=text("status <> 'deleted'"),
             sqlite_where=text("status <> 'deleted'"),
@@ -84,4 +83,17 @@ class UserStatusEvent(Base):
     from_status: Mapped[UserStatusEnum] = mapped_column(Enum(UserStatusEnum, native_enum=False), nullable=False)
     to_status: Mapped[UserStatusEnum] = mapped_column(Enum(UserStatusEnum, native_enum=False), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class UserRoleEvent(Base):
+    """Append-only record of every role reassignment. Sole purpose is for auditing trial. Never updated or deleted."""
+
+    __tablename__ = "user_role_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    from_role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
+    to_role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum, native_enum=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

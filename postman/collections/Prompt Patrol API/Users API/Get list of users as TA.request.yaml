@@ -1,10 +1,10 @@
 $kind: http-request
-url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}"
+url: "{{BASE_URL}}/api/users/"
 method: GET
 headers:
   Cookie: __Host-session={{SESSION_COOKIE}}
 scripts:
   - type: afterResponse
-    code: pm.test("200", () => pm.response.to.have.status(200));
+    code: "pm.test(\"403\", () => pm.response.to.have.status(403));\r\n"
     language: text/javascript
-order: 2000
+order: 10000

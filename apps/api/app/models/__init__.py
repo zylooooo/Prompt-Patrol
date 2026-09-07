@@ -1,7 +1,7 @@
 from .base import Base
 from .check import AbstainReasonEnum, Check, StrictnessEnum, VerdictEnum
 from .session import UserSession
-from .user import User, UserRoleEnum, UserStatusEnum, UserStatusEvent
+from .user import User, UserRoleEnum, UserRoleEvent, UserStatusEnum, UserStatusEvent
 
 __all__ = [
     "Base",
@@ -9,6 +9,7 @@ __all__ = [
     "UserRoleEnum",
     "UserStatusEnum",
     "UserStatusEvent",
+    "UserRoleEvent",
     "User",
     "Check",
     "VerdictEnum",

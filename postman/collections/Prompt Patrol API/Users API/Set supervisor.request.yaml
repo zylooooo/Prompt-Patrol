@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/supervisor"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+        // For now, only root_admins can assign TAs to anyone.
+        // If a TA is unassigned, an instructor cannot self-assign them to themselves.
+        // "supervisor_id": "{{INSTRUCTOR_USER_ID}}"
+        "supervisor_id": null
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test("200", () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 3000

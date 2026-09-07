@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 from authlib.integrations.base_client.errors import OAuthError
 from fastapi import APIRouter, Depends, Request, status
@@ -7,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import SESSION_COOKIE_NAME, ActiveSession, get_current_session, oauth, require_role
-from config import ENTRA_REDIRECT_URI, FRONTEND_URL
+from config import AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_REDIRECT_URI, FRONTEND_URL
 from db import get_db
 from models import User, UserRoleEnum
 from schemas import MeResponse, SessionResponse
@@ -15,8 +16,7 @@ from services import (
     SESSION_IDLE_TTL,
     LoginRejection,
     create_session,
-    record_logout_hint,
-    resolve_or_bind_user,
+    resolve_user,
     sign_out_everywhere,
 )
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-ENTRA_USER_CANCELLED = "access_denied"
+AUTH0_USER_CANCELLED = "access_denied"
 
 
 # Redirects the user to the frontend login page with an error code.
@@ -35,42 +35,34 @@ def _login_redirect(error_code: str) -> RedirectResponse:
     )
 
 
-# Builds the Entra sign-out URL, falling back to the frontend login page on failure.
-async def _entra_logout_url(user: User | None) -> str:
-    params = {"post_logout_redirect_uri": FRONTEND_URL}
-    if user is not None and user.logout_hint:
-        params["logout_hint"] = user.logout_hint
-
-    try:
-        result = await oauth.entra.create_logout_url(**params)
-    except Exception:
-        logger.exception("Could not build the Entra sign-out URL; the local session was still revoked.")
-        return f"{FRONTEND_URL}/login"
-    return result["url"]
+# Builds the Auth0 sign-out URL, sent to the frontend for client-side redirect.
+def _auth0_logout_url(return_to: str = FRONTEND_URL) -> str:
+    params = urlencode({"client_id": AUTH0_CLIENT_ID, "returnTo": return_to})
+    return f"https://{AUTH0_DOMAIN}/v2/logout?{params}"
 
 
-# Starts the Entra authorization flow with an optional login hint.
+# Starts the Auth0 authorization flow with an optional login hint.
 @router.get("/login")
 async def login(request: Request, login_hint: str | None = None, force_account_chooser: bool = False):
-    if force_account_chooser:
-        # Force account chooser is a flag set by frontend on successive logins. on successive logins,
-        # it will force users to choose which account to login so they will be redirected to login
-        return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, prompt="select_account")
     kwargs = {"login_hint": login_hint} if login_hint else {}
-    return await oauth.entra.authorize_redirect(request, ENTRA_REDIRECT_URI, **kwargs)
+    if force_account_chooser:
+        # Set by the frontend right after our own logout to ensure consistent login experience
+        # User's email will be saved when redirected to Auth0 login page.
+        kwargs["prompt"] = "login"
+    return await oauth.auth0.authorize_redirect(request, AUTH0_REDIRECT_URI, **kwargs)
 
 
-# Completes Entra authentication and creates a local user session.
+# Completes Auth0 authentication and creates a local user session.
 @router.get("/callback")
 async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        token = await oauth.entra.authorize_access_token(request)
+        token = await oauth.auth0.authorize_access_token(request)
     except OAuthError as exc:
-        if exc.error == ENTRA_USER_CANCELLED:
-            logger.info("Entra sign-in cancelled by the user.")
+        if exc.error == AUTH0_USER_CANCELLED:
+            logger.info("Auth0 sign-in cancelled by the user.")
             return _login_redirect("sign_in_cancelled")
         logger.warning(
-            "Entra callback rejected (error=%s, description=%s).",
+            "Auth0 callback rejected (error=%s, description=%s).",
             exc.error,
             exc.description,
         )
@@ -78,12 +70,12 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     claims = token["userinfo"]
     email = claims.get("email") or claims["preferred_username"]
 
-    resolved = await resolve_or_bind_user(db, oid=claims["oid"], email=email)
+    resolved = await resolve_user(db, sub=claims["sub"], email=email)
     if isinstance(resolved, LoginRejection):
-        # The codes match REDIRECT_ERROR_MESSAGES in pages/LoginPage.tsx.
-        return _login_redirect(resolved.value)
+        # Check if user is deleted/deactivated, if they are redirect them to logout on client side.
+        return_to = f"{FRONTEND_URL}/login?error={resolved.value}"
+        return RedirectResponse(url=_auth0_logout_url(return_to), status_code=status.HTTP_303_SEE_OTHER)
     user = resolved
-    await record_logout_hint(db, user, claims.get("login_hint"))
 
     raw_token = await create_session(db, user.id)
     response = RedirectResponse(url=FRONTEND_URL, status_code=status.HTTP_303_SEE_OTHER)
@@ -98,14 +90,15 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     return response
 
 
-# Revokes every session this user holds, then redirects through Entra sign-out.
+# Revokes every session this user holds, then redirects through Auth0 sign-out.
 @router.post("/logout")
 async def logout(request: Request, db: AsyncSession = Depends(get_db)):
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
-    user = await sign_out_everywhere(db, raw_token) if raw_token else None
+    if raw_token:
+        await sign_out_everywhere(db, raw_token)
 
     response = RedirectResponse(
-        url=await _entra_logout_url(user),
+        url=_auth0_logout_url(),
         status_code=status.HTTP_303_SEE_OTHER,
     )
     response.delete_cookie(

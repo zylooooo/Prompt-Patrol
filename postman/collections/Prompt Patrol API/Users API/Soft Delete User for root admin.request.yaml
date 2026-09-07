@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+order: 7000

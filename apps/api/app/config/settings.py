@@ -36,21 +36,31 @@ if ENVIRONMENT not in VALID_ENVIRONMENTS:
     raise ValueError(f"Invalid ENVIRONMENT '{ENVIRONMENT}', expected one of {VALID_ENVIRONMENTS}.")
 
 
-_ENTRA_VARS = ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET", "ENTRA_REDIRECT_URI")
-_entra_missing = sorted(name for name in _ENTRA_VARS if not (os.getenv(name) or "").strip())
+_AUTH0_VARS = (
+    "AUTH0_DOMAIN",
+    "AUTH0_CLIENT_ID",
+    "AUTH0_CLIENT_SECRET",
+    "AUTH0_REDIRECT_URI",
+    # M2M credentials for the Management API - creates the Auth0-side
+    "AUTH0_M2M_CLIENT_ID",
+    "AUTH0_M2M_CLIENT_SECRET",
+)
+_auth0_missing = sorted(name for name in _AUTH0_VARS if not (os.getenv(name) or "").strip())
 
-if _entra_missing:
+if _auth0_missing:
     raise ValueError(
-        f"Incomplete Entra configuration - {', '.join(_entra_missing)} missing. "
-        "All of ENTRA_TENANT_ID/ENTRA_CLIENT_ID/ENTRA_CLIENT_SECRET/"
-        "ENTRA_REDIRECT_URI must be set. Refusing to start an app nobody can "
-        "sign into."
+        f"Incomplete Auth0 configuration - {', '.join(_auth0_missing)} missing. "
+        "All of AUTH0_DOMAIN/AUTH0_CLIENT_ID/AUTH0_CLIENT_SECRET/AUTH0_REDIRECT_URI/"
+        "AUTH0_M2M_CLIENT_ID/AUTH0_M2M_CLIENT_SECRET must be set. Refusing to start "
+        "an app nobody can sign into."
     )
 
-ENTRA_TENANT_ID: str = _require_env("ENTRA_TENANT_ID").strip()
-ENTRA_CLIENT_ID: str = _require_env("ENTRA_CLIENT_ID").strip()
-ENTRA_CLIENT_SECRET: str = _require_env("ENTRA_CLIENT_SECRET").strip()
-ENTRA_REDIRECT_URI: str = _require_env("ENTRA_REDIRECT_URI").strip()
+AUTH0_DOMAIN: str = _require_env("AUTH0_DOMAIN").strip()
+AUTH0_CLIENT_ID: str = _require_env("AUTH0_CLIENT_ID").strip()
+AUTH0_CLIENT_SECRET: str = _require_env("AUTH0_CLIENT_SECRET").strip()
+AUTH0_REDIRECT_URI: str = _require_env("AUTH0_REDIRECT_URI").strip()
+AUTH0_M2M_CLIENT_ID: str = _require_env("AUTH0_M2M_CLIENT_ID").strip()
+AUTH0_M2M_CLIENT_SECRET: str = _require_env("AUTH0_M2M_CLIENT_SECRET").strip()
 SESSION_SECRET: str = _require_env("SESSION_SECRET")
 
 SESSION_SECRET_MIN_LENGTH = 32
@@ -95,23 +105,23 @@ def validate_session_cookie_hosts(frontend_url: str, redirect_uri: str) -> None:
 
     if not frontend.hostname or not redirect.hostname:
         raise ValueError(
-            "FRONTEND_URL and ENTRA_REDIRECT_URI must be absolute URLs with a scheme and host - "
-            f"got FRONTEND_URL={frontend_url!r}, ENTRA_REDIRECT_URI={redirect_uri!r}."
+            "FRONTEND_URL and AUTH0_REDIRECT_URI must be absolute URLs with a scheme and host - "
+            f"got FRONTEND_URL={frontend_url!r}, AUTH0_REDIRECT_URI={redirect_uri!r}."
         )
 
     if frontend.hostname != redirect.hostname:
         raise ValueError(
-            f"FRONTEND_URL host '{frontend.hostname}' and ENTRA_REDIRECT_URI host "
+            f"FRONTEND_URL host '{frontend.hostname}' and AUTH0_REDIRECT_URI host "
             f"'{redirect.hostname}' differ. The session cookie is '__Host-session', and the "
             "__Host- prefix forbids a Domain attribute, so the cookie is pinned to whichever "
-            "host answers the Entra callback. Split across two hosts, sign-in appears to "
+            "host answers the Auth0 callback. Split across two hosts, sign-in appears to "
             "succeed and then every request is 401 with nothing logged anywhere. Serve both "
             "from one host - see apps/web/nginx.conf. Ports may differ; cookies ignore them."
         )
 
     insecure = [
         name
-        for name, parsed in (("FRONTEND_URL", frontend), ("ENTRA_REDIRECT_URI", redirect))
+        for name, parsed in (("FRONTEND_URL", frontend), ("AUTH0_REDIRECT_URI", redirect))
         if parsed.scheme != "https"
     ]
     if insecure and frontend.hostname not in _TRUSTWORTHY_LOCAL_HOSTS:
@@ -122,7 +132,7 @@ def validate_session_cookie_hosts(frontend_url: str, redirect_uri: str) -> None:
         )
 
 
-validate_session_cookie_hosts(FRONTEND_URL, ENTRA_REDIRECT_URI)
+validate_session_cookie_hosts(FRONTEND_URL, AUTH0_REDIRECT_URI)
 
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 

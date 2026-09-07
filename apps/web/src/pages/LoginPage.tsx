@@ -13,11 +13,11 @@ const LABEL_CLASS = `mb-2.5 block ${SECTION_LABEL}`;
 
 const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   not_provisioned:
-    "Your Microsoft account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
+    "This account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
   sign_in_cancelled:
     "Sign-in was cancelled, so you aren't signed in. Use the button below when you're ready to try again.",
   sign_in_failed:
-    "We couldn't complete sign-in with Microsoft. This usually means the sign-in page was left open too long. Start again below.",
+    "We couldn't complete sign-in. This usually means the sign-in page was left open too long. Start again below.",
   deactivated:
     "Your access to Prompt Patrol has been turned off. If you think this is a mistake, contact your course administrator.",
   deleted:
@@ -120,7 +120,7 @@ export default function LoginPage() {
               />
             </div>
             <Button type="submit" fullWidth>
-              Sign in with Microsoft
+              Continue to sign in
             </Button>
           </form>
         </div>
