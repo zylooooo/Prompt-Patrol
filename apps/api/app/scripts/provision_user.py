@@ -3,11 +3,12 @@ import asyncio
 import sys
 import uuid
 
+from sqlalchemy import select
+
 from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user
 from db import async_session
 from models import User, UserRoleEnum, UserStatusEnum
 from services import normalize_email
-from sqlalchemy import select
 
 
 # Helper function to seed users into the database. Only for dev / seeding root admin.
