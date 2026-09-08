@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 CLEANED_PATH = OUTPUT_PATH.parent.parent / "cleaned" / "mohler_cleaned.parquet"
 LOG_PATH = OUTPUT_PATH.parent.parent / "cleaning_log.json"
 
+SCORE_COLUMNS = ["score_grader_1", "score_grader_2", "score_avg"]
+
 
 def _fix_encoding(text):
     return ftfy.fix_text(text, config=_ENCODING_ARTIFACT_CONFIG) if isinstance(text, str) else text
@@ -37,11 +39,15 @@ def clean(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     dropped_ids = sorted(df.loc[dup_mask, "id"].tolist())
     df = df[~dup_mask].reset_index(drop=True)
 
+    dropped_columns = [col for col in SCORE_COLUMNS if col in df.columns]
+    df = df.drop(columns=dropped_columns)
+
     log = {
         "input_row_count": input_row_count,
         "output_row_count": len(df),
         "encoding_fixed_ids": sorted(fixed_ids),
         "duplicate_dropped_ids": dropped_ids,
+        "dropped_columns": dropped_columns,
     }
     return df, log
 
@@ -56,11 +62,12 @@ def main() -> None:
     LOG_PATH.write_text(json.dumps(log, indent=2))
 
     logger.info(
-        "Cleaned %d -> %d rows (%d encoding fixes, %d duplicates dropped) -> %s",
+        "Cleaned %d -> %d rows (%d encoding fixes, %d duplicates dropped, columns dropped: %s) -> %s",
         log["input_row_count"],
         log["output_row_count"],
         len(log["encoding_fixed_ids"]),
         len(log["duplicate_dropped_ids"]),
+        log["dropped_columns"],
         CLEANED_PATH,
     )
 
