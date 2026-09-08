@@ -5,8 +5,9 @@ import uuid
 
 from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user
 from db import async_session
-from models import User, UserRoleEnum
+from models import User, UserRoleEnum, UserStatusEnum
 from services import normalize_email
+from sqlalchemy import select
 
 
 # Helper function to seed users into the database. Only for dev / seeding root admin.
@@ -30,6 +31,13 @@ async def add_user(email: str, role: str) -> None:
         print(f"Auth0 already has a credential for {email} - reusing it instead of re-inviting.")
 
     async with async_session() as db:
+        existing = await db.scalar(
+            select(User).where(User.email == email, User.status != UserStatusEnum.deleted)
+        )
+        if existing is not None:
+            print(f"{email} is already provisioned as {existing.role.value} ({existing.id}) - no-op.")
+            return
+
         # If user already exists in Auth0 create a row in Local DB to insert them with the updated Auth0_Sub
         user = User(id=uuid.uuid4(), email=email, role=UserRoleEnum(role), auth0_sub=auth0_user_id)
         db.add(user)
