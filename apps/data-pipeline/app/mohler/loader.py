@@ -7,7 +7,7 @@ from config import DATASET_CONFIG, DATASET_REPO_ID, DATASET_REVISION
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_PATH = Path(__file__).parent.parent / "data" / "raw" / "mohler_raw.parquet"
+OUTPUT_PATH = Path(__file__).parent.parent.parent / "data" / "raw" / "mohler_raw.parquet"
 
 
 def load_raw_corpus():

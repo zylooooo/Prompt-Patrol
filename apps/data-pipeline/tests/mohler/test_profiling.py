@@ -1,6 +1,6 @@
 import pandas as pd
 
-from profiling import profile
+from mohler.profiling import profile
 
 _UNSET = object()
 

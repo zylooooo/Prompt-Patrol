@@ -1,6 +1,6 @@
 import pandas as pd
 
-from cleaning import clean
+from mohler.cleaning import clean
 
 
 def _row(id, question, student_answer, instructor_answer="A"):

@@ -4,18 +4,24 @@ Assembles the labelled corpus other epics train and evaluate on.
 
 ## Pipeline order
 
+Per-dataset steps (loader/profiling/cleaning) live under `app/<dataset>/` and
+run as modules, from inside `app/`:
+
 ```
-python app/loader.py        # pull the pinned Mohler revision -> data/raw/
-python app/profiling.py     # report duplicates/encoding issues -> data/profile_report.json
-python app/cleaning.py      # fix + dedupe -> data/cleaned/, data/cleaning_log.json
+cd app
+python -m mohler.loader        # pull the pinned Mohler revision -> data/raw/
+python -m mohler.profiling     # report duplicates/encoding issues -> data/profile_report.json
+python -m mohler.cleaning      # fix + dedupe -> data/cleaned/, data/cleaning_log.json
+```
+
+Cross-dataset steps stay flat in `app/` and run directly, from inside
+`apps/data-pipeline`:
+
+```
 python app/splitting.py     # question-level train/val/test -> data/splits/
 python app/leakage_check.py # verify no question crosses a split boundary
 python app/logo_folds.py    # leave-one-generator-out folds (needs AI-generated data first)
 ```
-
-Each step reads the previous step's output file. `data/` is gitignored - nothing
-here is committed to source control; every teammate regenerates it locally by
-running these scripts in order, from inside this `apps/data-pipeline` folder.
 
 ## Shared artifact storage
 
