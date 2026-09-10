@@ -121,6 +121,29 @@ export interface BatchRun {
   failures?: BatchFailure[];
 }
 
+export interface BatchInfo {
+  batchId: string;
+  actorId: string;
+  fileName: string;
+  strictness: Strictness;
+  createdAt: string;
+  rowTotal: number;
+}
+
+export interface BatchProgress {
+  batch: BatchInfo;
+  completed: number;
+  failed: number;
+  pending: number;
+  rowTotal: number;
+  cancelled: boolean;
+}
+
+export type ColumnMapping = Record<
+  string,
+  "external_ref" | "answer_text" | "question_text"
+>;
+
 export interface SingleCheck extends CheckResult {
   kind: "single";
 }

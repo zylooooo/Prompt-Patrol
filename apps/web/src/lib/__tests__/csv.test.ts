@@ -6,7 +6,12 @@ import {
   type BatchRun,
 } from "../../types";
 import { describe, expect, it } from "vitest";
-import { MAX_ROWS, parseAnswersCsv, serializeResultsCsv } from "../csv";
+import {
+  MAX_ROWS,
+  parseAnswersCsv,
+  parseHeaderAndPreview,
+  serializeResultsCsv,
+} from "../csv";
 
 /**
  * This file is deliberately weighted towards malformed input. `parseAnswersCsv`
@@ -282,6 +287,43 @@ describe("parseAnswersCsv — length boundaries", () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("under");
+  });
+});
+
+describe("parseHeaderAndPreview", () => {
+  it("returns the header row and up to previewRows data rows", () => {
+    const text = "Student ID,Response\nstu-1,hello\nstu-2,world\nstu-3,extra\n";
+    const result = parseHeaderAndPreview(text, 2);
+    expect(result.headers).toEqual(["Student ID", "Response"]);
+    expect(result.preview).toEqual([
+      ["stu-1", "hello"],
+      ["stu-2", "world"],
+    ]);
+  });
+});
+
+describe("parseAnswersCsv with column mapping", () => {
+  it("applies a mapping from the instructor's own headers to our fields", () => {
+    const text =
+      "Student ID,Response\nstu-1,This answer is long enough to pass validation.\n";
+    const mapping = { "Student ID": "external_ref", Response: "answer_text" } as const;
+    const { rows, errors } = parseAnswersCsv(text, mapping, false);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      {
+        externalRef: "stu-1",
+        answerText: "This answer is long enough to pass validation.",
+        questionText: undefined,
+      },
+    ]);
+  });
+
+  it("requires question_text when requiresQuestionText is true", () => {
+    const text =
+      "external_ref,answer_text\nstu-1,This answer is long enough to pass validation.\n";
+    const { rows, errors } = parseAnswersCsv(text, null, true);
+    expect(rows).toEqual([]);
+    expect(errors[0]).toMatch(/question_text/);
   });
 });
 

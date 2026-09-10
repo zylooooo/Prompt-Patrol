@@ -5,11 +5,12 @@ import DataTable, {
 import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "../components/ui/SegmentedToggle";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useHistory } from "../hooks/useChecks";
 import { hasScreeningAccess } from "../api/checks";
+import { useActiveBatch, useBatchProgress } from "../hooks/useBatches";
 import VerdictChip from "../components/VerdictChip";
 import { usePageTitle } from "../hooks/usePageTitle";
 import PageHeader from "../components/ui/PageHeader";
@@ -70,6 +71,20 @@ export default function HistoryPage() {
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(0);
   const [page, setPage] = useState(0);
+
+  const activeBatch = useActiveBatch();
+  const activeProgress = useBatchProgress(activeBatch.active?.batchId ?? null);
+  const activeDone = activeProgress.data
+    ? activeProgress.data.cancelled ||
+      activeProgress.data.completed + activeProgress.data.failed >=
+        activeProgress.data.rowTotal
+    : false;
+
+  useEffect(() => {
+    if (activeBatch.active && (activeDone || activeProgress.isError)) {
+      activeBatch.clear();
+    }
+  }, [activeBatch.active, activeDone, activeProgress.isError, activeBatch.clear]);
 
   const entries = useMemo(() => {
     return (data ?? []).filter(
@@ -177,6 +192,35 @@ export default function HistoryPage() {
         subtitle="Every check is stored with its score, verdict, and model version."
         actions={unassigned ? undefined : <ModelStatusBadge />}
       />
+
+      {activeBatch.active && !activeDone && (
+        <div className="mt-6 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl bg-accent-soft px-5 py-3.5">
+          <div className="flex items-center gap-2.5 text-sm text-foreground">
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-accent"
+            />
+            <span>
+              <span className="font-medium">{activeBatch.active.fileName}</span>{" "}
+              is still being screened
+              {activeProgress.data && (
+                <span className="text-muted-foreground">
+                  {" "}
+                  ·{" "}
+                  {activeProgress.data.completed + activeProgress.data.failed}{" "}
+                  / {activeProgress.data.rowTotal} checked
+                </span>
+              )}
+            </span>
+          </div>
+          <Link
+            to="/check?tab=batch"
+            className="shrink-0 text-sm font-medium text-primary hover:underline"
+          >
+            View progress →
+          </Link>
+        </div>
+      )}
 
       {isPending ? (
         <section

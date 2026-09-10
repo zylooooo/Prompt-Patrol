@@ -1,8 +1,5 @@
 import type {
   AbstainReason,
-  BatchFailure,
-  BatchRow,
-  BatchRowInput,
   BatchRun,
   CheckInput,
   CueCode,
@@ -22,7 +19,6 @@ import {
 import * as stub from "./stub";
 import type { User } from "./auth";
 import { ApiError, apiRequest } from "./client";
-import { describeCheckFailure } from "../lib/checkFailure";
 
 export const checkKeys = {
   all: ["checks"] as const,
@@ -324,35 +320,6 @@ function toSingleCheckFromSummary(
   };
 }
 
-interface BatchTag {
-  batchId: string;
-  fileName: string;
-}
-
-async function postCheck(
-  input: CheckInput,
-  batch?: BatchTag,
-): Promise<SingleCheck> {
-  stub.validateCheckInput(input);
-  const strictness = input.strictness ?? "standard";
-
-  return toSingleCheck(
-    await apiRequest<CheckResponse>(CHECKS_PATH, {
-      method: "POST",
-      body: {
-        answer_text: input.answerText.trim(),
-        question_text: input.questionText?.trim() || null,
-        external_ref: input.externalRef?.trim() || null,
-        strictness,
-        retain_answer: input.retainAnswer ?? true,
-        batch_id: batch?.batchId ?? null,
-        batch_file_name: batch?.fileName ?? null,
-      },
-    }),
-    strictness,
-  );
-}
-
 export function hasScreeningAccess(actor: User): boolean {
   return actor.role !== "teaching_assistant" || actor.provisionedBy !== null;
 }
@@ -370,120 +337,21 @@ export async function checkAnswer(
   input: CheckInput,
 ): Promise<SingleCheck> {
   requireScreeningAccess(actor);
-  return postCheck(input);
-}
+  stub.validateCheckInput(input);
+  const strictness = input.strictness ?? "standard";
 
-const BATCH_CONCURRENCY = 4;
-
-async function mapWithLimit<T, R>(
-  items: T[],
-  limit: number,
-  work: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-
-  const worker = async () => {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      out[index] = await work(items[index], index);
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker),
-  );
-  return out;
-}
-
-type RowOutcome =
-  | { ok: true; row: BatchRow }
-  | { ok: false; failure: BatchFailure };
-
-export async function runBatch(
-  actor: User,
-  fileName: string,
-  inputs: BatchRowInput[],
-  strictness: Strictness = "standard",
-  onProgress?: (done: number, total: number) => void,
-): Promise<BatchRun> {
-  requireScreeningAccess(actor);
-
-  const batchId = crypto.randomUUID();
-  let done = 0;
-
-  const outcomes = await mapWithLimit(
-    inputs,
-    BATCH_CONCURRENCY,
-    async (input): Promise<RowOutcome> => {
-      try {
-        const entry = await postCheck(
-          {
-            answerText: input.answerText,
-            questionText: input.questionText,
-            externalRef: input.externalRef,
-            strictness,
-          },
-          { batchId, fileName },
-        );
-        return { ok: true, row: entry };
-      } catch (error) {
-        return {
-          ok: false,
-          failure: {
-            externalRef: input.externalRef,
-            reason: describeCheckFailure(error),
-          },
-        };
-      } finally {
-        onProgress?.(++done, inputs.length);
-      }
-    },
-  );
-
-  const rows: BatchRow[] = [];
-  const failures: BatchFailure[] = [];
-  for (const outcome of outcomes) {
-    if (outcome.ok) rows.push(outcome.row);
-    else failures.push(outcome.failure);
-  }
-
-  if (rows.length === 0 && failures.length > 0) {
-    throw new ApiError(
-      502,
-      failures.length === 1
-        ? failures[0].reason
-        : `None of the ${failures.length} rows could be checked. ${failures[0].reason}`,
-    );
-  }
-
-  const counts: Record<Verdict, number> = {
-    ai_generated: 0,
-    uncertain: 0,
-    human_written: 0,
-  };
-  for (const row of rows) counts[row.verdict]++;
-
-  const order: Record<Verdict, number> = {
-    ai_generated: 0,
-    uncertain: 1,
-    human_written: 2,
-  };
-  rows.sort(
-    (a, b) => order[a.verdict] - order[b.verdict] || b.rawScore - a.rawScore,
-  );
-
-  const run: BatchRun = {
-    id: batchId,
-    kind: "batch",
-    fileName,
-    createdAt: new Date().toISOString(),
+  return toSingleCheck(
+    await apiRequest<CheckResponse>(CHECKS_PATH, {
+      method: "POST",
+      body: {
+        answer_text: input.answerText.trim(),
+        question_text: input.questionText?.trim() || null,
+        external_ref: input.externalRef?.trim() || null,
+        strictness,
+        retain_answer: input.retainAnswer ?? true,
+      },
+    }),
     strictness,
-    rows,
-    counts,
-    ...(failures.length > 0 ? { failures } : {}),
-  };
-
-  return run;
+  );
 }
+

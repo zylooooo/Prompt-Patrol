@@ -5,12 +5,16 @@ import DataTable, {
 import Button from "./ui/Button";
 import RowAction from "./ui/RowAction";
 import VerdictChip from "./VerdictChip";
-import SignalsList from "./SignalsList";
+import ResultPanel from "./ResultPanel";
+import Pagination from "./ui/Pagination";
+import { SECTION_LABEL } from "./ui/section-label";
 import { truncate } from "../lib/format";
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
+
+const PAGE_SIZE = 10;
 
 function CountChip({
   dotClass,
@@ -30,8 +34,44 @@ function CountChip({
   );
 }
 
-export default function BatchResultsTable({ run }: { run: BatchRun }) {
+interface BatchResultsTableProps {
+  run: BatchRun;
+  // While a batch is still running, newly-scored rows are appended by
+  // createdAt instead of the usual flagged-first order - resorting by
+  // verdict/score every poll would reshuffle rows the instructor is already
+  // looking at out from under them. Once the batch is done, the run's own
+  // (flagged-first) order is used as-is.
+  liveOrder?: boolean;
+}
+
+export default function BatchResultsTable({
+  run,
+  liveOrder = false,
+}: BatchResultsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+
+  const rows = useMemo(
+    () =>
+      liveOrder
+        ? [...run.rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        : run.rows,
+    [run.rows, liveOrder],
+  );
+
+  // A new batch (or a switch between live/final ordering) starts back on
+  // page 1 - staying on page 4 of the previous run's rows would show stale
+  // or out-of-range data.
+  useEffect(() => {
+    setPage(0);
+  }, [run.id, liveOrder]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRows = rows.slice(
+    currentPage * PAGE_SIZE,
+    (currentPage + 1) * PAGE_SIZE,
+  );
 
   function onDownload() {
     const base = run.fileName.replace(/\.csv$/i, "");
@@ -94,7 +134,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
     },
   ];
 
-  const expandedRow = run.rows.find((row) => row.checkId === expanded);
+  const expandedRow = rows.find((row) => row.checkId === expanded);
   const failures = run.failures ?? [];
   const shownFailures = failures.slice(0, 6);
 
@@ -138,7 +178,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
         </div>
       )}
 
-      {run.rows.length > 0 && isUncalibrated(run.rows[0].detector) && (
+      {rows.length > 0 && isUncalibrated(rows[0].detector) && (
         <p className="mt-3 text-xs text-disabled-foreground">
           {UNCALIBRATED_NOTICE}
         </p>
@@ -147,35 +187,50 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
       <div className="mt-5">
         <DataTable<BatchRow>
           columns={columns}
-          rows={run.rows}
+          rows={visibleRows}
           getRowId={(row) => row.checkId}
           selectedId={expanded}
           onSelect={toggle}
-          bodyMaxHeightClass="max-h-[28rem]"
           footer={
             failures.length > 0
-              ? `Showing ${run.rows.length} scored · flagged first`
-              : `Showing all ${run.rows.length} · flagged first`
+              ? `${rows.length} scored${liveOrder ? "" : " · flagged first"}`
+              : `${rows.length} total${liveOrder ? "" : " · flagged first"}`
           }
         />
+        <div className="mt-3">
+          <Pagination
+            page={currentPage + 1}
+            totalPages={pageCount}
+            total={rows.length}
+            pageSize={PAGE_SIZE}
+            itemNoun="answers"
+            onPageChange={(next) => setPage(next - 1)}
+          />
+        </div>
       </div>
 
       {expandedRow && (
-        <div className="mt-4 rounded-xl bg-surface-muted px-5 py-4">
-          <p className="text-sm leading-relaxed text-foreground">
-            {expandedRow.answerText}
-          </p>
-          {expandedRow.questionText && (
-            <p className="mt-2 text-xs text-disabled-foreground">
-              question: {expandedRow.questionText}
+        <div className="mt-4 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <section className="rounded-xl bg-surface p-7 shadow-md">
+            <p className={SECTION_LABEL}>Student answer</p>
+            <p className="mt-3 text-sm leading-relaxed text-foreground">
+              {expandedRow.answerText ??
+                "The answer was not retained for this check."}
             </p>
-          )}
-          <div className="mt-4">
-            <SignalsList
-              abstainReason={expandedRow.abstainReason}
-              explanation={expandedRow.explanation}
-            />
-          </div>
+            {expandedRow.questionText && (
+              <>
+                <p className={`mt-6 ${SECTION_LABEL}`}>Question context</p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  {expandedRow.questionText}
+                </p>
+              </>
+            )}
+          </section>
+          <ResultPanel
+            status="success"
+            result={expandedRow}
+            showSavedLink={false}
+          />
         </div>
       )}
 
