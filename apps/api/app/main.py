@@ -17,7 +17,7 @@ from config import (
 )
 from db import engine
 from middleware import RequestIdMiddleware
-from routes import auth_router, checks_router, users_router
+from routes import auth_router, batches_router, checks_router, users_router
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ app.add_middleware(
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
 app.include_router(checks_router)
+app.include_router(batches_router)
 app.include_router(users_router)
 
 

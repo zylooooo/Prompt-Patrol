@@ -119,6 +119,17 @@ async def test_create_check_rejects_unknown_field(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_check_rejects_client_supplied_batch_id(client, db_session):
+    await _signed_in(client, db_session, email="ta3b@smu.edu.sg")
+
+    response = client.post(
+        "/api/checks",
+        json={"answer_text": HUMAN_LIKE, "batch_id": str(uuid.uuid4())},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_create_check_rejects_too_short_below_floor(client, db_session):
     await _signed_in(client, db_session, email="ta4@smu.edu.sg")
 
@@ -181,6 +192,17 @@ async def _make_check(client, **body):
         return client.post("/api/checks", json={"answer_text": AI_LIKE, **body})
 
 
+async def _assign_to_batch(db_session, check_id, batch_id, batch_file_name=None):
+    """batch_id/batch_file_name are no longer client-settable on POST
+    /api/checks (only the Worker sets them - see DECISION LOG [0.13.0] in
+    docs/openapi.yaml); simulate that direct write for tests exercising
+    listing/rendering of already-batched rows."""
+    check = (await db_session.execute(select(Check).where(Check.id == uuid.UUID(check_id)))).scalar_one()
+    check.batch_id = uuid.UUID(batch_id)
+    check.batch_file_name = batch_file_name
+    await db_session.commit()
+
+
 @pytest.mark.asyncio
 async def test_a_check_survives_the_request_that_made_it(client, db_session):
     """The point of the whole phase: history used to live in one browser's
@@ -237,7 +259,8 @@ async def test_listing_filters_by_verdict(client, db_session):
 async def test_listing_filters_by_batch_id(client, db_session):
     await _signed_in(client, db_session)
     batch_id = str(uuid.uuid4())
-    await _make_check(client, external_ref="IN_BATCH", batch_id=batch_id)
+    in_batch = (await _make_check(client, external_ref="IN_BATCH")).json()
+    await _assign_to_batch(db_session, in_batch["check_id"], batch_id)
     await _make_check(client, external_ref="NOT_IN_BATCH")
 
     items = client.get(f"/api/checks?batch_id={batch_id}").json()["items"]
@@ -312,9 +335,8 @@ async def test_listing_includes_summary_fields_the_history_table_needs(client, d
     openapi.yaml DECISION LOG [0.5.8]."""
     await _signed_in(client, db_session)
     batch_id = str(uuid.uuid4())
-    await _make_check(
-        client, strictness="strict", batch_id=batch_id, batch_file_name="midterm.csv"
-    )
+    created = (await _make_check(client, strictness="strict")).json()
+    await _assign_to_batch(db_session, created["check_id"], batch_id, batch_file_name="midterm.csv")
 
     item = client.get("/api/checks").json()["items"][0]
 

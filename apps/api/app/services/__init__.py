@@ -1,3 +1,5 @@
+from .aws_clients import download_object, enqueue_row, generate_upload_url
+from .batches_service import cancel_batch, create_batch, get_batch_progress, parse_and_validate
 from .checks_service import (
     DETECTOR_CAPABILITIES,
     THRESHOLDS,
@@ -26,6 +28,13 @@ from .users_service import (
 )
 
 __all__ = [
+    "generate_upload_url",
+    "download_object",
+    "enqueue_row",
+    "create_batch",
+    "get_batch_progress",
+    "cancel_batch",
+    "parse_and_validate",
     "create_session",
     "authenticate_session",
     "revoke_all_for_user",
