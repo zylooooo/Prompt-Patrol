@@ -590,7 +590,7 @@ paths:
               schema:
                 type: string
                 format: uri
-                example: https://{auth0-domain}/authorize?client_id=...&response_type=code&code_challenge=...
+                example: https://ci-dummy-tenant.auth0.com/authorize?client_id=abc123&response_type=code&code_challenge=xyz
         "400":
           $ref: "#/components/responses/BadRequest"
 
@@ -798,7 +798,7 @@ paths:
               schema:
                 type: string
                 format: uri
-                example: https://{auth0-domain}/v2/logout?client_id=...&returnTo=https%3A%2F%2Fpromptpatrol.smu.edu.sg
+                example: https://ci-dummy-tenant.auth0.com/v2/logout?client_id=abc123&returnTo=https%3A%2F%2Fpromptpatrol.smu.edu.sg
               description: |
                 `returnTo` must be registered in the Auth0 application's
                 "Allowed Logout URLs", or Auth0 rejects the redirect and
@@ -2418,11 +2418,13 @@ components:
           default: true
           description: Same meaning as `CheckCreateRequest.retain_answer`, applied to every row.
         column_mapping:
-          $ref: "#/components/schemas/ColumnMapping"
+          type: object
           nullable: true
           description: |
             Omit or null if the file already uses our column names
             (external_ref, answer_text, question_text).
+          allOf:
+            - $ref: "#/components/schemas/ColumnMapping"
 
     Batch:
       type: object

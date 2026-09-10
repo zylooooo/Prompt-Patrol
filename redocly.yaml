@@ -1,0 +1,24 @@
+extends:
+  - recommended
+
+rules:
+  # "Academic use — SMU CS480" has no publishable license URL to point to.
+  info-license-strict: off
+
+  # localhost/Prism-mock entries in `servers` are real, intentional dev
+  # targets (see docs/openapi.yaml servers block), not leftover placeholders.
+  no-server-example.com: off
+
+  # /api/auth/login, /api/auth/callback, and /api/auth/logout are redirect-
+  # only endpoints by design (OIDC flow) — they never return a 2XX/4XX body.
+  operation-2xx-response: off
+  operation-4xx-response: off
+
+  # /api/auth/login and /api/auth/callback are intentionally unauthenticated
+  # (pre-session OIDC redirect endpoints), not an oversight.
+  security-defined: off
+
+  # Audit-trail schemas (e.g. BatchRowFailure) are recorded in the contract
+  # ahead of any endpoint exposing them, to close the loop on what the audit
+  # tables look like even before a route reads from them. Not dead spec.
+  no-unused-components: off
