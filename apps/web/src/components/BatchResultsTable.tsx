@@ -9,7 +9,7 @@ import ResultPanel from "./ResultPanel";
 import Pagination from "./ui/Pagination";
 import { SECTION_LABEL } from "./ui/section-label";
 import { truncate } from "../lib/format";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
@@ -51,6 +51,18 @@ export default function BatchResultsTable({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
+  // A new batch (or a switch between live/final ordering) starts back on
+  // page 1 - staying on page 4 of the previous run's rows would show stale
+  // or out-of-range data. Reset during render (React's documented pattern
+  // for "adjust state when a prop changes") rather than in a useEffect, so
+  // it doesn't cost an extra commit-then-rerun-effect render pass.
+  const [pageResetKey, setPageResetKey] = useState(`${run.id}:${liveOrder}`);
+  const currentResetKey = `${run.id}:${liveOrder}`;
+  if (currentResetKey !== pageResetKey) {
+    setPageResetKey(currentResetKey);
+    setPage(0);
+  }
+
   const rows = useMemo(
     () =>
       liveOrder
@@ -58,13 +70,6 @@ export default function BatchResultsTable({
         : run.rows,
     [run.rows, liveOrder],
   );
-
-  // A new batch (or a switch between live/final ordering) starts back on
-  // page 1 - staying on page 4 of the previous run's rows would show stale
-  // or out-of-range data.
-  useEffect(() => {
-    setPage(0);
-  }, [run.id, liveOrder]);
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);

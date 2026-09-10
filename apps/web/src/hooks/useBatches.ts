@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { checkKeys } from "../api/checks";
 import { useAuth } from "./useAuth";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   cancelBatch,
   createBatch,
@@ -46,7 +46,10 @@ export function useActiveBatch() {
     setActive(null);
   }, []);
 
-  return { active, save, clear };
+  // Memoized so callers can depend on the whole object in a useEffect deps
+  // array (satisfies exhaustive-deps) without it changing identity - and
+  // therefore re-running the effect - on every unrelated render.
+  return useMemo(() => ({ active, save, clear }), [active, save, clear]);
 }
 
 export function useCreateBatch() {

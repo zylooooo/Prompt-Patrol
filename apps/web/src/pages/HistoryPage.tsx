@@ -84,7 +84,7 @@ export default function HistoryPage() {
     if (activeBatch.active && (activeDone || activeProgress.isError)) {
       activeBatch.clear();
     }
-  }, [activeBatch.active, activeDone, activeProgress.isError, activeBatch.clear]);
+  }, [activeBatch, activeDone, activeProgress.isError]);
 
   const entries = useMemo(() => {
     return (data ?? []).filter(

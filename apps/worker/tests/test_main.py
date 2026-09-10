@@ -5,10 +5,9 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from models import Batch, BatchRowFailure, StrictnessEnum, User, UserRoleEnum
 from sqlalchemy import select
 from worker.main import drain_dlq_once, poll_once, process_message
-
-from models import Batch, BatchRowFailure, StrictnessEnum, User, UserRoleEnum
 
 
 @pytest.mark.asyncio

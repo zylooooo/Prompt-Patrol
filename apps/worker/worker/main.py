@@ -9,12 +9,11 @@ import logging
 import uuid
 
 import boto3
-from sqlalchemy import select
-
 from config import AWS_ENDPOINT_URL, AWS_REGION, SQS_BATCHES_DLQ_URL, SQS_BATCHES_QUEUE_URL, configure_logging
 from db import async_session
 from models import Batch, BatchRowFailure
 from services import create_check
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 

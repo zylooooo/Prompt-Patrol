@@ -86,7 +86,7 @@ export default function BatchTab() {
 
   useEffect(() => {
     if (batchId && (done || progress.isError)) activeBatch.clear();
-  }, [batchId, done, progress.isError, activeBatch.clear]);
+  }, [batchId, done, progress.isError, activeBatch]);
 
   function resetFileState() {
     setRawText(null);
