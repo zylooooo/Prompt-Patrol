@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { checkKeys } from "../api/checks";
 import { useAuth } from "./useAuth";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   cancelBatch,
   createBatch,
@@ -64,6 +64,11 @@ export function useCreateBatch() {
 
 export function useBatchProgress(batchId: string | null) {
   const queryClient = useQueryClient();
+  // Only the completed/failed count moving is worth an invalidation - the
+  // interval callback fires on every poll tick regardless of whether
+  // anything changed, and listHistory() walks every history page, so
+  // invalidating unconditionally re-fetched the whole history on every tick.
+  const lastResolved = useRef<number | null>(null);
   return useQuery({
     queryKey: progressKey(batchId ?? ""),
     queryFn: ({ signal }) => getBatchProgress(batchId as string, signal),
@@ -71,9 +76,12 @@ export function useBatchProgress(batchId: string | null) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return PROGRESS_POLL_MS;
-      void queryClient.invalidateQueries({ queryKey: checkKeys.history() });
-      const done =
-        data.cancelled || data.completed + data.failed >= data.rowTotal;
+      const resolved = data.completed + data.failed;
+      if (resolved !== lastResolved.current) {
+        lastResolved.current = resolved;
+        void queryClient.invalidateQueries({ queryKey: checkKeys.history() });
+      }
+      const done = data.cancelled || resolved >= data.rowTotal;
       return done ? false : PROGRESS_POLL_MS;
     },
   });
