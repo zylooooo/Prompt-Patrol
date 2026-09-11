@@ -49,12 +49,13 @@ def _sqs_client():
     return boto3.client("sqs", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL)
 
 
-def generate_upload_url(file_name: str) -> tuple[str, str]:
+def generate_upload_url(file_name: str, actor_id: uuid.UUID) -> tuple[str, str]:
     """A presigned PUT URL the SPA uploads the raw CSV to directly, plus the
-    object key to reference on POST /api/batches. The key is namespaced with
-    a fresh uuid so two instructors uploading "answers.csv" the same minute
-    never collide."""
-    key = f"batches/{uuid.uuid4()}-{file_name}"
+    object key to reference on POST /api/batches. The key is namespaced by
+    actor_id (so create_batch can reject a key another instructor generated -
+    see batches_service.create_batch) and by a fresh uuid so two instructors
+    uploading "answers.csv" the same minute never collide."""
+    key = f"batches/{actor_id}/{uuid.uuid4()}-{file_name}"
     url = _s3_presign_client().generate_presigned_url(
         ClientMethod="put_object",
         Params={"Bucket": S3_BATCHES_BUCKET, "Key": key, "ContentType": "text/csv"},

@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import datetime
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,7 +60,7 @@ async def create_check(
         result = await asyncio.wait_for(score_text(answer_text), timeout=DETECTOR_TIMEOUT_SECONDS)
     except TimeoutError as exc:
         raise DetectorTimeoutError from exc
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         raise DetectorUnavailableError from exc
     latency_ms = int((time.perf_counter() - start) * 1000)
 

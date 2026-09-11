@@ -145,18 +145,37 @@ async def create_batch(
     await db.commit()
     await db.refresh(batch)
 
+    enqueue_failed = False
     for row in rows:
-        enqueue_row(
-            {
-                "batch_id": str(batch.id),
-                "actor_id": str(actor_id),
-                "strictness": strictness,
-                "retain_answer": retain_answer,
-                "external_ref": row["external_ref"],
-                "answer_text": row["answer_text"],
-                "question_text": row["question_text"],
-            }
-        )
+        try:
+            enqueue_row(
+                {
+                    "batch_id": str(batch.id),
+                    "actor_id": str(actor_id),
+                    "strictness": strictness,
+                    "retain_answer": retain_answer,
+                    "external_ref": row["external_ref"],
+                    "answer_text": row["answer_text"],
+                    "question_text": row["question_text"],
+                }
+            )
+        except Exception:
+            # SQS is unavailable/throttled partway through - the row never
+            # reaches the Worker, so it must count as `failed` rather than
+            # sit as `pending` forever (keeps the BatchProgress invariant
+            # completed + failed + pending == row_total true).
+            enqueue_failed = True
+            db.add(
+                BatchRowFailure(
+                    id=uuid.uuid4(),
+                    batch_id=batch.id,
+                    row_number=0,
+                    external_ref=row["external_ref"],
+                    reason="Failed to queue row for processing.",
+                )
+            )
+    if enqueue_failed:
+        await db.commit()
 
     return batch
 

@@ -1,4 +1,5 @@
 import json
+import uuid
 from unittest.mock import MagicMock, patch
 
 from services.aws_clients import (
@@ -12,11 +13,13 @@ from services.aws_clients import (
 def test_generate_upload_url_returns_url_and_key():
     fake_s3 = MagicMock()
     fake_s3.generate_presigned_url.return_value = "https://example.com/put"
+    actor_id = uuid.uuid4()
 
     with patch("services.aws_clients._s3_presign_client", return_value=fake_s3):
-        url, key = generate_upload_url("answers.csv")
+        url, key = generate_upload_url("answers.csv", actor_id)
 
     assert url == "https://example.com/put"
+    assert key.startswith(f"batches/{actor_id}/")
     assert key.endswith("answers.csv")
     fake_s3.generate_presigned_url.assert_called_once()
     assert fake_s3.generate_presigned_url.call_args.kwargs["ClientMethod"] == "put_object"

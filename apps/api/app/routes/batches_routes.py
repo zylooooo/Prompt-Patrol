@@ -48,7 +48,7 @@ async def get_upload_url_route(
     body: UploadUrlRequest,
     user: User = Depends(require_screening),
 ):
-    url, key = generate_upload_url(body.file_name)
+    url, key = generate_upload_url(body.file_name, user.id)
     return UploadUrlResponse(upload_url=url, upload_key=key)
 
 
@@ -62,6 +62,11 @@ async def create_batch_route(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"strictness must be one of {sorted(THRESHOLDS)}.",
+        )
+    if not body.upload_key.startswith(f"batches/{user.id}/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="upload_key was not issued to this actor.",
         )
 
     batch = await create_batch(

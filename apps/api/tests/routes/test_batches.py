@@ -61,7 +61,7 @@ async def test_upload_url_happy_path(client, db_session):
 
 @pytest.mark.asyncio
 async def test_create_batch_happy_path(client, db_session):
-    await _signed_in_instructor(client, db_session)
+    user = await _signed_in_instructor(client, db_session)
 
     with (
         patch("services.batches_service.download_object", return_value=GOOD_CSV),
@@ -69,7 +69,7 @@ async def test_create_batch_happy_path(client, db_session):
     ):
         response = client.post(
             "/api/batches",
-            json={"upload_key": "batches/key-a.csv", "file_name": "a.csv"},
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
         )
 
     assert response.status_code == 202
@@ -80,7 +80,7 @@ async def test_create_batch_happy_path(client, db_session):
 
 @pytest.mark.asyncio
 async def test_get_progress_happy_path(client, db_session):
-    await _signed_in_instructor(client, db_session)
+    user = await _signed_in_instructor(client, db_session)
 
     with (
         patch("services.batches_service.download_object", return_value=GOOD_CSV),
@@ -88,7 +88,7 @@ async def test_get_progress_happy_path(client, db_session):
     ):
         create_response = client.post(
             "/api/batches",
-            json={"upload_key": "batches/key-a.csv", "file_name": "a.csv"},
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
         )
     batch_id = create_response.json()["batch_id"]
 
@@ -108,7 +108,7 @@ async def test_get_progress_for_unknown_batch_returns_404(client, db_session):
 
 @pytest.mark.asyncio
 async def test_cancel_batch_happy_path(client, db_session):
-    await _signed_in_instructor(client, db_session)
+    user = await _signed_in_instructor(client, db_session)
 
     with (
         patch("services.batches_service.download_object", return_value=GOOD_CSV),
@@ -116,7 +116,7 @@ async def test_cancel_batch_happy_path(client, db_session):
     ):
         create_response = client.post(
             "/api/batches",
-            json={"upload_key": "batches/key-a.csv", "file_name": "a.csv"},
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
         )
     batch_id = create_response.json()["batch_id"]
 
