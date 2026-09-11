@@ -4,8 +4,8 @@ import logging
 import ftfy
 import pandas as pd
 
-from loader import OUTPUT_PATH
-from profiling import _ENCODING_ARTIFACT_CONFIG, TEXT_COLUMNS
+from mohler.loader import OUTPUT_PATH
+from mohler.profiling import _ENCODING_ARTIFACT_CONFIG, TEXT_COLUMNS
 
 logger = logging.getLogger(__name__)
 
