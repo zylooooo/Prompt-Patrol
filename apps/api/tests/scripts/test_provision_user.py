@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from tests.conftest import TEST_DB_URL
 
 from models import Base, User
 
@@ -14,13 +15,16 @@ from models import Base, User
 async def _provision_user_module(monkeypatch):
     from scripts import provision_user
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(TEST_DB_URL)
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _enforce_foreign_keys(dbapi_connection, _record):
-        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+    if engine.dialect.name == "sqlite":
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _enforce_foreign_keys(dbapi_connection, _record):
+            dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(provision_user, "async_session", session_factory)
