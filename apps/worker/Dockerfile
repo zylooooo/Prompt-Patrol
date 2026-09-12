@@ -1,8 +1,5 @@
-# Build context is the repo root (see apps/docker-compose.yml, Task 9) -
-# this image needs apps/api/app's domain logic (checks_service.create_check,
-# models, db, config) alongside its own poll loop. Neither app is
-# pip-installable today, so this is a plain COPY, not a dependency install -
-# see docs/superpowers/specs/2026-09-09-batches-module-design.md Decision 6.
+# This image needs apps/api/app's domain logic (checks_service.create_check,
+# models, db, config) alongside its own poll loop.
 FROM python:3.13-slim
 
 WORKDIR /app
