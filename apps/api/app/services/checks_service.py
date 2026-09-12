@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import binascii
+import logging
 import time
 import uuid
 from datetime import datetime
@@ -13,6 +14,8 @@ from exceptions import DetectorTimeoutError, DetectorUnavailableError
 from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 
 from .detector_client import MODEL_VERSION, score_text
+
+logger = logging.getLogger(__name__)
 
 DETECTOR_TIMEOUT_SECONDS = 10
 
@@ -35,6 +38,7 @@ DETECTOR_CAPABILITIES: dict = {
 }
 
 
+# TODO: the decision logic for wether each answer will be flagged. This can be tweaked in the future.
 def _decide(raw_score: float, threshold: float, word_count: int) -> tuple[str, str | None]:
     if word_count < MIN_ANSWER_WORDS:
         return "uncertain", "answer_too_short"
@@ -59,8 +63,10 @@ async def create_check(
     try:
         result = await asyncio.wait_for(score_text(answer_text), timeout=DETECTOR_TIMEOUT_SECONDS)
     except TimeoutError as exc:
+        logger.warning("Detector timed out after %ds for actor %s.", DETECTOR_TIMEOUT_SECONDS, actor_id)
         raise DetectorTimeoutError from exc
     except httpx.HTTPError as exc:
+        logger.warning("Detector unavailable for actor %s: %s", actor_id, exc)
         raise DetectorUnavailableError from exc
     latency_ms = int((time.perf_counter() - start) * 1000)
 

@@ -1,8 +1,9 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import ActiveSession, SessionFailure, generate_session_token, hash_token
@@ -90,10 +91,13 @@ async def authenticate_session(
 async def revoke_all_for_user(db: AsyncSession, user_id: uuid.UUID) -> int:
     # deleted_at IS NULL, so an already-revoked row keeps the timestamp that
     # records when it actually ended.
-    result = await db.execute(
-        update(UserSession)
-        .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
-        .values(deleted_at=datetime.now(UTC))
+    result = cast(
+        CursorResult,
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
+            .values(deleted_at=datetime.now(UTC))
+        ),
     )
     await db.commit()
     return result.rowcount

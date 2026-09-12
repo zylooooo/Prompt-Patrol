@@ -1,14 +1,5 @@
-"""boto3 seam for S3 (presigned batch upload) and SQS (row dispatch to the
-Worker). Kept separate from batches_service.py for the same reason
-detector_client.py is separate from checks_service.py: this owns *how we
-reach AWS*, not the policy of what a valid batch row is.
-
-AWS_ENDPOINT_URL points these clients at LocalStack locally and at nothing
-(real AWS) in every other environment - the calls below are otherwise
-identical, so there is no "if local" branch anywhere in this file.
-"""
-
 import json
+import logging
 import uuid
 
 import boto3
@@ -21,13 +12,12 @@ from config import (
     SQS_BATCHES_QUEUE_URL,
 )
 
+logger = logging.getLogger(__name__)
+
 UPLOAD_URL_EXPIRY_SECONDS = 900
-# Receive-batches-of-10 iterations to try before giving up on draining a
-# cancelled batch's own messages out of SQS - bounds a cancel request
-# against a queue full of *other* batches' messages. Anything left behind
-# still gets skipped by the Worker's per-message cancelled_at check (see
-# openapi.yaml DECISION LOG [0.15.0]), so this is a best-effort speedup,
-# not the correctness guarantee.
+# Number of retires to drain the SQS of a cancelled batch's own messages.
+# Each iteration receives up to 10 messages, so this is 2000 messages max.
+# This is a best-effort cleanup, does not guarantee correctness.
 MAX_CANCEL_DRAIN_ITERATIONS = 200
 
 
@@ -52,8 +42,7 @@ def _sqs_client():
 def generate_upload_url(file_name: str, actor_id: uuid.UUID) -> tuple[str, str]:
     """A presigned PUT URL the SPA uploads the raw CSV to directly, plus the
     object key to reference on POST /api/batches. The key is namespaced by
-    actor_id (so create_batch can reject a key another instructor generated -
-    see batches_service.create_batch) and by a fresh uuid so two instructors
+    actor_id to prevent IDOR and by a fresh uuid so two instructors
     uploading "answers.csv" the same minute never collide."""
     key = f"batches/{actor_id}/{uuid.uuid4()}-{file_name}"
     url = _s3_presign_client().generate_presigned_url(
@@ -65,36 +54,27 @@ def generate_upload_url(file_name: str, actor_id: uuid.UUID) -> tuple[str, str]:
 
 
 def download_object(key: str) -> str:
-    """Pulls the raw CSV bytes back from S3 for the authoritative server-side
-    parse - see spec Decision 3's two-layer parsing."""
+    """Pulls the raw CSV bytes back from S3 for server-side csv parsing."""
     body = _s3_client().get_object(Bucket=S3_BATCHES_BUCKET, Key=key)["Body"]
     return body.read().decode("utf-8")
 
 
 def enqueue_row(payload: dict) -> None:
     """One SQS message per valid CSV row. Payload carries the row's full
-    data, not a check_id - see spec Decision 2 (checks are never created
-    pending, so there is no row for the Worker to look up by id)."""
+    data, not a check_id."""
     _sqs_client().send_message(QueueUrl=SQS_BATCHES_QUEUE_URL, MessageBody=json.dumps(payload))
 
 
 def purge_batch_messages(batch_id: str) -> int:
-    """Best-effort active drain, run once when a batch is cancelled. SQS has
-    no server-side "delete where batch_id=X" - this receives messages 10 at
-    a time and deletes the ones belonging to this batch. Messages for other
-    batches are left untouched (not deleted, not re-released) - each is
-    simply invisible to the Worker for the queue's normal VisibilityTimeout
-    before becoming receivable again, same as if this scan had never
-    happened. Earlier this called ChangeMessageVisibility(0) to put a
-    non-matching message straight back as visible, so the *next* iteration
-    of this same loop would immediately receive it again - a few iterations
-    of that was enough to trip the queue's maxReceiveCount redrive policy
-    and silently exile another batch's still-good rows to the DLQ. Doing
-    nothing to a non-match means this loop naturally terminates once it has
-    seen every currently-visible message exactly once. See openapi.yaml
-    DECISION LOG [0.15.0] for why this is bounded rather than looped until
-    the queue is provably empty, and why the Worker's per-message check
-    stays the correctness backstop for anything left behind."""
+    """Best-effort drain, run once when a batch is cancelled. SQS has no
+    server-side "delete where batch_id=X", so this receives 10 at a time and
+    deletes only the ones belonging to this batch.
+
+    A non-matching message is left completely alone, not deleted, not
+    reset visible. A message with unparsable JSON is skipped the same way - one poison
+    message anywhere in the shared queue shouldn't be able to fail every
+    instructor's cancel request. The Worker's own per-message cancelled_at check 
+    is the correctness backstop for whatever this misses."""
     client = _sqs_client()
     removed = 0
     for _ in range(MAX_CANCEL_DRAIN_ITERATIONS):
@@ -105,7 +85,11 @@ def purge_batch_messages(batch_id: str) -> int:
         if not messages:
             break
         for message in messages:
-            payload = json.loads(message["Body"])
+            try:
+                payload = json.loads(message["Body"])
+            except json.JSONDecodeError:
+                logger.exception("Skipping unparsable message during batch purge.")
+                continue
             if payload.get("batch_id") == batch_id:
                 client.delete_message(
                     QueueUrl=SQS_BATCHES_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"]

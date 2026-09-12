@@ -1,14 +1,17 @@
 import csv
 import io
+import logging
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Batch, BatchRowFailure, Check, StrictnessEnum, User
+from models import Batch, BatchRowFailure, Check, StrictnessEnum, User, UserRoleEnum
 
 from .aws_clients import download_object, enqueue_row, purge_batch_messages
+
+logger = logging.getLogger(__name__)
 
 MAX_ROWS = 500
 ANSWER_MIN_CHARS = 10
@@ -49,10 +52,10 @@ def parse_and_validate(
     column_mapping: dict[str, str] | None,
     requires_question_text: bool,
 ) -> tuple[list[dict], list[dict]]:
-    """Authoritative server-side parse (spec Decision 3's second layer).
-    column_mapping, if given, maps the instructor's literal header text to
-    our field names (spec Decision 8) - applied here, not client-side, so
-    the untouched original upload stays the source of truth in S3."""
+    """Authoritative server-side parse. column_mapping, if given, maps the 
+    instructor's literal header text to the internal field names. 
+    The mapping is applied here, not client-side, so the untouched original 
+    upload stays the source of truth in S3."""
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
         return [], [{"row_number": 0, "external_ref": None, "reason": "The file is empty."}]
@@ -66,8 +69,7 @@ def parse_and_validate(
 
     rows: list[dict] = []
     failures: list[dict] = []
-    # start=2: row_number is the line the instructor sees in their
-    # spreadsheet, with the header occupying line 1.
+    # start=2: since the header is at row 1
     for row_number, raw_row in enumerate(reader, start=2):
         if row_number - 1 > MAX_ROWS:
             failures.append(
@@ -123,11 +125,7 @@ async def create_batch(
         strictness=StrictnessEnum(strictness),
         retain_answer=retain_answer,
         requires_question_text=requires_question_text,
-        # Total of valid + rejected rows, not just enqueued ones - the
-        # BatchProgress contract (openapi.yaml) guarantees
-        # completed + failed + pending == row_total, and `failed` counts
-        # every batch_row_failures row (pre-flight rejects and later DLQ
-        # drains alike), so a pre-flight reject must already be counted here.
+        # Total of valid + rejected rows, not just enqueued ones.
         row_total=len(rows) + len(failures),
     )
     db.add(batch)
@@ -144,8 +142,12 @@ async def create_batch(
         )
     await db.commit()
     await db.refresh(batch)
+    logger.info(
+        "Batch %s created by actor %s: %d rows queued, %d rejected at parse time.",
+        batch.id, actor_id, len(rows), len(failures),
+    )
 
-    enqueue_failed = False
+    enqueue_failed = 0
     for row in rows:
         try:
             enqueue_row(
@@ -160,11 +162,13 @@ async def create_batch(
                 }
             )
         except Exception:
-            # SQS is unavailable/throttled partway through - the row never
+            # SQS is unavailable/throttled partway through. The row never
             # reaches the Worker, so it must count as `failed` rather than
-            # sit as `pending` forever (keeps the BatchProgress invariant
-            # completed + failed + pending == row_total true).
-            enqueue_failed = True
+            # sit as `pending` forever.
+            logger.exception(
+                "Failed to enqueue row %r for batch %s.", row["external_ref"], batch.id
+            )
+            enqueue_failed += 1
             db.add(
                 BatchRowFailure(
                     id=uuid.uuid4(),
@@ -175,16 +179,24 @@ async def create_batch(
                 )
             )
     if enqueue_failed:
+        logger.warning(
+            "Batch %s: %d of %d rows failed to enqueue.", batch.id, enqueue_failed, len(rows)
+        )
         await db.commit()
 
     return batch
 
 
+def _may_access_any_batch(actor: User) -> bool:
+    """Same override as checks_service._may_read_any_check - a root admin
+    can see/cancel any instructor's batch, everyone else only their own."""
+    return actor.role == UserRoleEnum.root_admin
+
+
 async def get_batch_progress(db: AsyncSession, actor: User, batch_id: uuid.UUID) -> dict | None:
-    """None for both "no such batch" and "not yours" - same 404-not-403
-    reasoning as get_check_by_id."""
+    """None for both "no such batch" and batches that are not authorized for this actor."""
     batch = (await db.execute(select(Batch).where(Batch.id == batch_id))).scalar_one_or_none()
-    if batch is None or batch.actor_id != actor.id:
+    if batch is None or (batch.actor_id != actor.id and not _may_access_any_batch(actor)):
         return None
 
     completed = (
@@ -206,18 +218,18 @@ async def get_batch_progress(db: AsyncSession, actor: User, batch_id: uuid.UUID)
 
 
 async def cancel_batch(db: AsyncSession, actor: User, batch_id: uuid.UUID) -> Batch | None:
-    """None for both "no such batch" and "not yours" - same 404-not-403
-    reasoning as get_batch_progress. Idempotent: cancelling an
+    """None for both "no such batch" and "not yours". Idempotent: cancelling an
     already-cancelled (or already-finished) batch just returns it as-is
-    rather than erroring - the Worker treats "cancelled" as a one-way flag,
+    rather than erroring. The Worker treats "cancelled" as a one-way flag,
     not a state machine with a wrong-transition to reject."""
     batch = (await db.execute(select(Batch).where(Batch.id == batch_id))).scalar_one_or_none()
-    if batch is None or batch.actor_id != actor.id:
+    if batch is None or (batch.actor_id != actor.id and not _may_access_any_batch(actor)):
         return None
 
     if batch.cancelled_at is None:
         batch.cancelled_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(batch)
-        purge_batch_messages(str(batch_id))
+        purged = purge_batch_messages(str(batch_id))
+        logger.info("Batch %s cancelled by actor %s: %d queued rows purged.", batch_id, actor.id, purged)
     return batch

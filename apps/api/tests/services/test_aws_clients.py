@@ -67,6 +67,30 @@ def test_purge_batch_messages_deletes_matches_and_leaves_others_alone():
     fake_sqs.change_message_visibility.assert_not_called()
 
 
+def test_purge_batch_messages_skips_unparsable_message():
+    """A poison message anywhere in the shared queue must not fail every
+    instructor's cancel request - it's skipped, not deleted, and the scan
+    carries on to the next (matching) message."""
+    fake_sqs = MagicMock()
+    fake_sqs.receive_message.side_effect = [
+        {
+            "Messages": [
+                {"Body": "not json", "ReceiptHandle": "r1"},
+                _sqs_message("target", "r2"),
+            ]
+        },
+        {"Messages": []},
+    ]
+
+    with patch("services.aws_clients._sqs_client", return_value=fake_sqs):
+        removed = purge_batch_messages("target")
+
+    assert removed == 1
+    fake_sqs.delete_message.assert_called_once_with(
+        QueueUrl=fake_sqs.delete_message.call_args.kwargs["QueueUrl"], ReceiptHandle="r2"
+    )
+
+
 def test_purge_batch_messages_stops_at_the_iteration_cap():
     fake_sqs = MagicMock()
     fake_sqs.receive_message.return_value = {"Messages": [_sqs_message("other", "r")]}

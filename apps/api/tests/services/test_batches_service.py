@@ -119,6 +119,33 @@ async def test_get_batch_progress_none_for_other_actor(db_session):
 
 
 @pytest.mark.asyncio
+async def test_get_batch_progress_visible_to_root_admin(db_session):
+    owner = User(id=uuid.uuid4(), email="owner3@smu.edu.sg", role=UserRoleEnum.instructor)
+    admin = User(id=uuid.uuid4(), email="admin@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add_all([owner, admin])
+    await db_session.commit()
+
+    with (
+        patch("services.batches_service.download_object", return_value=GOOD_CSV),
+        patch("services.batches_service.enqueue_row"),
+    ):
+        batch = await create_batch(
+            db_session,
+            actor_id=owner.id,
+            upload_key="batches/fake-key.csv",
+            file_name="answers.csv",
+            strictness="standard",
+            retain_answer=True,
+            column_mapping=None,
+            requires_question_text=False,
+        )
+
+    progress = await get_batch_progress(db_session, admin, batch.id)
+    assert progress is not None
+    assert progress["batch"].id == batch.id
+
+
+@pytest.mark.asyncio
 async def test_cancel_batch_sets_cancelled_at_once(db_session):
     user = User(id=uuid.uuid4(), email="instr3@smu.edu.sg", role=UserRoleEnum.instructor)
     db_session.add(user)
@@ -180,3 +207,32 @@ async def test_cancel_batch_none_for_other_actor(db_session):
     with patch("services.batches_service.purge_batch_messages") as mock_purge:
         assert await cancel_batch(db_session, other, batch.id) is None
     mock_purge.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_batch_allowed_for_root_admin(db_session):
+    owner = User(id=uuid.uuid4(), email="owner4@smu.edu.sg", role=UserRoleEnum.instructor)
+    admin = User(id=uuid.uuid4(), email="admin2@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add_all([owner, admin])
+    await db_session.commit()
+
+    with (
+        patch("services.batches_service.download_object", return_value=GOOD_CSV),
+        patch("services.batches_service.enqueue_row"),
+    ):
+        batch = await create_batch(
+            db_session,
+            actor_id=owner.id,
+            upload_key="batches/fake-key.csv",
+            file_name="answers.csv",
+            strictness="standard",
+            retain_answer=True,
+            column_mapping=None,
+            requires_question_text=False,
+        )
+
+    with patch("services.batches_service.purge_batch_messages") as mock_purge:
+        cancelled = await cancel_batch(db_session, admin, batch.id)
+    assert cancelled is not None
+    assert cancelled.cancelled_at is not None
+    mock_purge.assert_called_once_with(str(batch.id))

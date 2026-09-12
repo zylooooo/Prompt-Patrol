@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import require_screening_access
+from auth import require_role, require_screening_access
 from db import get_db
-from models import User
+from models import User, UserRoleEnum
 from schemas import BatchProgressResponse, BatchResponse
 from services import (
     DETECTOR_CAPABILITIES,
@@ -20,6 +20,10 @@ from services import (
 router = APIRouter(prefix="/api", tags=["batches"])
 
 require_screening = require_screening_access
+# Reading or stopping a batch you already own isn't screening, same reasoning
+# as GET /api/checks/{id} - only *submitting* a new batch needs the screening
+# gate (require_screening, above).
+require_any_user = require_role(UserRoleEnum.teaching_assistant)
 
 
 class UploadUrlRequest(BaseModel):
@@ -90,7 +94,7 @@ async def create_batch_route(
 @router.get("/batches/{batch_id}", response_model=BatchProgressResponse)
 async def get_batch_progress_route(
     batch_id: uuid.UUID,
-    user: User = Depends(require_screening),
+    user: User = Depends(require_any_user),
     db: AsyncSession = Depends(get_db),
 ):
     progress = await get_batch_progress(db, user, batch_id)
@@ -102,11 +106,13 @@ async def get_batch_progress_route(
 @router.post("/batches/{batch_id}/cancel", response_model=BatchProgressResponse)
 async def cancel_batch_route(
     batch_id: uuid.UUID,
-    user: User = Depends(require_screening),
+    user: User = Depends(require_any_user),
     db: AsyncSession = Depends(get_db),
 ):
     batch = await cancel_batch(db, user, batch_id)
     if batch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
     progress = await get_batch_progress(db, user, batch_id)
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
     return BatchProgressResponse.of(progress)

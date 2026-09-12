@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from db import get_db
 from main import app
 from models import User, UserRoleEnum
+from routes.batches_routes import require_any_user
 from routes.checks_routes import require_screening
 
 GOOD_CSV = (
@@ -34,6 +35,7 @@ async def _signed_in_instructor(client, db_session):
         return user
 
     client.app.dependency_overrides[require_screening] = override
+    client.app.dependency_overrides[require_any_user] = override
     return user
 
 
@@ -134,3 +136,35 @@ async def test_cancel_batch_for_unknown_batch_returns_404(client, db_session):
     await _signed_in_instructor(client, db_session)
     response = client.post(f"/api/batches/{uuid.uuid4()}/cancel")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_root_admin_can_view_and_cancel_another_actors_batch(client, db_session):
+    owner = await _signed_in_instructor(client, db_session)
+
+    with (
+        patch("services.batches_service.download_object", return_value=GOOD_CSV),
+        patch("services.batches_service.enqueue_row"),
+    ):
+        create_response = client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{owner.id}/key-a.csv", "file_name": "a.csv"},
+        )
+    batch_id = create_response.json()["batch_id"]
+
+    admin = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@smu.edu.sg", role=UserRoleEnum.root_admin)
+    db_session.add(admin)
+    await db_session.commit()
+
+    async def override_admin():
+        return admin
+
+    client.app.dependency_overrides[require_any_user] = override_admin
+
+    response = client.get(f"/api/batches/{batch_id}")
+    assert response.status_code == 200
+
+    with patch("services.batches_service.purge_batch_messages"):
+        response = client.post(f"/api/batches/{batch_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is True
