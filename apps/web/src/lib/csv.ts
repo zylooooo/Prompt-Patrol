@@ -242,7 +242,7 @@ export function serializeResultsCsv(run: BatchRun): string {
   for (const failure of run.failures ?? []) {
     lines.push(
       [
-        csvEscape(failure.externalRef),
+        csvEscape(failure.externalRef ?? `row ${failure.rowNumber}`),
         "",
         "",
         "",

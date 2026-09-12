@@ -102,6 +102,34 @@ async def test_get_progress_happy_path(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_get_progress_includes_failure_reasons(client, db_session):
+    user = await _signed_in_instructor(client, db_session)
+    csv_with_bad_row = (
+        "external_ref,answer_text\n"
+        "stu-1,too short\n"
+        "stu-2,This one is long enough to pass every validation rule we have.\n"
+    )
+
+    with (
+        patch("services.batches_service.download_object", return_value=csv_with_bad_row),
+        patch("services.batches_service.enqueue_row"),
+    ):
+        create_response = client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
+        )
+    batch_id = create_response.json()["batch_id"]
+
+    response = client.get(f"/api/batches/{batch_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["failed"] == 1
+    assert len(body["failures"]) == 1
+    assert body["failures"][0]["external_ref"] == "stu-1"
+    assert "answer_text" in body["failures"][0]["reason"]
+
+
+@pytest.mark.asyncio
 async def test_get_progress_for_unknown_batch_returns_404(client, db_session):
     await _signed_in_instructor(client, db_session)
     response = client.get(f"/api/batches/{uuid.uuid4()}")

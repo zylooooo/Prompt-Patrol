@@ -202,18 +202,25 @@ async def get_batch_progress(db: AsyncSession, actor: User, batch_id: uuid.UUID)
     completed = (
         await db.execute(select(func.count()).select_from(Check).where(Check.batch_id == batch_id))
     ).scalar_one()
-    failed = (
-        await db.execute(
-            select(func.count()).select_from(BatchRowFailure).where(BatchRowFailure.batch_id == batch_id)
+    failures = list(
+        (
+            await db.execute(
+                select(BatchRowFailure)
+                .where(BatchRowFailure.batch_id == batch_id)
+                .order_by(BatchRowFailure.created_at)
+            )
         )
-    ).scalar_one()
+        .scalars()
+        .all()
+    )
 
     return {
         "batch": batch,
         "row_total": batch.row_total,
         "completed": completed,
-        "failed": failed,
-        "pending": max(batch.row_total - completed - failed, 0),
+        "failed": len(failures),
+        "pending": max(batch.row_total - completed - len(failures), 0),
+        "failures": failures,
     }
 
 

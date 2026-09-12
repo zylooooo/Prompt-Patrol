@@ -91,6 +91,9 @@ async def test_create_batch_writes_batch_row_and_failures_and_enqueues(db_sessio
     assert progress["pending"] == 1
     assert progress["completed"] == 0
     assert progress["failed"] == 1
+    assert len(progress["failures"]) == 1
+    assert progress["failures"][0].external_ref == "stu-1"
+    assert "answer_text" in progress["failures"][0].reason
 
 
 @pytest.mark.asyncio

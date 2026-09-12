@@ -18,6 +18,11 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.16.0 BatchProgress gains `failures` (array of BatchRowFailure) — the
+#          schema was defined in [0.13.0] but never referenced by any
+#          endpoint, so instructors only ever saw a `failed` count with no
+#          way to see why a row failed. No field removed; existing
+#          `failed`/`pending` semantics unchanged. See DECISION LOG [0.16.0].
 #   0.15.0 POST /api/batches/{id}/cancel now actively drains the cancelled
 #          batch's own messages out of SQS (best-effort, bounded), leaving
 #          every other batch's queued messages untouched, instead of
@@ -2451,7 +2456,7 @@ components:
 
     BatchProgress:
       type: object
-      required: [batch, completed, failed, pending, row_total, cancelled]
+      required: [batch, completed, failed, pending, row_total, cancelled, failures]
       description: |
         `completed + failed + pending == row_total` always holds. Computed on
         read from `checks`/`batch_row_failures`, not a stored counter (spec
@@ -2467,7 +2472,7 @@ components:
           description: |
             Rows in `batch_row_failures` — either failed pre-flight CSV
             validation, or exhausted SQS redelivery and were drained from the
-            DLQ.
+            DLQ. Always equal to `failures.length`.
         pending:
           type: integer
           description: Rows not yet resolved either way.
@@ -2475,6 +2480,14 @@ components:
         cancelled:
           type: boolean
           description: Same as `batch.cancelled_at is not None`, flattened out for the client.
+        failures:
+          type: array
+          items: { $ref: "#/components/schemas/BatchRowFailure" }
+          description: |
+            The actual `batch_row_failures` rows for this batch, oldest first
+            — the reason text an instructor acts on to fix and re-upload.
+            `BatchRowFailure` was defined but never referenced by any endpoint
+            until this — see DECISION LOG [0.16.0].
 
     BatchRowFailure:
       type: object
@@ -2651,7 +2664,37 @@ components:
 # =============================================================================
 # DECISION LOG
 #
-# [0.15.0] Batch cancellation now actively drains the queue too.
+# [0.16.0] BatchProgress now returns the actual failure reasons, not just a count.
+#
+#   PROBLEM. `BatchRowFailure` (row_number, external_ref, reason) has existed
+#   in this contract since [0.13.0], but no endpoint ever referenced it —
+#   `BatchProgress.failed` was an integer count only. The backend faithfully
+#   records why every row failed (pre-flight CSV validation, an SQS enqueue
+#   error, cancellation, or exhausted DLQ retries) in plain, instructor-
+#   actionable language ("answer_text is under 10 characters."), but none of
+#   it ever reached the instructor. An instructor whose upload had bad rows
+#   saw only "3 failed" with no way to find or fix them short of re-deriving
+#   the CSV's own validation rules by trial and error.
+#
+#   OPTIONS CONSIDERED. (a) Treat `batch_row_failures` as audit-only, the
+#   same posture as `UserStatusEvent`/`UserRoleEvent` — never surface it,
+#   keep it for later investigation only. Rejected: those two tables record
+#   administrative history nobody needs in the moment; a batch's own row
+#   failures are direct, immediate feedback on the task the instructor just
+#   ran, and the existing frontend (`BatchResultsTable`'s failure banner,
+#   `serializeResultsCsv`'s failure lines) was already built expecting this
+#   data, wired to a field the backend never populated. (b) A separate
+#   `GET /api/batches/{id}/failures` endpoint. Rejected — `BatchProgress` is
+#   already the one thing polled for a batch's state, and a batch's row
+#   count ceiling (500) keeps the failure list small enough to return inline
+#   without pagination.
+#
+#   DECISION. `BatchProgress.failures` is now a required array of
+#   `BatchRowFailure`, oldest first, sourced from the same query that used
+#   to only take `COUNT(*)`. `failed` is kept as a separate field (always
+#   equal to `failures.length`) rather than removed, since existing callers
+#   read it as a plain integer. No new endpoint, no new polling.
+#
 #
 #   PROBLEM. [0.14.0] deliberately chose not to touch SQS on cancel, relying
 #   on the Worker's one-at-a-time poll loop to eventually reach and skip a

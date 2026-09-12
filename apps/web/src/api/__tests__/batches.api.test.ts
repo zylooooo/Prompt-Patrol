@@ -81,12 +81,14 @@ describe("batches api", () => {
       pending: 1,
       row_total: 2,
       cancelled: false,
+      failures: [],
     });
 
     const result = await getBatchProgress("b1");
     expect(result.completed).toBe(1);
     expect(result.batch.fileName).toBe("answers.csv");
     expect(result.cancelled).toBe(false);
+    expect(result.failures).toEqual([]);
   });
 
   it("cancelBatch posts to the cancel endpoint and maps the response", async () => {
@@ -105,6 +107,7 @@ describe("batches api", () => {
       pending: 0,
       row_total: 2,
       cancelled: true,
+      failures: [{ row_number: 0, external_ref: "stu-2", reason: "Batch cancelled by instructor." }],
     });
 
     const result = await cancelBatch("b1");
@@ -114,5 +117,8 @@ describe("batches api", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.cancelled).toBe(true);
+    expect(result.failures).toEqual([
+      { rowNumber: 0, externalRef: "stu-2", reason: "Batch cancelled by instructor." },
+    ]);
   });
 });

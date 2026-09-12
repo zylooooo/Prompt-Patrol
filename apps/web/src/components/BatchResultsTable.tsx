@@ -13,6 +13,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
+import { useBatchProgress } from "../hooks/useBatches";
 
 const PAGE_SIZE = 10;
 
@@ -51,6 +52,15 @@ export default function BatchResultsTable({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
+  // BatchRun (built from GET /api/checks history) never carries failures -
+  // GET /api/batches/{id} is the only place they live. Fetched here rather
+  // than threaded down as a prop so this works the same whether it's the
+  // live in-progress view or a historical entry opened cold from
+  // /history/{id}, which has no live progress query of its own.
+  const progress = useBatchProgress(run.id);
+  const failures = progress.data?.failures ?? run.failures ?? [];
+  const runWithFailures = useMemo(() => ({ ...run, failures }), [run, failures]);
+
   // A new batch (or a switch between live/final ordering) starts back on
   // page 1 - staying on page 4 of the previous run's rows would show stale
   // or out-of-range data. Reset during render (React's documented pattern
@@ -80,7 +90,7 @@ export default function BatchResultsTable({
 
   function onDownload() {
     const base = run.fileName.replace(/\.csv$/i, "");
-    downloadCsv(`${base}-results.csv`, serializeResultsCsv(run));
+    downloadCsv(`${base}-results.csv`, serializeResultsCsv(runWithFailures));
   }
 
   const toggle = (checkId: string) =>
@@ -140,7 +150,6 @@ export default function BatchResultsTable({
   ];
 
   const expandedRow = rows.find((row) => row.checkId === expanded);
-  const failures = run.failures ?? [];
   const shownFailures = failures.slice(0, 6);
 
   return (
@@ -171,9 +180,11 @@ export default function BatchResultsTable({
           </p>
           <ul className="mt-1.5 space-y-0.5 text-muted-foreground">
             {shownFailures.map((failure) => (
-              <li key={failure.externalRef}>
-                <span className="font-mono">{failure.externalRef}</span> —{" "}
-                {failure.reason}
+              <li key={failure.rowNumber}>
+                <span className="font-mono">
+                  {failure.externalRef ?? `Row ${failure.rowNumber}`}
+                </span>{" "}
+                — {failure.reason}
               </li>
             ))}
             {failures.length > shownFailures.length && (

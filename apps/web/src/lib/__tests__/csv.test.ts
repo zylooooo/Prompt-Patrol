@@ -363,13 +363,24 @@ describe("serializeResultsCsv", () => {
     const csv = serializeResultsCsv({
       ...run([row({ externalRef: "OK-1" })]),
       failures: [
-        { externalRef: "BAD-1", reason: "The detector took too long." },
+        { rowNumber: 2, externalRef: "BAD-1", reason: "The detector took too long." },
       ],
     });
     const lines = csv.split("\r\n");
 
     expect(lines).toHaveLength(3);
     expect(lines[2]).toBe("BAD-1,,,,,,,,The detector took too long.");
+  });
+
+  it("falls back to a row number when a failure has no external_ref", () => {
+    // Pre-flight rejections that couldn't even read external_ref (a
+    // malformed row) still record a BatchRowFailure - it just carries a
+    // null external_ref, so the CSV needs something to identify the row by.
+    const csv = serializeResultsCsv({
+      ...run([]),
+      failures: [{ rowNumber: 5, externalRef: null, reason: "The file is empty." }],
+    });
+    expect(csv.split("\r\n")[1]).toBe("row 5,,,,,,,,The file is empty.");
   });
 
   it("quotes fields containing commas, quotes or newlines", () => {

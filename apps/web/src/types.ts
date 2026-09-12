@@ -106,7 +106,8 @@ export interface BatchRowInput {
 export type BatchRow = CheckResult;
 
 export interface BatchFailure {
-  externalRef: string;
+  rowNumber: number;
+  externalRef: string | null;
   reason: string;
 }
 
@@ -137,6 +138,7 @@ export interface BatchProgress {
   pending: number;
   rowTotal: number;
   cancelled: boolean;
+  failures: BatchFailure[];
 }
 
 export type ColumnMapping = Record<

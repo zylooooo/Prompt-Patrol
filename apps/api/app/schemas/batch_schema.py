@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from models import Batch, StrictnessEnum
+from models import Batch, BatchRowFailure, StrictnessEnum
 
 
 class BatchResponse(BaseModel):
@@ -30,6 +30,18 @@ class BatchResponse(BaseModel):
         )
 
 
+class BatchFailureResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    row_number: int
+    external_ref: str | None
+    reason: str
+
+    @classmethod
+    def of(cls, failure: BatchRowFailure) -> "BatchFailureResponse":
+        return cls(row_number=failure.row_number, external_ref=failure.external_ref, reason=failure.reason)
+
+
 class BatchProgressResponse(BaseModel):
     batch: BatchResponse
     completed: int
@@ -37,6 +49,7 @@ class BatchProgressResponse(BaseModel):
     pending: int
     row_total: int
     cancelled: bool
+    failures: list[BatchFailureResponse]
 
     @classmethod
     def of(cls, progress: dict) -> "BatchProgressResponse":
@@ -47,4 +60,5 @@ class BatchProgressResponse(BaseModel):
             pending=progress["pending"],
             row_total=progress["row_total"],
             cancelled=progress["batch"].cancelled_at is not None,
+            failures=[BatchFailureResponse.of(f) for f in progress["failures"]],
         )

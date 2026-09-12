@@ -1,4 +1,5 @@
 import type {
+  BatchFailure,
   BatchInfo,
   BatchProgress,
   ColumnMapping,
@@ -82,6 +83,16 @@ export async function createBatch(
   return toBatchInfo(body);
 }
 
+interface BatchFailureResponse {
+  row_number: number;
+  external_ref: string | null;
+  reason: string;
+}
+
+function toBatchFailure(row: BatchFailureResponse): BatchFailure {
+  return { rowNumber: row.row_number, externalRef: row.external_ref, reason: row.reason };
+}
+
 interface BatchProgressResponse {
   batch: BatchInfoResponse;
   completed: number;
@@ -89,6 +100,7 @@ interface BatchProgressResponse {
   pending: number;
   row_total: number;
   cancelled: boolean;
+  failures: BatchFailureResponse[];
 }
 
 function toBatchProgress(body: BatchProgressResponse): BatchProgress {
@@ -99,6 +111,7 @@ function toBatchProgress(body: BatchProgressResponse): BatchProgress {
     pending: body.pending,
     rowTotal: body.row_total,
     cancelled: body.cancelled,
+    failures: body.failures.map(toBatchFailure),
   };
 }
 

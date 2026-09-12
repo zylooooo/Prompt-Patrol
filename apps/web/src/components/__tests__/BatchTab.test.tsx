@@ -57,6 +57,7 @@ describe("BatchTab", () => {
       pending: 0,
       rowTotal: 1,
       cancelled: false,
+      failures: [],
     });
   });
 
