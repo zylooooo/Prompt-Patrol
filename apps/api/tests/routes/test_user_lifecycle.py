@@ -1,22 +1,10 @@
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
-from db import get_db
 from main import app
 from models import User, UserRoleEnum, UserStatusEnum
 from services import create_session
-
-
-@pytest.fixture
-def client(db_session):
-    async def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
-    yield TestClient(app)
-    app.dependency_overrides.clear()
 
 
 # POST /api/users calls out to Auth0's Management + Authentication APIs
@@ -56,7 +44,7 @@ async def test_deactivate_endpoint_returns_the_new_status(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     target = await _target(db_session)
 
-    response = client.post(f"/api/users/{target.id}/deactivate", json={"reason": "semester ended"})
+    response = await client.post(f"/api/users/{target.id}/deactivate", json={"reason": "semester ended"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "deactivated"
@@ -67,7 +55,7 @@ async def test_reactivate_endpoint_returns_the_new_status(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     target = await _target(db_session, status=UserStatusEnum.deactivated)
 
-    response = client.post(f"/api/users/{target.id}/reactivate")
+    response = await client.post(f"/api/users/{target.id}/reactivate")
 
     assert response.status_code == 200
     assert response.json()["status"] == "active"
@@ -80,7 +68,7 @@ async def test_delete_endpoint_is_refused_to_an_instructor(client, db_session):
     instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
     target = await _target(db_session, provisioned_by=instructor.id)
 
-    assert client.request("DELETE", f"/api/users/{target.id}").status_code == 403
+    assert (await client.request("DELETE", f"/api/users/{target.id}")).status_code == 403
 
 
 @pytest.mark.asyncio
@@ -88,7 +76,7 @@ async def test_delete_endpoint_allows_a_root_admin(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     target = await _target(db_session)
 
-    response = client.request("DELETE", f"/api/users/{target.id}", json={"reason": "left"})
+    response = await client.request("DELETE", f"/api/users/{target.id}", json={"reason": "left"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "deleted"
@@ -99,14 +87,14 @@ async def test_reactivating_a_deleted_user_is_a_conflict(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     target = await _target(db_session, status=UserStatusEnum.deleted)
 
-    assert client.post(f"/api/users/{target.id}/reactivate").status_code == 409
+    assert (await client.post(f"/api/users/{target.id}/reactivate")).status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_transition_on_unknown_user_is_404(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    assert client.post(f"/api/users/{uuid.uuid4()}/deactivate").status_code == 404
+    assert (await client.post(f"/api/users/{uuid.uuid4()}/deactivate")).status_code == 404
 
 
 def test_there_is_no_restore_endpoint():
@@ -120,10 +108,10 @@ async def test_listing_hides_deleted_users_unless_asked(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     gone = await _target(db_session, status=UserStatusEnum.deleted)
 
-    default = client.get("/api/users/").json()["items"]
+    default = (await client.get("/api/users/")).json()["items"]
     assert str(gone.id) not in [u["id"] for u in default]
 
-    widened = client.get("/api/users/?status=deleted").json()["items"]
+    widened = (await client.get("/api/users/?status=deleted")).json()["items"]
     assert str(gone.id) in [u["id"] for u in widened]
 
 
@@ -134,21 +122,21 @@ async def test_listing_hides_deleted_users_unless_asked(client, db_session):
 async def test_provisioning_round_trips_a_display_name(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    created = client.post(
+    created = await client.post(
         "/api/users/",
         json={"email": "new@smu.edu.sg", "role": "instructor", "display_name": "Amirah Rahman"},
     )
 
     assert created.status_code == 201
     assert created.json()["display_name"] == "Amirah Rahman"
-    assert client.get(f"/api/users/{created.json()['id']}").json()["display_name"] == "Amirah Rahman"
+    assert (await client.get(f"/api/users/{created.json()['id']}")).json()["display_name"] == "Amirah Rahman"
 
 
 @pytest.mark.asyncio
 async def test_display_name_is_optional(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    created = client.post("/api/users/", json={"email": "plain@smu.edu.sg", "role": "instructor"})
+    created = await client.post("/api/users/", json={"email": "plain@smu.edu.sg", "role": "instructor"})
 
     assert created.status_code == 201
     assert created.json()["display_name"] is None
@@ -159,7 +147,7 @@ async def test_an_over_long_display_name_is_rejected(client, db_session):
     # Bounded at the schema so a pasted document cannot become a name.
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={"email": "long@smu.edu.sg", "role": "instructor", "display_name": "x" * 201},
     )
@@ -173,7 +161,7 @@ async def test_provisioning_still_rejects_unknown_fields(client, db_session):
     # provisioned_by. Adding display_name must not have loosened it.
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={"email": "sneaky@smu.edu.sg", "role": "instructor", "status": "active"},
     )
@@ -189,11 +177,11 @@ async def test_a_deactivated_user_cannot_use_an_existing_session(client, db_sess
     victim = await _target(db_session)
     victim_token = await create_session(db_session, victim.id)
 
-    client.post(f"/api/users/{victim.id}/deactivate")
+    await client.post(f"/api/users/{victim.id}/deactivate")
 
     client.cookies.clear()
     client.cookies.set("__Host-session", victim_token)
-    assert client.get("/api/auth/me").status_code == 401
+    assert (await client.get("/api/auth/me")).status_code == 401
     assert admin.id is not None
 
 
@@ -203,9 +191,9 @@ async def test_listing_caps_the_page_size(client, db_session):
     Callers page with `cursor` instead."""
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    assert client.get("/api/users/?limit=100").status_code == 200
-    assert client.get("/api/users/?limit=101").status_code == 422
-    assert client.get("/api/users/?limit=0").status_code == 422
+    assert (await client.get("/api/users/?limit=100")).status_code == 200
+    assert (await client.get("/api/users/?limit=101")).status_code == 422
+    assert (await client.get("/api/users/?limit=0")).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -215,8 +203,8 @@ async def test_instructor_listing_a_role_outside_their_scope_is_403(client, db_s
     "there are none"."""
     await _signed_in(client, db_session, UserRoleEnum.instructor)
 
-    assert client.get("/api/users/?role=instructor").status_code == 403
-    assert client.get("/api/users/?role=teaching_assistant").status_code == 200
+    assert (await client.get("/api/users/?role=instructor")).status_code == 403
+    assert (await client.get("/api/users/?role=teaching_assistant")).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -228,9 +216,9 @@ async def test_reading_a_user_outside_the_delegation_chain_is_404(client, db_ses
     another_instructor = await _target(db_session, role=UserRoleEnum.instructor)
     someone_elses = await _target(db_session, provisioned_by=another_instructor.id)
 
-    assert client.get(f"/api/users/{own.id}").status_code == 200
-    assert client.get(f"/api/users/{someone_elses.id}").status_code == 404
-    assert client.get(f"/api/users/{another_instructor.id}").status_code == 404
+    assert (await client.get(f"/api/users/{own.id}")).status_code == 200
+    assert (await client.get(f"/api/users/{someone_elses.id}")).status_code == 404
+    assert (await client.get(f"/api/users/{another_instructor.id}")).status_code == 404
 
 
 # --- assigning a supervisor -------------------------------------------------
@@ -244,7 +232,7 @@ async def test_provisioning_accepts_a_supervising_instructor(client, db_session)
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     instructor = await _target(db_session, role=UserRoleEnum.instructor)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={
             "email": "placed@smu.edu.sg",
@@ -262,7 +250,7 @@ async def test_provisioning_rejects_a_supervisor_who_is_not_an_instructor(client
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     assistant = await _target(db_session)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={
             "email": "nested@smu.edu.sg",
@@ -283,7 +271,7 @@ async def test_an_admin_cannot_provision_an_assistant_under_themselves(client, d
     # a courtesy; this is the check that counts.
     admin = await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={
             "email": "under-admin@smu.edu.sg",
@@ -301,7 +289,7 @@ async def test_an_admin_provisioning_without_a_supervisor_leaves_the_assistant_u
     # who typed it" - the assistant cannot screen until an instructor takes them.
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={"email": "waiting@smu.edu.sg", "role": "teaching_assistant"},
     )
@@ -318,7 +306,7 @@ async def test_the_supervisor_endpoint_refuses_to_move_an_assistant_under_an_adm
     instructor = await _target(db_session, role=UserRoleEnum.instructor)
     assistant = await _target(db_session, provisioned_by=instructor.id)
 
-    response = client.post(
+    response = await client.post(
         f"/api/users/{assistant.id}/supervisor",
         json={"supervisor_id": str(admin.id)},
     )
@@ -331,7 +319,7 @@ async def test_an_instructor_cannot_provision_under_a_colleague(client, db_sessi
     await _signed_in(client, db_session, UserRoleEnum.instructor)
     colleague = await _target(db_session, role=UserRoleEnum.instructor)
 
-    response = client.post(
+    response = await client.post(
         "/api/users/",
         json={
             "email": "theirs@smu.edu.sg",
@@ -349,7 +337,7 @@ async def test_supervisor_endpoint_returns_the_new_assignment(client, db_session
     instructor = await _target(db_session, role=UserRoleEnum.instructor)
     assistant = await _target(db_session)
 
-    response = client.post(
+    response = await client.post(
         f"/api/users/{assistant.id}/supervisor",
         json={"supervisor_id": str(instructor.id)},
     )
@@ -364,7 +352,7 @@ async def test_a_null_supervisor_unassigns_over_the_wire(client, db_session):
     instructor = await _target(db_session, role=UserRoleEnum.instructor)
     assistant = await _target(db_session, provisioned_by=instructor.id)
 
-    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+    response = await client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
 
     assert response.status_code == 200
     assert response.json()["provisioned_by"] is None
@@ -378,7 +366,7 @@ async def test_supervisor_endpoint_is_refused_to_an_instructor(client, db_sessio
     colleague = await _target(db_session, role=UserRoleEnum.instructor)
     assistant = await _target(db_session, provisioned_by=instructor.id)
 
-    response = client.post(
+    response = await client.post(
         f"/api/users/{assistant.id}/supervisor",
         json={"supervisor_id": str(colleague.id)},
     )
@@ -390,7 +378,7 @@ async def test_supervisor_endpoint_is_refused_to_an_instructor(client, db_sessio
 async def test_supervisor_endpoint_hides_an_unknown_user(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
-    response = client.post(f"/api/users/{uuid.uuid4()}/supervisor", json={"supervisor_id": None})
+    response = await client.post(f"/api/users/{uuid.uuid4()}/supervisor", json={"supervisor_id": None})
 
     assert response.status_code == 404
 
@@ -401,7 +389,7 @@ async def test_supervisor_endpoint_refuses_a_deleted_assistant(client, db_sessio
     instructor = await _target(db_session, role=UserRoleEnum.instructor)
     assistant = await _target(db_session, status=UserStatusEnum.deleted)
 
-    response = client.post(
+    response = await client.post(
         f"/api/users/{assistant.id}/supervisor",
         json={"supervisor_id": str(instructor.id)},
     )
@@ -414,7 +402,7 @@ async def test_supervisor_endpoint_rejects_unknown_fields(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     assistant = await _target(db_session)
 
-    response = client.post(
+    response = await client.post(
         f"/api/users/{assistant.id}/supervisor",
         json={"supervisor_id": None, "role": "root_admin"},
     )
@@ -427,7 +415,7 @@ async def test_an_instructor_can_release_their_own_assistant_over_the_wire(clien
     instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
     assistant = await _target(db_session, provisioned_by=instructor.id)
 
-    response = client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
+    response = await client.post(f"/api/users/{assistant.id}/supervisor", json={"supervisor_id": None})
 
     assert response.status_code == 200
     assert response.json()["provisioned_by"] is None
@@ -438,6 +426,6 @@ async def test_an_assistant_cannot_reach_the_supervisor_endpoint(client, db_sess
     await _signed_in(client, db_session, UserRoleEnum.teaching_assistant)
     target = await _target(db_session)
 
-    response = client.post(f"/api/users/{target.id}/supervisor", json={"supervisor_id": None})
+    response = await client.post(f"/api/users/{target.id}/supervisor", json={"supervisor_id": None})
 
     assert response.status_code == 403
