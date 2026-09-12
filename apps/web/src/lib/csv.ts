@@ -10,9 +10,8 @@ import {
 
 export const MAX_ROWS = 500;
 
-const REQUIRED_COLUMNS = ["external_ref", "answer_text"] as const;
-
-const OPTIONAL_COLUMNS = ["question_text"] as const;
+type CanonicalField = "external_ref" | "answer_text" | "question_text";
+const REQUIRED_FIELDS: CanonicalField[] = ["external_ref", "answer_text"];
 
 export interface ParsedCsv {
   rows: BatchRowInput[];
@@ -89,7 +88,23 @@ function parseRecords(text: string): ParseResult {
   return { records, unterminatedAtLine: null };
 }
 
-export function parseAnswersCsv(text: string): ParsedCsv {
+export function parseHeaderAndPreview(
+  text: string,
+  previewRows = 5,
+): { headers: string[]; preview: string[][] } {
+  const { records } = parseRecords(text);
+  if (records.length === 0) return { headers: [], preview: [] };
+  return {
+    headers: records[0].fields,
+    preview: records.slice(1, 1 + previewRows).map((r) => r.fields),
+  };
+}
+
+export function parseAnswersCsv(
+  text: string,
+  columnMapping: Partial<Record<string, CanonicalField>> | null = null,
+  requiresQuestionText = false,
+): ParsedCsv {
   const errors: string[] = [];
   const { records, unterminatedAtLine } = parseRecords(text);
 
@@ -108,15 +123,30 @@ export function parseAnswersCsv(text: string): ParsedCsv {
   const header = records[0].fields.map((heading) =>
     heading.trim().toLowerCase(),
   );
-  const indices: Record<string, number> = {};
-  for (const col of REQUIRED_COLUMNS) {
-    const idx = header.indexOf(col);
-    if (idx === -1) errors.push(`Missing required column: ${col}`);
-    indices[col] = idx;
+  // Without a mapping, headers are assumed to already be our canonical names
+  // (existing behavior, unchanged). With one, it maps the instructor's
+  // literal header text (case-sensitive, as typed) to a canonical field -
+  // built against the raw (non-lowercased) header row.
+  const rawHeader = records[0].fields;
+  const fieldToIndex: Partial<Record<CanonicalField, number>> = {};
+  if (columnMapping) {
+    for (let i = 0; i < rawHeader.length; i++) {
+      const mapped = columnMapping[rawHeader[i]];
+      if (mapped) fieldToIndex[mapped] = i;
+    }
+  } else {
+    for (const field of [...REQUIRED_FIELDS, "question_text"] as CanonicalField[]) {
+      const idx = header.indexOf(field);
+      if (idx !== -1) fieldToIndex[field] = idx;
+    }
   }
-  for (const col of OPTIONAL_COLUMNS) {
-    indices[col] = header.indexOf(col);
+  for (const field of REQUIRED_FIELDS) {
+    if (fieldToIndex[field] === undefined) errors.push(`Missing required column: ${field}`);
   }
+  if (requiresQuestionText && fieldToIndex.question_text === undefined) {
+    errors.push("Missing required column: question_text");
+  }
+  const indices = fieldToIndex;
   if (errors.length > 0) {
     return { rows: [], errors };
   }
@@ -135,10 +165,10 @@ export function parseAnswersCsv(text: string): ParsedCsv {
 
   const rows: BatchRowInput[] = [];
   for (const rec of body) {
-    const externalRef = rec.fields[indices.external_ref]?.trim() ?? "";
-    const answerText = rec.fields[indices.answer_text]?.trim() ?? "";
+    const externalRef = rec.fields[indices.external_ref!]?.trim() ?? "";
+    const answerText = rec.fields[indices.answer_text!]?.trim() ?? "";
     const questionText =
-      indices.question_text >= 0
+      indices.question_text !== undefined
         ? (rec.fields[indices.question_text]?.trim() ?? "")
         : "";
 
@@ -212,7 +242,7 @@ export function serializeResultsCsv(run: BatchRun): string {
   for (const failure of run.failures ?? []) {
     lines.push(
       [
-        csvEscape(failure.externalRef),
+        csvEscape(failure.externalRef ?? `row ${failure.rowNumber}`),
         "",
         "",
         "",

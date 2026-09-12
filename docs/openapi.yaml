@@ -3,13 +3,13 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.12.0 — DRAFT. Auth + users + checks modules.
+# STATUS: v0.13.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
 #   [x] users     — provisioning, roles, RBAC primitives
 #   [x] checks    — single-answer detection + history   (this draft)
-#   [ ] batches   — async batch submission + polling
+#   [x] batches   — async batch submission + polling
 #   [~] history   — FOLDED INTO checks. See DECISION LOG [0.5.0].
 #
 # There is no standalone `audit` module and none is planned. See DECISION LOG
@@ -18,6 +18,30 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.16.0 BatchProgress gains `failures` (array of BatchRowFailure) — the
+#          schema was defined in [0.13.0] but never referenced by any
+#          endpoint, so instructors only ever saw a `failed` count with no
+#          way to see why a row failed. No field removed; existing
+#          `failed`/`pending` semantics unchanged. See DECISION LOG [0.16.0].
+#   0.15.0 POST /api/batches/{id}/cancel now actively drains the cancelled
+#          batch's own messages out of SQS (best-effort, bounded), leaving
+#          every other batch's queued messages untouched, instead of
+#          relying solely on the Worker reaching them one at a time. No
+#          wire-format change — same request/response shape as [0.14.0].
+#          See DECISION LOG [0.15.0].
+#   0.14.0 Added POST /api/batches/{id}/cancel. `Batch` gains `cancelled_at`
+#          (nullable); `BatchProgress` gains `cancelled` (derived, not
+#          stored twice). The Worker checks `cancelled_at` per-message and
+#          records a `batch_row_failures` row instead of scoring once it's
+#          set, rather than trying to purge messages already sitting in
+#          SQS. See DECISION LOG [0.14.0].
+#   0.13.0 Implemented the `batches` module: POST /api/batches/upload-url,
+#          POST /api/batches, GET /api/batches/{id}. `batch_id`/
+#          `batch_file_name` removed from CheckCreateRequest — they were
+#          implemented (undocumented) as client-settable fields for the old
+#          client-orchestrated fan-out, which this module replaces. Only the
+#          Worker may set a Check's batch_id now, consistent with actor_id
+#          never being client-supplied. See DECISION LOG [0.13.0].
 #   0.12.0 PATCH /api/users/{id}/role is now implemented: `user_role_events`
 #          table (alembic 0009), `change_user_role` service function,
 #          `UserRolePatchRequest` schema. Closes the gap [0.11.0] identified.
@@ -505,6 +529,18 @@ tags:
 
       `CheckResult` is shared with the batches module: a batch result row and a
       single check are the same object, so the SPA has one renderer.
+  - name: batches
+    description: |
+      Async batch submission and progress polling for CSV uploads of short
+      answers. Two-step create: `POST /api/batches/upload-url` returns a
+      presigned S3 URL, the SPA PUTs the raw file directly to S3, then
+      `POST /api/batches` submits the already-uploaded object for server-side
+      parsing/validation and enqueues one job per valid row.
+
+      `checks` rows produced by a batch are ordinary `Check` rows — write-once,
+      never pending. All in-flight lifecycle state (row counts, per-row
+      failures) lives on `Batch`/`BatchRowFailure`, not on `checks`. See
+      DECISION LOG [0.13.0].
 
 # =============================================================================
 # PATHS
@@ -559,7 +595,7 @@ paths:
               schema:
                 type: string
                 format: uri
-                example: https://{auth0-domain}/authorize?client_id=...&response_type=code&code_challenge=...
+                example: https://ci-dummy-tenant.auth0.com/authorize?client_id=abc123&response_type=code&code_challenge=xyz
         "400":
           $ref: "#/components/responses/BadRequest"
 
@@ -767,7 +803,7 @@ paths:
               schema:
                 type: string
                 format: uri
-                example: https://{auth0-domain}/v2/logout?client_id=...&returnTo=https%3A%2F%2Fpromptpatrol.smu.edu.sg
+                example: https://ci-dummy-tenant.auth0.com/v2/logout?client_id=abc123&returnTo=https%3A%2F%2Fpromptpatrol.smu.edu.sg
               description: |
                 `returnTo` must be registered in the Auth0 application's
                 "Allowed Logout URLs", or Auth0 rejects the redirect and
@@ -1629,6 +1665,172 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ---------------------------------------------------------------------------
+  /api/batches/upload-url:
+    post:
+      tags: [batches]
+      operationId: createBatchUploadUrl
+      summary: Get a presigned URL to upload a batch CSV
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        Same gate as `POST /api/checks` — any provisioned, non-deleted user,
+        except a `teaching_assistant` with no supervisor.
+      description: |
+        Step 1 of 2. The SPA PUTs the raw file to `upload_url` directly (never
+        through this API), then calls `POST /api/batches` with `upload_key` to
+        submit it. Nothing is parsed or persisted at this step — a URL
+        requested and never used costs nothing server-side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadUrlRequest" }
+      responses:
+        "200":
+          description: Presigned upload target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadUrlResponse" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: A `teaching_assistant` with no supervisor. Same rule as `POST /api/checks`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/batches:
+    post:
+      tags: [batches]
+      operationId: createBatch
+      summary: Submit a batch job from an already-uploaded CSV
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        Same gate as `POST /api/checks` — any provisioned, non-deleted user,
+        except a `teaching_assistant` with no supervisor.
+      description: |
+        Step 2 of 2. Fetches `upload_key` from S3, parses it as CSV (applying
+        `column_mapping` if supplied), validates each row against the same
+        field limits as `CheckCreateRequest`, and writes a `batches` row plus
+        one `batch_row_failures` row per invalid row (spec Decision 4 — bad
+        rows are skipped, never a reason to reject the whole upload). One SQS
+        message is enqueued per valid row; the Worker calls the same
+        `create_check()` used by the synchronous path.
+
+        `strictness` and `retain_answer` are batch-level — one value applies
+        to every row in the file, never a per-row CSV column (spec
+        Decision 3).
+
+        Returns `202` immediately; `Batch.row_total` reflects the file's
+        actual row count, not yet how many have been scored. Poll
+        `GET /api/batches/{id}` for progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BatchCreateRequest" }
+      responses:
+        "202":
+          description: Batch accepted; processing has started asynchronously.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Batch" }
+        "400":
+          description: |
+            Malformed body, unknown field, `upload_key` not found in S3, or
+            every row in the file failed validation (`no_valid_rows`) — the
+            one case where a bad file is rejected outright rather than
+            producing `batch_row_failures` rows, since there would be nothing
+            to have created a batch for.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: A `teaching_assistant` with no supervisor. Same rule as `POST /api/checks`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/batches/{id}:
+    get:
+      tags: [batches]
+      operationId: getBatchProgress
+      summary: Poll batch progress
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        users module — object-level, same convention as `GET /api/checks/{id}`.
+        `root_admin`, or the batch's own `actor_id`.
+      description: |
+        `completed + failed + pending == row_total` always holds.
+        `completed`/`failed` are `COUNT(checks)`/`COUNT(batch_row_failures)`
+        for this `batch_id` — computed on read, not a stored counter (spec
+        Decision 2/7: no separate progress-write path to keep in sync).
+
+        A batch belonging to another instructor returns **404, not 403** —
+        same existence-hiding convention as `GET /api/checks/{id}`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchProgress" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/batches/{id}/cancel:
+    post:
+      tags: [batches]
+      operationId: cancelBatch
+      summary: Stop an in-flight batch
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: |
+        Same object-level gate as `GET /api/batches/{id}` — `root_admin`, or
+        the batch's own `actor_id`. 404, not 403, for someone else's batch.
+      description: |
+        Sets `Batch.cancelled_at`. Idempotent — cancelling an
+        already-cancelled or already-finished batch just returns current
+        progress rather than erroring.
+
+        Does not purge rows already sitting in SQS. The Worker checks
+        `cancelled_at` per-message before scoring and records a
+        `batch_row_failures` row instead once it's set, so `pending` drains
+        to 0 over the next few poll cycles rather than instantly. See
+        DECISION LOG [0.14.0].
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current progress, with `cancelled` now true.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BatchProgress" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 # =============================================================================
 # COMPONENTS
 # =============================================================================
@@ -2167,6 +2369,134 @@ components:
           description: NULL if `retain_answer` was false. See DECISION LOG [0.5.8].
         created_at: { type: string, format: date-time }
 
+    ColumnMapping:
+      type: object
+      description: |
+        Maps the instructor's own CSV header names to our required fields.
+        Keys are the instructor's literal header text; values are one of
+        `external_ref`, `answer_text`, `question_text`. Omit `question_text`
+        from the mapping if the file has no such column and
+        `requires_question_text` is false.
+
+        Applied server-side against the untouched original upload — never a
+        client-side file rewrite (spec Decision 8), so the S3 object always
+        matches what the instructor actually uploaded.
+      additionalProperties:
+        type: string
+        enum: [external_ref, answer_text, question_text]
+
+    UploadUrlRequest:
+      type: object
+      required: [file_name]
+      additionalProperties: false
+      properties:
+        file_name:
+          type: string
+          maxLength: 255
+
+    UploadUrlResponse:
+      type: object
+      required: [upload_url, upload_key]
+      properties:
+        upload_url:
+          type: string
+          description: Presigned S3 PUT URL. Expires in 15 minutes.
+        upload_key:
+          type: string
+          description: Opaque S3 object key. Passed back on `POST /api/batches`.
+
+    BatchCreateRequest:
+      type: object
+      required: [upload_key, file_name]
+      additionalProperties: false
+      properties:
+        upload_key:
+          type: string
+          description: From `UploadUrlResponse.upload_key`.
+        file_name:
+          type: string
+          maxLength: 255
+        strictness:
+          $ref: "#/components/schemas/Strictness"
+        retain_answer:
+          type: boolean
+          default: true
+          description: Same meaning as `CheckCreateRequest.retain_answer`, applied to every row.
+        column_mapping:
+          type: object
+          nullable: true
+          description: |
+            Omit or null if the file already uses our column names
+            (external_ref, answer_text, question_text).
+          allOf:
+            - $ref: "#/components/schemas/ColumnMapping"
+
+    Batch:
+      type: object
+      required: [batch_id, actor_id, batch_file_name, created_at, row_total]
+      description: |
+        Job lifecycle/settings for one batch upload. See DECISION LOG
+        [0.13.0] — a batch is a real row, not "checks sharing an id".
+      properties:
+        batch_id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid }
+        batch_file_name: { type: string }
+        strictness: { $ref: "#/components/schemas/Strictness" }
+        created_at: { type: string, format: date-time }
+        row_total:
+          type: integer
+          description: Valid rows accepted at submission time — not yet how many are scored.
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Null unless `POST /api/batches/{id}/cancel` was called. Set once,
+            never cleared. See DECISION LOG [0.14.0].
+
+    BatchProgress:
+      type: object
+      required: [batch, completed, failed, pending, row_total, cancelled, failures]
+      description: |
+        `completed + failed + pending == row_total` always holds. Computed on
+        read from `checks`/`batch_row_failures`, not a stored counter (spec
+        Decision 7 — polling only, no push, no separate write path to drift
+        out of sync).
+      properties:
+        batch: { $ref: "#/components/schemas/Batch" }
+        completed:
+          type: integer
+          description: Rows that produced a `checks` row.
+        failed:
+          type: integer
+          description: |
+            Rows in `batch_row_failures` — either failed pre-flight CSV
+            validation, or exhausted SQS redelivery and were drained from the
+            DLQ. Always equal to `failures.length`.
+        pending:
+          type: integer
+          description: Rows not yet resolved either way.
+        row_total: { type: integer }
+        cancelled:
+          type: boolean
+          description: Same as `batch.cancelled_at is not None`, flattened out for the client.
+        failures:
+          type: array
+          items: { $ref: "#/components/schemas/BatchRowFailure" }
+          description: |
+            The actual `batch_row_failures` rows for this batch, oldest first
+            — the reason text an instructor acts on to fix and re-upload.
+            `BatchRowFailure` was defined but never referenced by any endpoint
+            until this — see DECISION LOG [0.16.0].
+
+    BatchRowFailure:
+      type: object
+      required: [row_number, reason]
+      properties:
+        row_number: { type: integer }
+        external_ref: { type: string, nullable: true }
+        reason: { type: string }
+
     DetectorCapabilities:
       type: object
       required:
@@ -2276,6 +2606,8 @@ components:
               # was omitted. See GET /api/detector. (checks)
             - detector_unavailable # 503 — detector service down (checks)
             - detector_timeout # 504 — detector exceeded 10s budget (checks)
+            - no_valid_rows # 400 — every row in an uploaded batch CSV
+              # failed validation (batches)
             - internal_error
         message:
           type: string
@@ -2331,6 +2663,142 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.16.0] BatchProgress now returns the actual failure reasons, not just a count.
+#
+#   PROBLEM. `BatchRowFailure` (row_number, external_ref, reason) has existed
+#   in this contract since [0.13.0], but no endpoint ever referenced it —
+#   `BatchProgress.failed` was an integer count only. The backend faithfully
+#   records why every row failed (pre-flight CSV validation, an SQS enqueue
+#   error, cancellation, or exhausted DLQ retries) in plain, instructor-
+#   actionable language ("answer_text is under 10 characters."), but none of
+#   it ever reached the instructor. An instructor whose upload had bad rows
+#   saw only "3 failed" with no way to find or fix them short of re-deriving
+#   the CSV's own validation rules by trial and error.
+#
+#   OPTIONS CONSIDERED. (a) Treat `batch_row_failures` as audit-only, the
+#   same posture as `UserStatusEvent`/`UserRoleEvent` — never surface it,
+#   keep it for later investigation only. Rejected: those two tables record
+#   administrative history nobody needs in the moment; a batch's own row
+#   failures are direct, immediate feedback on the task the instructor just
+#   ran, and the existing frontend (`BatchResultsTable`'s failure banner,
+#   `serializeResultsCsv`'s failure lines) was already built expecting this
+#   data, wired to a field the backend never populated. (b) A separate
+#   `GET /api/batches/{id}/failures` endpoint. Rejected — `BatchProgress` is
+#   already the one thing polled for a batch's state, and a batch's row
+#   count ceiling (500) keeps the failure list small enough to return inline
+#   without pagination.
+#
+#   DECISION. `BatchProgress.failures` is now a required array of
+#   `BatchRowFailure`, oldest first, sourced from the same query that used
+#   to only take `COUNT(*)`. `failed` is kept as a separate field (always
+#   equal to `failures.length`) rather than removed, since existing callers
+#   read it as a plain integer. No new endpoint, no new polling.
+#
+#
+#   PROBLEM. [0.14.0] deliberately chose not to touch SQS on cancel, relying
+#   on the Worker's one-at-a-time poll loop to eventually reach and skip a
+#   cancelled batch's messages. In practice, a shared queue accumulates
+#   leftover messages from every batch ever submitted (cancelled or not —
+#   a cancelled batch's own un-reached rows never leave the queue under
+#   [0.14.0], they just get converted to failures once reached). Repeated
+#   test submissions during development produced a queue backlog in the
+#   hundreds, and a *newly submitted, non-cancelled* batch got stuck showing
+#   no progress for several minutes waiting behind it — not a bug in the
+#   scoring path, but a real instructor-facing symptom ("it's stuck and
+#   doesn't say why") that [0.14.0]'s design does nothing to prevent, and
+#   cancelling more aggressively is the direct way to stop it from getting
+#   worse with every cancelled run.
+#
+#   OPTIONS CONSIDERED. (a) A per-batch SQS queue, deleted wholesale on
+#   cancel via the queue's own PurgeQueue. Rejected — dynamic queue
+#   creation/teardown per batch is a real infra change (creation latency,
+#   cleanup of finished queues, account queue limits) for a problem that
+#   doesn't need it. (b) Leave [0.14.0] as-is and only reduce the backlog by
+#   processing messages in larger SQS batches (10 at a time) generally.
+#   Rejected on its own — helps throughput but does nothing to stop a
+#   cancelled batch's messages from sitting in the queue at all, which is
+#   the actual complaint.
+#
+#   DECISION. Cancel still sets `cancelled_at` first (unchanged from
+#   [0.14.0], and still what the Worker's per-message check relies on as
+#   the correctness backstop). It then actively drains: receive up to 10
+#   messages at a time from the queue and delete the ones whose `batch_id`
+#   matches. A message for a *different* batch is left completely alone —
+#   not deleted, not touched — so it simply sits invisible for the queue's
+#   normal VisibilityTimeout before becoming receivable again, same as any
+#   other in-flight message. Bounded by a fixed iteration cap rather than
+#   looping until the queue is provably empty — SQS's
+#   `ApproximateNumberOfMessages` is, as the name says, approximate, and an
+#   uncapped loop against a queue full of other instructors' messages would
+#   turn a single cancel request into an unbounded scan. Anything left
+#   behind when the cap is hit still gets skipped by the Worker's existing
+#   per-message `cancelled_at` check — this is a best-effort optimization
+#   layered on top of [0.14.0]'s correctness guarantee, not a replacement
+#   for it. SQS still has no native "delete all messages matching X"
+#   primitive, so this is a receive/inspect/delete-if-match loop, not a
+#   real filtered purge.
+#
+#   CAUGHT DURING IMPLEMENTATION. The first version of this loop called
+#   `ChangeMessageVisibility(VisibilityTimeout=0)` on a non-matching message
+#   to put it back as visible immediately, reasoning that otherwise it
+#   would sit invisible for up to 30s. That was wrong: releasing it this
+#   way let the *same* drain loop's next iteration immediately receive it
+#   again, and a handful of iterations of that was enough to trip the
+#   queue's `maxReceiveCount: 3` redrive policy — SQS/LocalStack then
+#   silently routed it to the DLQ as if it had failed processing 3 times,
+#   even though nothing was ever wrong with it. Verified against real
+#   LocalStack: cancelling one batch was exiling *other* batches' good rows
+#   to the DLQ. Fixed by not touching non-matches at all — a message this
+#   loop doesn't delete is simply left as-is.
+#
+# [0.14.0] Batch cancellation: a flag the Worker checks, not a queue purge.
+#
+#   PROBLEM. There was no way to stop a batch mid-run — noticed while
+#   fixing the SPA not being able to find/resume an in-progress batch across
+#   a refresh. A large upload (up to 500 rows) can take a while, and the
+#   instructor has no way to back out of a bad upload (wrong file, wrong
+#   strictness) without waiting it out.
+#
+#   OPTIONS CONSIDERED. (a) Delete/purge the batch's messages from SQS.
+#   Rejected — SQS has no "delete all messages matching X" primitive; doing
+#   this for real would mean receiving and re-hiding every message in the
+#   queue to inspect it, which is both slow and racy against the Worker
+#   already processing some of them. (b) A stored, actively-recomputed
+#   "pending" counter the cancel endpoint could zero out. Rejected — batches'
+#   own module comment already committed to progress being computed, not
+#   stored, specifically to avoid a second write path drifting out of sync
+#   (spec Decision 2/7); a cancel counter would reintroduce exactly that.
+#
+#   DECISION. `batches.cancelled_at`, set once and never cleared. The Worker
+#   checks it per in-flight message, before calling the detector, and if
+#   set records a `batch_row_failures` row ("Batch cancelled by instructor.")
+#   instead of scoring. Already-completed rows are untouched. `pending`
+#   drains to 0 within a few poll cycles as the Worker works through
+#   whatever was still queued — not instant, but bounded by the same queue
+#   depth a normal completion would take, and requires no new SQS
+#   capability. `BatchProgress.cancelled` is derived
+#   (`cancelled_at is not None`), matching the "computed, not stored twice"
+#   rule the rest of the module already follows.
+#
+# [0.13.0] Batches module: real batches table, not "rows sharing an id".
+#
+#   PROBLEM. The pre-existing `checks.batch_id` comment ("There is no
+#   batches table: a batch is these rows sharing an id") assumed a batch was
+#   only ever a completed set of Check rows. The batches module needs
+#   progress polling before any row is scored, and per-upload settings
+#   (strictness, retain_answer, column mapping) that don't belong on
+#   individual Check rows.
+#
+#   DECISION. Added `batches` (job lifecycle/settings) and
+#   `batch_row_failures` (CSV-validation failures, same append-only shape as
+#   user_status_events/user_role_events). `checks` rows stay write-once —
+#   never created pending, only once a result exists. `batch_id`/
+#   `batch_file_name` are removed as client-settable fields on
+#   `CheckCreateRequest`; only the Worker sets a Check's `batch_id` now,
+#   consistent with `actor_id` never being client-supplied. See
+#   docs/superpowers/specs/2026-09-09-batches-module-design.md for the full
+#   reasoning.
 #
 # [0.12.0] Implemented `PATCH /api/users/{id}/role`'s audit trail.
 #

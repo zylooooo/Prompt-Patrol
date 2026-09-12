@@ -1,4 +1,5 @@
 from .base import Base
+from .batch import Batch, BatchRowFailure
 from .check import AbstainReasonEnum, Check, StrictnessEnum, VerdictEnum
 from .session import UserSession
 from .user import User, UserRoleEnum, UserRoleEvent, UserStatusEnum, UserStatusEvent
@@ -15,4 +16,6 @@ __all__ = [
     "VerdictEnum",
     "StrictnessEnum",
     "AbstainReasonEnum",
+    "Batch",
+    "BatchRowFailure",
 ]

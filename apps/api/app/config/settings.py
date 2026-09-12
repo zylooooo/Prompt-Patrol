@@ -28,6 +28,21 @@ FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 DETECTOR_URL: str = os.getenv("DETECTOR_URL", "http://detector:8001")
 
+AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+# Empty in real AWS (boto3 resolves the real endpoint). Set to LocalStack's
+# address locally - see apps/docker-compose.yml (chunk C).
+AWS_ENDPOINT_URL: str | None = os.getenv("AWS_ENDPOINT_URL") or None
+# Presigned upload URLs are followed by the browser, not the backend - it
+# can't resolve LocalStack's in-network hostname ("localstack"), only the
+# host-mapped one. Real AWS never sets AWS_ENDPOINT_URL at all, so this
+# falls back to it and stays a no-op there.
+AWS_ENDPOINT_URL_PUBLIC: str | None = (
+    os.getenv("AWS_ENDPOINT_URL_PUBLIC") or AWS_ENDPOINT_URL
+)
+S3_BATCHES_BUCKET: str = os.getenv("S3_BATCHES_BUCKET", "prompt-patrol-batches")
+SQS_BATCHES_QUEUE_URL: str = os.getenv("SQS_BATCHES_QUEUE_URL", "")
+SQS_BATCHES_DLQ_URL: str = os.getenv("SQS_BATCHES_DLQ_URL", "")
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
 VALID_ENVIRONMENTS = {"dev", "staging", "prod"}

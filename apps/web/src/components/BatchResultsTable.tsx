@@ -5,12 +5,17 @@ import DataTable, {
 import Button from "./ui/Button";
 import RowAction from "./ui/RowAction";
 import VerdictChip from "./VerdictChip";
-import SignalsList from "./SignalsList";
+import ResultPanel from "./ResultPanel";
+import Pagination from "./ui/Pagination";
+import { SECTION_LABEL } from "./ui/section-label";
 import { truncate } from "../lib/format";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
+import { useBatchProgress } from "../hooks/useBatches";
+
+const PAGE_SIZE = 10;
 
 function CountChip({
   dotClass,
@@ -30,12 +35,62 @@ function CountChip({
   );
 }
 
-export default function BatchResultsTable({ run }: { run: BatchRun }) {
+interface BatchResultsTableProps {
+  run: BatchRun;
+  // While a batch is still running, newly-scored rows are appended by
+  // createdAt instead of the usual flagged-first order - resorting by
+  // verdict/score every poll would reshuffle rows the instructor is already
+  // looking at out from under them. Once the batch is done, the run's own
+  // (flagged-first) order is used as-is.
+  liveOrder?: boolean;
+}
+
+export default function BatchResultsTable({
+  run,
+  liveOrder = false,
+}: BatchResultsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+
+  // BatchRun (built from GET /api/checks history) never carries failures -
+  // GET /api/batches/{id} is the only place they live. Fetched here rather
+  // than threaded down as a prop so this works the same whether it's the
+  // live in-progress view or a historical entry opened cold from
+  // /history/{id}, which has no live progress query of its own.
+  const progress = useBatchProgress(run.id);
+  const failures = progress.data?.failures ?? run.failures ?? [];
+  const runWithFailures = useMemo(() => ({ ...run, failures }), [run, failures]);
+
+  // A new batch (or a switch between live/final ordering) starts back on
+  // page 1 - staying on page 4 of the previous run's rows would show stale
+  // or out-of-range data. Reset during render (React's documented pattern
+  // for "adjust state when a prop changes") rather than in a useEffect, so
+  // it doesn't cost an extra commit-then-rerun-effect render pass.
+  const [pageResetKey, setPageResetKey] = useState(`${run.id}:${liveOrder}`);
+  const currentResetKey = `${run.id}:${liveOrder}`;
+  if (currentResetKey !== pageResetKey) {
+    setPageResetKey(currentResetKey);
+    setPage(0);
+  }
+
+  const rows = useMemo(
+    () =>
+      liveOrder
+        ? [...run.rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        : run.rows,
+    [run.rows, liveOrder],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRows = rows.slice(
+    currentPage * PAGE_SIZE,
+    (currentPage + 1) * PAGE_SIZE,
+  );
 
   function onDownload() {
     const base = run.fileName.replace(/\.csv$/i, "");
-    downloadCsv(`${base}-results.csv`, serializeResultsCsv(run));
+    downloadCsv(`${base}-results.csv`, serializeResultsCsv(runWithFailures));
   }
 
   const toggle = (checkId: string) =>
@@ -94,8 +149,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
     },
   ];
 
-  const expandedRow = run.rows.find((row) => row.checkId === expanded);
-  const failures = run.failures ?? [];
+  const expandedRow = rows.find((row) => row.checkId === expanded);
   const shownFailures = failures.slice(0, 6);
 
   return (
@@ -126,9 +180,11 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
           </p>
           <ul className="mt-1.5 space-y-0.5 text-muted-foreground">
             {shownFailures.map((failure) => (
-              <li key={failure.externalRef}>
-                <span className="font-mono">{failure.externalRef}</span> —{" "}
-                {failure.reason}
+              <li key={failure.rowNumber}>
+                <span className="font-mono">
+                  {failure.externalRef ?? `Row ${failure.rowNumber}`}
+                </span>{" "}
+                — {failure.reason}
               </li>
             ))}
             {failures.length > shownFailures.length && (
@@ -138,7 +194,7 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
         </div>
       )}
 
-      {run.rows.length > 0 && isUncalibrated(run.rows[0].detector) && (
+      {rows.length > 0 && isUncalibrated(rows[0].detector) && (
         <p className="mt-3 text-xs text-disabled-foreground">
           {UNCALIBRATED_NOTICE}
         </p>
@@ -147,35 +203,50 @@ export default function BatchResultsTable({ run }: { run: BatchRun }) {
       <div className="mt-5">
         <DataTable<BatchRow>
           columns={columns}
-          rows={run.rows}
+          rows={visibleRows}
           getRowId={(row) => row.checkId}
           selectedId={expanded}
           onSelect={toggle}
-          bodyMaxHeightClass="max-h-[28rem]"
           footer={
             failures.length > 0
-              ? `Showing ${run.rows.length} scored · flagged first`
-              : `Showing all ${run.rows.length} · flagged first`
+              ? `${rows.length} scored${liveOrder ? "" : " · flagged first"}`
+              : `${rows.length} total${liveOrder ? "" : " · flagged first"}`
           }
         />
+        <div className="mt-3">
+          <Pagination
+            page={currentPage + 1}
+            totalPages={pageCount}
+            total={rows.length}
+            pageSize={PAGE_SIZE}
+            itemNoun="answers"
+            onPageChange={(next) => setPage(next - 1)}
+          />
+        </div>
       </div>
 
       {expandedRow && (
-        <div className="mt-4 rounded-xl bg-surface-muted px-5 py-4">
-          <p className="text-sm leading-relaxed text-foreground">
-            {expandedRow.answerText}
-          </p>
-          {expandedRow.questionText && (
-            <p className="mt-2 text-xs text-disabled-foreground">
-              question: {expandedRow.questionText}
+        <div className="mt-4 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <section className="rounded-xl bg-surface p-7 shadow-md">
+            <p className={SECTION_LABEL}>Student answer</p>
+            <p className="mt-3 text-sm leading-relaxed text-foreground">
+              {expandedRow.answerText ??
+                "The answer was not retained for this check."}
             </p>
-          )}
-          <div className="mt-4">
-            <SignalsList
-              abstainReason={expandedRow.abstainReason}
-              explanation={expandedRow.explanation}
-            />
-          </div>
+            {expandedRow.questionText && (
+              <>
+                <p className={`mt-6 ${SECTION_LABEL}`}>Question context</p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  {expandedRow.questionText}
+                </p>
+              </>
+            )}
+          </section>
+          <ResultPanel
+            status="success"
+            result={expandedRow}
+            showSavedLink={false}
+          />
         </div>
       )}
 

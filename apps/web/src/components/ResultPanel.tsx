@@ -7,12 +7,12 @@ import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
 import { describeCheckFailure } from "../lib/checkFailure";
-import { STRICTNESS_TEXT, type SingleCheck } from "../types";
+import { STRICTNESS_TEXT, type CheckResult } from "../types";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
 interface ResultPanelProps {
   status: "idle" | "pending" | "error" | "success";
-  result?: SingleCheck;
+  result?: CheckResult;
   error?: unknown;
   showSavedLink?: boolean;
 }
