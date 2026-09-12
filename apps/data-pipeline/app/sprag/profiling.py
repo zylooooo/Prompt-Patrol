@@ -16,7 +16,6 @@ TEXT_COLUMNS = ["QuestionText", "StudentAnswer", "Reference Answer"]
 
 _ENCODING_ARTIFACT_CONFIG = TextFixerConfig(uncurl_quotes=False)
 
-# this pattern is used to identify questions that are likely to elicit code-writing responses
 _CODE_ELICITING_PATTERN = re.compile(r"write\s+an?\s+(?:\w+\s+)?(?:function|script|program)", re.IGNORECASE)
 
 
@@ -28,8 +27,6 @@ def _rows_matching(df: pd.DataFrame, predicate) -> pd.DataFrame:
 
 
 def _has_encoding_artifact(text) -> bool:
-    # \r\n normalized first - that's a line-ending style, not corruption, and
-    # ftfy would otherwise count it as a "fix" alongside genuine artifacts.
     if not isinstance(text, str):
         return False
     text = text.replace("\r\n", "\n")

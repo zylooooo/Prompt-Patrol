@@ -23,8 +23,6 @@ def load_raw_corpus() -> pd.DataFrame:
 
     df = answers.merge(questions, on="QuestionID", how="left")
 
-    # No per-row id exists upstream - stable synthetic one so cleaning/profiling
-    # can log exactly which rows were touched, matching Mohler's `id` column.
     df.insert(0, "id", df["QuestionID"] + ".A" + df.groupby("QuestionID").cumcount().astype(str))
     return df
 
