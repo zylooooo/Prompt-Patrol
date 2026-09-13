@@ -6,7 +6,6 @@ from .user_exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from .detector_exceptions import DetectorTimeoutError, DetectorUnavailableError
 
 __all__ = [
     "Auth0ProvisioningError",
