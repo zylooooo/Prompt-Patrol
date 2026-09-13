@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exceptions import DetectorTimeoutError, DetectorUnavailableError
 from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
+from exceptions import DetectorTimeoutError, DetectorUnavailableError
 
 from .detector_client import MODEL_VERSION, score_text
 
