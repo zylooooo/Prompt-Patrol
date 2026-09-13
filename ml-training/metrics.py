@@ -132,7 +132,11 @@ def operating_point_metrics(y_true, y_prob, threshold):
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     n_neg, n_pos = tn + fp, tp + fn
 
-    recall = float(recall_score(y_true, y_pred, zero_division=0))
+    # nan, not 0, when the slice has no positives at all: TPR is undefined
+    # there, and a 0 silently wins any "worst slice" comparison. Matches
+    # how fpr/fnr/tnr below already report an undefined rate.
+    recall = (float(recall_score(y_true, y_pred, zero_division=0))
+              if n_pos else float("nan"))
     tnr = float(tn / n_neg) if n_neg else float("nan")
 
     return {
@@ -375,15 +379,3 @@ def slice_report(df, y_true_col="y_true", y_prob_col="y_prob",
         rows.append(row)
 
     return rows
-
-
-# backwards-compatible aliases used by the first DagsHub trial runs
-compute_tpr_at_fpr = oracle_tpr_at_fpr
-compute_ece = lambda y_true, y_prob, n_bins=10: expected_calibration_error(
-    y_true, y_prob, n_bins
-)[0]
-
-
-def compute_metrics(y_true, y_prob, threshold=0.5):
-    """Legacy entry point. Prefer evaluate() - it adds CIs and abstention."""
-    return evaluate(y_true, y_prob, threshold, bootstrap_n=0)
