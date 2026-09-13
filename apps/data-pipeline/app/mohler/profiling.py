@@ -5,7 +5,7 @@ import ftfy
 import pandas as pd
 from ftfy import TextFixerConfig
 
-from loader import OUTPUT_PATH
+from mohler.loader import OUTPUT_PATH
 
 logger = logging.getLogger(__name__)
 

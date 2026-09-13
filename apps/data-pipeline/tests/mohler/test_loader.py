@@ -1,4 +1,4 @@
-from loader import load_raw_corpus
+from mohler.loader import load_raw_corpus
 
 EXPECTED_COLUMNS = {
     "id",
