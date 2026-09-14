@@ -8,6 +8,9 @@ DATASET_CONFIG = "raw"
 SPRAG_REPO = "sridevibonthu/SPRAG"
 SPRAG_REVISION = "18417d62606913246b264a3ae53563a9e9819f76"
 
+ENGSAF_REPO_ID = "IsmaelMousa/engsaf"
+ENGSAF_REVISION = "0a2b17a9793bc5dd1a7bde26f87bc58a2d31732f"
+
 # Fixed so the split is reproducible across runs and machines.
 SPLIT_SEED = 42
 
