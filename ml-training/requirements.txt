@@ -1,0 +1,24 @@
+# --- model + training ---
+torch==2.14.0
+# on Linux/CUDA install torch from the pytorch index first, then this file:
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu124
+transformers==5.16.1
+peft==0.20.0
+accelerate==1.14.0          # required by transformers.Trainer, not imported directly
+huggingface_hub==1.30.0     # revision pinning in experiments.py
+
+# --- data + metrics ---
+pandas==3.0.5
+numpy==2.4.6
+pyarrow==25.0.1             # pandas parquet engine for the split files
+scikit-learn==1.9.0
+scipy==1.17.1               # threshold search in trial-training.py
+
+# --- config ---
+pydantic==2.13.5
+python-dotenv==1.2.3        # DagsHub credentials out of .env
+
+# --- tracking + data versioning ---
+mlflow==3.16.0
+dvc[http]==3.67.1           # http extra: the DagsHub remote in .dvc/config
+matplotlib==3.11.1          # figures passed to tracking.log_plot
