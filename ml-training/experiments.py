@@ -13,7 +13,13 @@ what keeps a comparison attributable.
 from config import DataConfig, ModelConfig, OptimConfig, PeftConfig, RunConfig
 
 OWNER = "tori.2023"
-SPLITS = "data/splits/v0.1"
+
+# The E2/E3 corpus. NOT YET PRODUCED: the cleaned Mohler corpus is student
+# answers and grader scores only - no AI answers and no per-model generator
+# tags exist to split, so nothing in the repo can build this file. It is
+# blocked on the data-pipeline generating those; see README "Split versions".
+# `dvc pull` will not produce it. Until it exists, only TRIAL runs.
+SPLITS = "data/splits/v0.1.parquet"
 
 # revision is pinned to a commit sha, not "main". "main" is a moving branch
 # pointer: if the checkpoint or tokenizer files are re-uploaded it silently
@@ -87,7 +93,8 @@ def logo(generator: str, slug: str) -> RunConfig:
         **{
             "data.split_strategy": "logo",
             "data.held_out_generator": generator,
-            "data.splits": f"data/splits/v0.1-logo-{slug}",
+            # same unproduced v0.1 family as SPLITS, cut per generator
+            "data.splits": f"data/splits/v0.1-logo-{slug}.parquet",
         },
     )
 

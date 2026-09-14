@@ -12,7 +12,6 @@ server so the comparison table in the report can be rebuilt from scratch.
 | [`metrics.py`](metrics.py)                     | The official metric set. Every detector is scored through `evaluate()`               |
 | [`tracking.py`](tracking.py)                   | MLflow / DagsHub. Every run is opened with `start_run()`                             |
 | [`reporting.py`](reporting.py)                 | Pulls finished runs back out into the report tables                                  |
-| [`make_trial_splits.py`](make_trial_splits.py) | One-off script that built the trial split file. Not part of the training pipeline    |
 
 ## Setup
 
@@ -23,7 +22,9 @@ server so the comparison table in the report can be rebuilt from scratch.
    field — that field is the only way to tell whose run is whose.
 3. Give DVC the same credentials and `.venv/bin/dvc pull` — see
    [The data, and DVC](#the-data-and-dvc). Skipping the pull fails with a clear
-   `FileNotFoundError` rather than training on nothing.
+   `FileNotFoundError` rather than training on nothing. A pull only fetches what
+   has been published, though, and today that is the trial split alone — see
+   [Split versions](#split-versions) before assuming a pull will unblock a run.
 
 ## The data, and DVC
 
@@ -66,6 +67,44 @@ That writes three files: `data/trial-data.parquet`, `data/splits/trial-v0.2.parq
 and its manifest. `.venv/bin/dvc status` says `Data and pipelines are up to date.`
 when your working tree matches `data.dvc`. Run `dvc pull` again after any `git pull`
 that touches `data.dvc` — git moved the pointer, but only DVC moves the bytes.
+
+### Split versions
+
+`data.splits` on a `RunConfig` names the corpus, and `DataConfig.version` derives
+the version label from that filename — so the version is a property of the
+experiment, not a local setting. The runner takes a config *name* and nothing
+else, which is what keeps a DagsHub run attributable to specific bytes. Running
+on a different corpus means adding a `RunConfig` (usually a `.variant()`
+overriding `data.splits`) to [`experiments.py`](experiments.py), not editing a
+path in place.
+
+| Version           | Status                        | Used by                                    |
+| ----------------- | ----------------------------- | ------------------------------------------ |
+| `trial-v0.2`      | published, what `dvc pull` gets | `TRIAL`                                    |
+| `v0.1`            | **not yet produced**          | `ROBERTA_FULL`, `ROBERTA_LORA`, `ROBERTA_DORA`, `BINOCULARS` |
+| `v0.1-logo-*`     | **not yet produced**          | every `logo()` config (E3)                 |
+
+**`trial-v0.2`** — 340 rows, 85 questions × 4 answers, 25% AI, group-split by
+question 60/20/20. The script that built it is *not* in this repo; its provenance
+is recorded in `data/splits/trial-v0.2_manifest.json` (seed, ratios,
+`split_strategy`, and the `source_sha256` of `data/trial-data.parquet`). It is a
+smoke corpus with two known label leaks — see the `notes` on `TRIAL` — so numbers
+from it are never cited.
+
+**`v0.1`** — the real E2/E3 corpus, and the only reason `ROBERTA_FULL`,
+`ROBERTA_DORA` and `BINOCULARS` have no runnable config yet. It cannot be built
+from what is in the repo today: `apps/data-pipeline/data/cleaned/mohler_cleaned.parquet`
+is 2347 rows of student answers and grader scores, with no AI answers and no
+per-model `generator` tags to split on. `apps/data-pipeline/app/splitting.py`
+splits that unlabelled frame, so its output also does not satisfy the column
+contract `load_splits()` enforces (`answer`, `label`, `partition`, `question_id`,
+`answer_id`, `generator`, `n_words`). Unblocking E2 means generating AI answers
+for the full corpus upstream, then publishing the split through `dvc add` /
+`dvc push` below. `v0.1-logo-*` additionally needs per-model generator tags,
+which the trial corpus also lacks (its `generator` is only `human`/`ai_generated`).
+
+Until then, `dvc pull` will not produce these files and a run against them fails
+at `load_splits()`. `TRIAL` is the config that runs.
 
 ### Changing the data
 

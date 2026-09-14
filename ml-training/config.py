@@ -48,6 +48,10 @@ class DataConfig(_Strict):
     following apps/data-pipeline/app/splitting.py. Three separate files would
     also need a rule for which one LOGO folds are cut from; one file with a
     partition column is what logo_folds.py already reads.
+
+    splitting.py settles the shape only, not the columns: the required set
+    (answer, label, question_id, answer_id, generator, n_words) is enforced in
+    load_splits(), and splitting.py does not currently emit it.
     """
 
     splits: str                          # parquet with a `partition` column

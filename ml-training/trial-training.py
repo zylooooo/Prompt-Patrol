@@ -110,7 +110,11 @@ def load_splits(cfg: RunConfig) -> dict[str, pd.DataFrame]:
     """
     path = Path(cfg.data.splits)
     if not path.exists():
-        raise FileNotFoundError(f"{path} not found - run `dvc pull` first")
+        raise FileNotFoundError(
+            f"{path} not found. `dvc pull` fetches splits tracked in data.dvc; "
+            f"a split version that has never been published will not appear. "
+            f"See ml-training/README.md for which versions exist."
+        )
 
     df = pd.read_parquet(path)
 
