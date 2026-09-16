@@ -178,8 +178,19 @@ export default function DataTable<T>({
                     aria-selected={isSelected}
                     animate={isExiting ? ROW_EXIT_ANIMATE : ROW_IDLE_ANIMATE}
                     transition={ROW_TRANSITION}
+                    tabIndex={onSelect && !isExiting ? 0 : undefined}
                     onClick={
                       onSelect && !isExiting ? () => onSelect(id) : undefined
+                    }
+                    onKeyDown={
+                      onSelect && !isExiting
+                        ? (event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onSelect(id);
+                            }
+                          }
+                        : undefined
                     }
                     style={gridStyle}
                     className={`${rowGridClass} group hover:bg-surface-muted/50 ${

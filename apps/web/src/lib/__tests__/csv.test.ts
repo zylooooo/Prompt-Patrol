@@ -6,7 +6,12 @@ import {
   type BatchRun,
 } from "../../types";
 import { describe, expect, it } from "vitest";
-import { MAX_ROWS, parseAnswersCsv, serializeResultsCsv } from "../csv";
+import {
+  MAX_ROWS,
+  parseAnswersCsv,
+  parseHeaderAndPreview,
+  serializeResultsCsv,
+} from "../csv";
 
 /**
  * This file is deliberately weighted towards malformed input. `parseAnswersCsv`
@@ -285,6 +290,43 @@ describe("parseAnswersCsv — length boundaries", () => {
   });
 });
 
+describe("parseHeaderAndPreview", () => {
+  it("returns the header row and up to previewRows data rows", () => {
+    const text = "Student ID,Response\nstu-1,hello\nstu-2,world\nstu-3,extra\n";
+    const result = parseHeaderAndPreview(text, 2);
+    expect(result.headers).toEqual(["Student ID", "Response"]);
+    expect(result.preview).toEqual([
+      ["stu-1", "hello"],
+      ["stu-2", "world"],
+    ]);
+  });
+});
+
+describe("parseAnswersCsv with column mapping", () => {
+  it("applies a mapping from the instructor's own headers to our fields", () => {
+    const text =
+      "Student ID,Response\nstu-1,This answer is long enough to pass validation.\n";
+    const mapping = { "Student ID": "external_ref", Response: "answer_text" } as const;
+    const { rows, errors } = parseAnswersCsv(text, mapping, false);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      {
+        externalRef: "stu-1",
+        answerText: "This answer is long enough to pass validation.",
+        questionText: undefined,
+      },
+    ]);
+  });
+
+  it("requires question_text when requiresQuestionText is true", () => {
+    const text =
+      "external_ref,answer_text\nstu-1,This answer is long enough to pass validation.\n";
+    const { rows, errors } = parseAnswersCsv(text, null, true);
+    expect(rows).toEqual([]);
+    expect(errors[0]).toMatch(/question_text/);
+  });
+});
+
 const run = (rows: unknown[]): BatchRun => ({ rows }) as unknown as BatchRun;
 
 const row = (over: Record<string, unknown> = {}) => ({
@@ -321,13 +363,24 @@ describe("serializeResultsCsv", () => {
     const csv = serializeResultsCsv({
       ...run([row({ externalRef: "OK-1" })]),
       failures: [
-        { externalRef: "BAD-1", reason: "The detector took too long." },
+        { rowNumber: 2, externalRef: "BAD-1", reason: "The detector took too long." },
       ],
     });
     const lines = csv.split("\r\n");
 
     expect(lines).toHaveLength(3);
     expect(lines[2]).toBe("BAD-1,,,,,,,,The detector took too long.");
+  });
+
+  it("falls back to a row number when a failure has no external_ref", () => {
+    // Pre-flight rejections that couldn't even read external_ref (a
+    // malformed row) still record a BatchRowFailure - it just carries a
+    // null external_ref, so the CSV needs something to identify the row by.
+    const csv = serializeResultsCsv({
+      ...run([]),
+      failures: [{ rowNumber: 5, externalRef: null, reason: "The file is empty." }],
+    });
+    expect(csv.split("\r\n")[1]).toBe("row 5,,,,,,,,The file is empty.");
   });
 
   it("quotes fields containing commas, quotes or newlines", () => {

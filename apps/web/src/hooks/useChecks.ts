@@ -5,7 +5,6 @@ import {
   getDetectorStatus,
   getEntry,
   listHistory,
-  runBatch,
 } from "../api/checks";
 import {
   queryOptions,
@@ -16,7 +15,7 @@ import {
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
-import type { BatchRowInput, CheckInput, Strictness } from "../types";
+import type { CheckInput } from "../types";
 
 function useActor(): User | null {
   return useAuth().user;
@@ -79,26 +78,6 @@ export function useCheckAnswer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CheckInput) => checkAnswer(requireActor(actor), input),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
-  });
-}
-
-export function useRunBatch(
-  onProgress?: (done: number, total: number) => void,
-) {
-  const actor = useActor();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      fileName,
-      rows,
-      strictness,
-    }: {
-      fileName: string;
-      rows: BatchRowInput[];
-      strictness?: Strictness;
-    }) => runBatch(requireActor(actor), fileName, rows, strictness, onProgress),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: checkKeys.history() }),
   });

@@ -1,0 +1,341 @@
+,question,answer,generator
+0,"In one sentence, what is the main idea implemented by selection sort?",It repeatedly finds the smallest remaining element and places it at the front.,ai_generated
+1,"What is the difference between an array declared as static, and one that is not?","static arrays keep the values after the end of a function, while non static reinitialize every time.",human
+2,What is the difference between a data member and a local variable inside a member function?,Local variables are used only within the scope of its declaration,human
+3,"In one sentence, what is the main idea implemented by selection sort?","Find the smallest value in the list and make it the first element, then find the smallest value of the leftover list and make it the first element of the leftover list and continue until the list is sorted.",human
+4,What is the main advantage associated with function arguments that are passed by reference?,"Actual arguments are associated with dummy arguments when a function or subroutine is referenced. In a procedure reference, the actual argument list identifies the correspondence between the actual arguments provided in the list and the dummy arguments of the subprogram",human
+5,What is the height of a tree?,The length of the longest path from the root to any of its leaves.,human
+6,How can you implement a queue with an array?,"Use a circular array. Keep the rear of the queue toward the end of the array, and the front toward the beginning, and allow the rear pointer to wrap around.",human
+7,How are arrays passed to functions?,"As a pointer to their first element, so the function works on the original array, not a copy.",ai_generated
+8,What is the Euler tour traversal of a tree?,"A traversal that visits each node three times: before, between, and after visiting its children.",ai_generated
+9,How can you implement a stack with a list?,Using nodes to keep track of the head of the stack. Then using Push( ) and Pop ( ) to create the stack as needed.,human
+10,What is the inorder traversal of a binary tree?,Left Child -> Parent -> Right Child,human
+11,What is the advantage of linked lists over arrays?,"Linked lists are dynamic structures, which allow for a variable number of elements to be stored.",human
+12,What is the main difference between a while and a do...while statement?,A while checks the condition before running the loop body; a do...while runs the body once before checking.,ai_generated
+13,What operations would you need to perform to find a given element on a stack?,Pop each element off the stack (and into another stack for storage) until the desired element is found.,human
+14,What is the difference between a circular linked list and a basic linked list?,"The circular linked list's tail points to the head, whereas the basic linked list's tail points to a NULL.",human
+15,"Briefly, how does selection sort work?","It selects the minimum from an array and places it on the first position, then it selects the minimum from the rest of the array and places it on the second position, and so forth.",human
+16,What is the difference between an array that is declared as static and one that is not?,the data of a static array cannot be changed,human
+17,What is a function signature?,"The function name along with the number, order, and types of its parameters.",ai_generated
+18,How many constructors can be created for a class?,"As many as needed, as long as each has a different parameter list (overloading).",ai_generated
+19,"How are bi-dimensional arrays stored in memory, by rows or by columns?",rows,human
+20,How many dimensions need to be specified when passing a multi-dimensional array as an argument to a function?,"Only one, the first; the rest are inferred from the data.",ai_generated
+21,What are the main advantages associated with object-oriented programming?,"the main advantages to object-oriented programming  is data abstraction, easier maintenance, and re-usability.",human
+22,Where do C++ programs begin to execute?,C++ programs begin execution at main.,human
+23,What is the difference between an array that is declared as static and one that is not?,"a static array can be can be edited throughout the program, while a non-static array can only be edited within a given function",human
+24,What is the role of a header-file?,"A header file consists of ""reusable"" source code such as a class in a file that by convention has a .h filename extension. This differs from .cpp files that contain ""source-code.""",human
+25,What is a queue?,like a linked list expect first in last out,human
+26,What is the difference between a circular linked list and a basic linked list?,A circular linked list has the last node point back to the head of the linked list.,human
+27,What is a function pointer?,The address of the location in memory where the function code resides.,human
+28,What is the main difference between strings declared using the type string versus strings declared using an array of characters?,type string is an array of chars that will make an array of single letter characters while an array of strings will be an actual array of words (or an array of char arrays),human
+29,"What data structure is more appropriate for scheduling printing jobs at a printer, a stack or a queue?","A queue, since jobs should be printed in the order they were received.",ai_generated
+30,How are linked lists passed as arguments to a function?,By reference.,human
+31,How many steps does it take to search a node in a binary search tree?,log n,human
+32,What is the alternative way to solve a problem that could be solved through recursive functions?,"A recursive function can often be solved using an iterative function, which runs faster, but is often more complicated.",human
+33,What is the height of a tree?,The number of edges on the longest path from the root to a leaf.,ai_generated
+34,What is a binary tree?,"A tree data structure in which each done has at most two children, typical called left and right nodes.  The right node is usually greater than the left node and the parent node.",human
+35,"Briefly, how does selection sort work?","it selects the smallest element in a list and switches it with the element in its correct position, then it selects the next smallest and does the same...",human
+36,What is the main disadvantage of a doubly-linked list over a basic linked list?,It uses more memory per node and requires more pointer updates.,ai_generated
+37,What is the main difference between a string of characters that is read into a variable of type string versus a variable of type char[]?,A string object handles memory automatically; a char array requires manual size management.,ai_generated
+38,What is the difference between a constructor and a function?,"constructor is a special block of statements called when an object is created, either when it is declared statically or constructed on the stack. However a function is a portion of code within a larger program, which performs a specific task and independent to the rest of the code.",human
+39,What is a binary search tree?,a tree that is set up so that it can be easily searched for numbers based on the location compared to the previous nodes.,human
+40,What is a leaf?,an endpoint on a tree that contains no pointers or pointers that are set to null,human
+41,Briefly describe the divide-and-conquer paradigm.,to divide one larger string/line of values and sepereate them into smallers lines to easily manipulate them and then replace them in the order in which they should be.,human
+42,"When defining a recursive function, what are possible causes for infinite recursion?","If the recursion function never reaches or successfully defines the base case it will recurse forever.<br><br>This happens many ways, such as the function doesn't progress towards the base case, or the function is coded poorly and doesn't even contain a base case.",human
+43,"What is the difference between an array declared as static, and one that is not?","The arrays declared as static live throughout the life of the program; that is, they are initialized only once, when the function that declares the array it is first called.",human
+44,Using an index outside the bounds of the array generates an error. Is this a compilation error or a run-time error?,it is a run-time error,human
+45,What is a tree?,"A hierarchical data structure of nodes connected by edges, with one root and no cycles.",ai_generated
+46,What is the base case for a recursive implementation of merge sort?,"A sub-array of length 1 (or 0), which is already sorted by definition.",ai_generated
+47,What is the main advantage of arrays over linked lists?,Faster random access to elements by index.,ai_generated
+48,What does the sizeof operator return?,the sizeof operator returns the size in bytes of an array parameter,human
+49,How many comparisons does it take to find an element in a binary search tree?,"at the minimum log(n)/log(2), at the maximum N searches, where N is the number of nodes.",human
+50,What is a binary search tree?,A binary tree where left children are smaller and right children are larger than their parent.,ai_generated
+51,How can you implement a stack with a list?,"Keep the top of the stack pointing to the head of the linked list, so the push and pop operations will add or remove elements at the beginning of the list.",human
+52,"What data structure is more appropriate for scheduling printing jobs at a printer, a stack or a queue?",queue,human
+53,What is a function signature?,"A function signature, used in a function's prototype, is the set of object types it take in as parameters, with or without names given for the objects.",human
+54,What are the two main functions defined by a queue?,enqueue and dequeue,human
+55,What are the main advantages associated with object-oriented programming?,Abstraction and reusability.,human
+56,What are the main operations associated with a stack?,pop and push,human
+57,What is the experimental approach for measuring the running time of an algorithm?,Run the algorithm on real input and measure actual elapsed time.,ai_generated
+58,What is the advantage of linked lists over arrays?,Faster insertion and deletion since no shifting of elements is needed.,ai_generated
+59,Order the following functions by their running time: n^2; log(log n) ; 2^(log n) ; n! ; n^3.,"2^(log n), log(log n), n!, n^2, n^3",human
+60,"Which implementation (array-based vs. list-based) is preferred, and why?","Array-based, because it avoids the memory overhead of pointers and has better cache performance.",ai_generated
+61,How are infix expressions evaluated by computers?,By converting them to postfix (or prefix) notation and evaluating that with a stack.,ai_generated
+62,What is a leaf?,A node with no children.,ai_generated
+63,How are arrays passed to functions?,by reference.,human
+64,What is a binary search tree?,A binary tree that has the property that for any node the left child is smaller than the parent which in turn is smaller than the right child.,human
+65,What does the sizeof operator return?,it returns the size in bytes of a certain variable type,human
+66,What does the star (*) operator return?,The * operator returns the dereferenced pointer variable (ie: it returns the value of whatever variable the pointer is pointing to),human
+67,How are overloaded functions differentiated by the compiler?,"they have to have same return type, but different input parameters",human
+68,"What data structure is more appropriate for scheduling printing jobs at a printer, a stack or a queue?",Queues would be preferable to stacks for use as scheduling print jobs because it would print jobs in the order that they were sent to the printer.,human
+69,What is the difference between a function prototype and a function definition?,"function prototype describe the class's public interface without revealing <br><br>the class's member function implementations,  function definitions show what <br><br>implementations are being done",human
+70,How are arrays passed to functions?,-Arrays are passed by reference <br><br>      -Individual array elements passed by value<br><br>      -Functions that take arrays as arguments <br><br>      -Function prototypes may include parameter names<br><br>      -const array parameters,human
+71,What is the main difference between a while and a do...while statement?,"a do... while loop will always run through once, while an while loop<br>performs a test before running through the loop.",human
+72,What is the difference between an array that is declared as static and one that is not?,A static array keeps its values between function calls; a non-static one is recreated each call.,ai_generated
+73,What are the two main functions defined by a stack?,push (add an element) and pop (remove the top element).,ai_generated
+74,What is the difference between a circular linked list and a basic linked list?,"In a circular linked list, the last node points back to the first; a basic linked list ends with a null pointer.",ai_generated
+75,What is a binary search tree?,a special binary tree that has a rule that all the subtrees on the right are smaller than the node value and all the subtrees on the left are larger than the node value,human
+76,What is the role of a header-file?,"A header file is a cross communication method between source files, to help limit the size of each individual program. Without header files a program will be 1 large lump of code and thus fairly hard to debug and traverse.",human
+77,What are the main operations associated with a stack?,push and pop,human
+78,"Which implementation (array-based vs. list-based) is preferred, and why?","Link-based, because they are dynamic (no size constraints)",human
+79,What are the two different ways of specifying the length of an array?,"one way of specifying of array is A[10] ;<br>other way of specifying array is a[arraysize] = [1,2,3,4,5,6,7,8,9,10}",human
+80,What is the Euler tour traversal of a tree?,"Travel from the root to the farthest left child<br>Backup, travel the leftmost children in the right side<br>repeat until reaching the rightmost child.",human
+81,What is the main advantage associated with function arguments that are passed by reference?,"It avoids copying the argument, and lets the function modify the original variable.",ai_generated
+82,What is a stack?,"A stack is similar to an array, but does not allow for random access. Stacks only allow a user to retrieve the last item put into the stack. Last in, fist out.",human
+83,What are the similarities between iteration and recursion?,They both involve repetition; they both have termination tests; they can both occur infinitely.,human
+84,What is the role of a prototype program in problem solving?,"the prototype program gives a general idea of what the end product will do, <br><br>without the time and effort to write out the entire program.",human
+85,How are overloaded functions differentiated by the compiler?,"It examines the names, types, and order of arguments on each function.",human
+86,How can you implement a stack with a list?,the top is the first pointer.,human
+87,What are the similarities between iteration and recursion?,"Both repeat a set of steps until a condition is met, and either can implement the other.",ai_generated
+88,"What is the number of operations for insertion sort under a best-case scenario, and what is the best-case scenario?","it could be considered that having only one item would be the easiest to sort, but this could also be a trivial result as nothing is moved<br><br>having two items allows the algorithm to sort the items into the correct order",human
+89,What is the alternative way to solve a problem that could be solved through recursive functions?,Through iteration.,human
+90,When does C++ create a default constructor?,"If no constructor is provided, the compiler provides one by default. If a constructor is defined for a class, the compiler does not create a default constructor.",human
+91,What is the role of a header-file?,"It declares functions, classes, and constants so multiple source files can share them.",ai_generated
+92,What is a function signature?,"The name of the function and the list of parameters, including their types.",human
+93,What operations would you need to perform to find a given element on a stack?,"Pop all the elements and store them on another stack until the element is found, then push back all the elements on the original stack.",human
+94,What is typically included in a class definition?,"class variables, function definitions for the class",human
+95,What is a binary tree?,A tree for which the maximum number of children per node is two.,human
+96,How can an array be addressed in pointer/offset notation?,Takes the number of array elements and points to each at a time,human
+97,What are the access-specifiers that can be used in a C++ class definition?,Private and public.,human
+98,What is a binary tree?,"a tree with only 2 joints, left and right",human
+99,How many comparisons does it take to find an element in a binary search tree?,"At most the height of the tree, roughly log(n) for a balanced tree.",ai_generated
+100,How can an array be addressed in pointer/offset notation?,"by referencing a pointer and referring to other pointers relative to the first pointer(pointer+1, pointer +2, etc)",human
+101,What is the main disadvantage of a doubly-linked list over a basic linked list?,It takes up twice the storage needed.,human
+102,What are the elements typically included in a class definition?,"Data members, member functions, access specifiers, and constructors/destructor.",ai_generated
+103,How does the compiler handle inline functions?,compiler ignores inline qualifier,human
+104,What is the role of a header-file?,"To store a class interface, including data members and member function prototypes.",human
+105,What is the main advantage of a doubly-linked list over a basic linked list?,"All the deletion and insertion operations can be performed in constant time, including those operations performed before a given location in the list or at the end of the list.",human
+106,Where are variables declared in a C++ program?,Global variables are declared in the body of the code. Local variables are declared in the function they are to be used (unless the function is being passed a variable). Variables should always be declared before use.,human
+107,What is typically included in a class definition?,Data members (attributes) and member functions.,human
+108,What is the scope of global variables?,the whole code,human
+109,How are objects initialized when they are created?,By using constructors.,human
+110,What are the similarities between iteration and recursion?,Both are based on a control statement<br>        - Iteration-repetition structure<br>        - Recursion-selection structure<br><br>      Both involve repetition<br>        -Iteration-explicitly uses repetition structure<br>        -Recursion-repeated function calls<br><br>      Both involve a termination test<br>        -Iteration-loop-termination test<br>        -Recursion-base case <br><br>      Both gradually approach termination<br>        -Iteration-modifies counter until loop-termination test fails<br>        -Recursion-produces progressively simpler versions of problem<br><br>      Both can occur indefinitely<br>        -Iteration-if loop-continuation condition never fails<br>        -Recursion-if recursion step does not simplify the problem,human
+111,What is the difference between a constructor and a function?,"Constructors cannot return values, so they cannot specify a return type. Normally, constructors are declared public.",human
+112,What is the main advantage of linked lists over arrays?,Linked lists do not have a set size and can grow or shrink as needed.,human
+113,How are objects initialized when they are created?,Objects are assigned a space in memory when they are created. the name given to the object points to the memory address where the objects data resides.,human
+114,How are arrays passed to functions?,a reference pointer to an element in the array.,human
+115,How are linked lists passed as arguments to a function?,By passing a pointer to the head node.,ai_generated
+116,What is a variable?,A location in memory that can store a value.,human
+117,What is a recursive function?,"A recursive function is a function that breaks down a large problem into two or more smaller problems and calls itself to solve those smaller problems until a base case or terminating point is reached.  At the base case, a definite answer is called and the function no longer recurses, but unwinds itself back through function calls to determine the answer to the original large problem.",human
+118,How does the compiler handle inline functions?,"Placing the qualifier inline before a function's return type in the function definition ""advises"" the compiler to generate a copy of the function's code in place to avoid a function call.",human
+119,How can you implement a queue with an array?,fixed size array with max N elements.  Need to keep track of front and rear of array.,human
+120,What does the star (*) operator return?,The value stored at the address the pointer holds.,ai_generated
+121,What is the main advantage of a doubly-linked list over a basic linked list?,It can be traversed in both directions.,ai_generated
+122,What are the main operations associated with a stack?,push and pop.,human
+123,How does the compiler handle inline functions?,It makes a copy of the function code in every place where a function call is made.,human
+124,How are infix expressions evaluated by computers?,They are first converted to postfix expressions and then evaluated.,human
+125,What is the difference between an array that is declared as static and one that is not?,The static arrays are intialized only once when the function is called.,human
+126,What is the main difference between strings declared using the type string versus strings declared using an array of characters?,The strings declared using an array of characters have a null element added at the end of the array.,human
+127,What is a function pointer?,Function pointer is a pointer to a function. function pointer contains address of functions,human
+128,What are the access-specifiers that can be used in a C++ class definition?,"public, private, and protected.",ai_generated
+129,What are the two main functions defined by a stack?,push and pop,human
+130,What is the inorder traversal of a binary tree?,"Traverse the left subtree, then the root, then the right subtree.",human
+131,"Which implementation (array-based vs. list-based) is preferred for a queue, and why?","list, its dynamic and no size needs to be declared",human
+132,What is the Euler tour traversal of a tree?,"A walk around the tree, starting with the root, where each node is seen three times: from the left, from below, from the right.",human
+133,How can an array be addressed in pointer/offset notation?,"By initializing a pointer to point to the first element of the array, and then incrementing this pointer with the index of the array element.",human
+134,What is a recursive function?,"A function that calls itself, in order to solve a problem.",human
+135,What does a function signature include?,It includes a function name and parameter list. Does not include return type. Function signatures must be different.,human
+136,What is the main difference between a string of characters that is read into a variable of type string versus a variable of type char[]?,The char[] will automatically add a null \0 character at the end of the string.,human
+137,What is a tree?,"A connected, undirected graph without cycles.",human
+138,"What is the number of operations for insertion sort under a best-case scenario, and what is the best-case scenario?","O(n) operations, when the array is already sorted.",ai_generated
+139,What is a tree?,"a finite collection of nodes, where it starts with an element called the root, which has children, and its children have children until you get to the leaves which are the last elements and have to children",human
+140,How can you implement a queue with a list?,"Keep the rear of the queue pointing to the tail of the linked list, so the enqueue operation is done at the end of the list, and keep the front of the queue pointing to the head of the linked list, so the dequeue operation is done at the beginning of the list.",human
+141,What does a function signature include?,The portion of the function prototyp tha has the function name and the arguments but NOT the return type.,human
+142,How can you implement a queue with an array?,It is an array of fixed size. A queue of maximum N elements.,human
+143,How many dimensions need to be specified when passing a multi-dimensional array as an argument to a function?,just the first one at least.,human
+144,What is the height of a tree?,the number of distinct levels of separation,human
+145,"What data structure is more appropriate for scheduling printing jobs at a printer, a stack or a queue?","A stack, some printing jobs might have a higher priority than others and they can be easily inserted at the front of the list or anywhere between.",human
+146,How does the compiler handle inline functions?,"It tries to replace the function call with the function's code directly, avoiding call overhead.",ai_generated
+147,What is typically included in a class definition?,a public and private area that includes the functions and variables that are used in the class,human
+148,What is the inorder traversal of a binary tree?,"Inorder traversal visits the left branch of a node (all the way to it's deepest left-most leaf) before visiting the node itself. After visiting the entire left branch and the node, it visits the node's right branch following the same pattern of left child, node, right child.",human
+149,What is the role of a prototype program in problem solving?,It tests the main function of the program while leaving out the finer details.<br>,human
+150,What are the different ways to pass a pointer to a function?,"There are four ways: nonconstant pointer to constant data, nonconstant pointer to nonconstant data, constant pointer to constant data, constant pointer to nonconstant data.",human
+151,What is a linked list?,"A linked list is a chain of structs or records called nodes.  Each node has at least two members, one of which points to the next item or node in the list.",human
+152,What is a pointer?,A variable that stores the memory address of another variable.,ai_generated
+153,What stages in the software life cycle are influenced by the testing stage?,The testing stage can influence both the coding stage (phase 5) and the solution refinement stage (phase 7),human
+154,What does the address (&) operator return?,The memory address of a variable.,ai_generated
+155,What stages in the software life cycle are influenced by the testing stage?,"Refining, Production, Maintenance",human
+156,Where do C++ programs begin to execute?,In the main() function.,ai_generated
+157,"Which implementation (array-based vs. list-based) is preferred, and why?","in an array based stack you would need to pre-determine a size, where in a list you can increase or decrease the size however you want.",human
+158,What is the main advantage associated with function arguments that are passed by reference?,It avoids making copies of large data structures when calling functions.,human
+159,What is a stack?,A data structure where elements are added and removed from the same end (LIFO).,ai_generated
+160,What stages in the software life cycle are influenced by the testing stage?,"Requirements, design, and coding, since testing reveals problems that trace back to each of those stages.",ai_generated
+161,What is the main advantage of a doubly-linked list over a basic linked list?,You can point both forwards and backwards,human
+162,How many steps does it take to search a node in a binary search tree?,"If the binary search tree is constructed efficiently, best case scenario is O(log n) time.  Where n is the number of items in the tree.<br><br>If the binary search tree is constructed poorly, with for instance the root of the tree being 1, and progressing downwards and to the right its children are each more than the last: you have a one-way linear linked list.  That worse case scenario would be a full traversal at O(n) time. Where n is the number of items in the tree.",human
+163,What is the role of a prototype program in problem solving?,It lets you test an approach on a small scale to find flaws before building the full solution.,ai_generated
+164,What is the main difference between a while and a do...while statement?,The block inside a do...while statement will execute at least once.,human
+165,How are infix expressions evaluated by computers?,"First, they are converted into postfix form, followed by an evaluation of the postfix expression.",human
+166,What is the difference between a data member and a local variable inside a member function?,"Local variables cannot be used outside of that function body. When a function terminates the values of its local variables are lost. Where as data members are variables in a class definition, and they exist throughout the life of the object.<br>",human
+167,"When defining a recursive function, what are possible causes for infinite recursion?","Missing or incorrect base case, or a recursive call that doesn't move toward the base case.",ai_generated
+168,What is the difference between a function prototype and a function definition?,"A function prototype includes the function signature, i.e., the name of the function, the return type, and the parameters' type. The function definition includes the actual body of the function.",human
+169,"What is the difference between an array declared as static, and one that is not?",an array declared as static can only be declared once,human
+170,What is a binary tree?,A tree where each node has at most two children.,ai_generated
+171,What is the alternative way to solve a problem that could be solved through recursive functions?,An iterative solution using loops.,ai_generated
+172,What is the main disadvantage of a doubly-linked list over a basic linked list?,Extra space required to store the back pointers.,human
+173,What operations would you need to perform to find a given element on a stack?,"Pop each element into a temporary stack until found or empty, then optionally push everything back.",ai_generated
+174,Where do C++ programs begin to execute?,in the testing phase,human
+175,What are the elements typically included in a class definition?,Function members and data members.,human
+176,What is the base case for a recursive implementation of merge sort?,When the size of the array to be sorted is 1 (or 2),human
+177,What operations would you need to perform to find a given element on a stack?,StackPush()<br>StackPop()<br>StackIsEmpty(),human
+178,What is the difference between a constructor and a function?,"A constructor is called whenever an object is created, whereas a function needs to be called explicitely. Constructors do not have return type, but functions have to indicate a return type.",human
+179,Briefly describe the divide-and-conquer paradigm.,"For example we have an array on n elements, the divide and conquer splits up the array into equal halves and repeats this process until each element is by itself",human
+180,What is the difference between a function prototype and a function definition?,"A function prototype is a declaration of a function that tells the compiler the function's name, its return type and the types of its parameters.",human
+181,How can you implement a stack with an array?,"Keep the top of the stack toward the end of the array, so the push and pop operations will add or remove elements from the right side of the array.",human
+182,What is the difference between a circular linked list and a basic linked list?,The last element in a circular linked list points to the head of the list.,human
+183,What is the experimental approach for measuring the running time of an algorithm?,"trying it with different sets of inputs, and measuring the amount of time that the algorithm actually takes.",human
+184,What is typically included in a class definition?,"Data members (attributes) and member functions (methods), plus access specifiers.",ai_generated
+185,What is a linked list?,"A data structure of nodes, each holding a value and a pointer to the next node.",ai_generated
+186,What is the main advantage associated with function arguments that are passed by reference?,you don't make another copy and waste memory,human
+187,What does the star (*) operator return?,The value stored in the object being pointed to.,human
+188,How do you delete a node from a binary search tree?,"if the node has no children, delete it right away, otherwise, put either the furthest right node on the left side or the furthest left node on the right side in that place and perform a the above on that node to guarantee that it's children get handled properly.",human
+189,What is a function signature?,"is the name of the fuction, return type, and parameters that are being used",human
+190,"How are bi-dimensional arrays stored in memory, by rows or by columns?",By rows (row-major order).,ai_generated
+191,What is the base case for a recursive implementation of merge sort?,The base case for a recursive implementation of merge sort is one.,human
+192,Using an index outside the bounds of the array generates an error. Is this a compilation error or a run-time error?,Run-time error.,human
+193,"What is the difference between an array declared as static, and one that is not?",A static array keeps its values between function calls; a non-static local array is recreated each call.,ai_generated
+194,What is the main advantage of linked lists over arrays?,Linked lists can grow and shrink as you need them to.  Arrays have a fixed size.,human
+195,How do you delete a node from a binary search tree?,"Find the node, then replace it with the leftmost node from its right subtree (or the rightmost node from its left subtree).",human
+196,What is the scope of global variables?,File scope.,human
+197,Order the following functions by their running time: n^2; log(log n) ; 2^(log n) ; n! ; n^3.,log(log n); n!; n^2;n^3;n^(log n),human
+198,"Which implementation (array-based vs. list-based) is preferred for a queue, and why?","List-based, because it avoids shifting elements and has no fixed size limit.",ai_generated
+199,What are the two main functions defined by a stack?,push ( to add to a item the Stack)<br>Pop  ( to pull the last item added from an array. ),human
+200,"Which implementation (array-based vs. list-based) is preferred for a queue, and why?","Link-based, because they are dynamic (no size constraints)",human
+201,What is a leaf?,a node with no children.,human
+202,How many comparisons does it take to find an element in a binary search tree?,The height of the tree (or log of the number of elements in the tree).,human
+203,What does the address (&) operator return?,memory address of its operand,human
+204,"When defining a recursive function, what are possible causes for infinite recursion?",Incorrect or missing base case. Must reduce to the base case. The function must get simpler each time it is run (converge to the base case).,human
+205,How are linked lists passed as arguments to a function?,"linked lists are passed by reference, specificly the Head pointer",human
+206,How many constructors can be created for a class?,as many as the user decides to use.,human
+207,How do you delete a node from a binary search tree?,"If you delete a node from a tree, you have to link that nodes parents to the children of that node.",human
+208,Briefly describe in one sentence how does merge sort work?,"It splits the original array into two, sorts each of the two halves, and then merges the sorted arrays.",human
+209,"What is the number of operations for insertion sort under a best-case scenario, and what is the best-case scenario?","Best case is N, while the worst case is N factorial.",human
+210,What is the stack operation corresponding to the enqueue operation in queues?,push,human
+211,What is the main advantage of arrays over linked lists?,"Access to a particular element is very fast, because its location in memory can be determined mathematically and accessed directly.",human
+212,What is the main difference between strings declared using the type string versus strings declared using an array of characters?,A string object manages its own memory and resizing automatically; a char array has a fixed size set by the programmer.,ai_generated
+213,What are the different ways to pass a pointer to a function?,Nonconstant pointer to nonconstant data<br>Nonconstant pointer to constant data<br>Constant pointer to nonconstant data<br>Constant pointer to constant data,human
+214,What is a stack?,A stack is an abstract data type that is based on the principle that the last element inserted into the stack will be the first element removed from the stack.,human
+215,Where are variables declared in a C++ program?,"Inside function bodies (local) or outside all functions (global), or as class members.",ai_generated
+216,How are overloaded functions differentiated by the compiler?,"Based on the function signature. When an overloaded function is called, the compiler will find the function whose signature is closest to the given function call.",human
+217,What does a function signature include?,The name of the function and the types of the parameters.,human
+218,What is the height of a tree?,the number of generations or levels of a tree,human
+219,"In one sentence, what is the main idea implemented by insertion sort?","Insertion sort is an algorithm where the first element of the array is in the sorted list, all the other pick one by one and taken from the unsorted array, to the sorted array.",human
+220,What is a pointer?,A pointer is an element that references a memory location.,human
+221,When does C++ create a default constructor?,When no constructor is defined for the class.,ai_generated
+222,What does the sizeof operator return?,The size in bytes of its operand.,human
+223,What is the main difference between a while and a do...while statement?,"A while statement will test the condition of the while loop FIRST - there is a chance the loop will never run. A do...while loop will ALWAYS run once, and then the while test will determine if it will run again.",human
+224,How can you implement a stack with an array?,By implementing an array of a pre-defined size with the bottom stack element stored at element 0 and the last element stored in the array is the top. You increment top when an element is pushed and you decrement it when an item is popped.,human
+225,Order the following functions by their running time: n^2; log(log n) ; 2^(log n) ; n! ; n^3.,log(log n) < 2^(log n) < n^2 < n^3 < n!,ai_generated
+226,What is the main disadvantage of a doubly-linked list over a basic linked list?,"increased memory requirements, slightly more complicated when modifying elements in the list",human
+227,"In one sentence, what is the main idea implemented by insertion sort?","It builds the sorted list one element at a time, inserting each new element into its correct position.",ai_generated
+228,"Briefly, how does selection sort work?","Iterate through the list (assume list of integers), find the smallest one, and put it in a separate ""sorted"" list... then traverse again and find the next smallest, and move it to the sorted section... and repeat until you run out of elements to sort.",human
+229,Briefly describe in one sentence how does merge sort work?,"merge sort splits an array into two halves and then sorts the two smaller arrays, and then merges them back together to form a sorted array",human
+230,How can you implement a stack with a list?,Use a linked list and add/remove from the head.,ai_generated
+231,What does the sizeof operator return?,The number of bytes an object or type occupies in memory.,ai_generated
+232,How are objects initialized when they are created?,"Through a constructor, which runs automatically when the object is created.",ai_generated
+233,What is the Euler tour traversal of a tree?,it is where you visit the parent then you vistit the children,human
+234,What is the difference between a data member and a local variable inside a member function?,Data members can be accessed from any member functions inside the class defintion. Local variables can only be accessed inside the member function that defines them.,human
+235,Order the following functions by their running time: n^2; log(log n) ; 2^(log n) ; n! ; n^3.,log(log n);  2^(log n) ; n^2 ; n^3; n!,human
+236,What are the different ways to pass a pointer to a function?,"By value, by reference, or by passing a pointer to a pointer.",ai_generated
+237,What is a tree?,"A collection of nodes, which has a special node called root, and the rest of the nodes are partitioned into one or more disjoint sets, each set being a tree.",human
+238,What is a linked list?,A collection of elements that can be allocated dynamically.,human
+239,What is the advantage of linked lists over arrays?,linked lists do not have a memory constraint other than total memory,human
+240,Briefly describe the divide-and-conquer paradigm.,"Divide a problem into smaller subproblems, solve them recursively, and then combine the solutions into a solution for the original problem.",human
+241,What is a variable?,"Variable is a location in the computer's memory, in which a value can be stored and later can retrieve that value.",human
+242,How many dimensions need to be specified when passing a multi-dimensional array as an argument to a function?,all but the first,human
+243,What is a queue?,A data structure that stores elements following the first in first out principle. The main operations in a queue are enqueue and dequeue.,human
+244,What are the two different ways of specifying the length of an array?,"You can use an initializer list, or simply tell the compiler how many elements you want in the array.<br><br>For an Initializer list: <br>int a[] = {10, 2, 3, -4, 5};<br><br>For an elemental declaration:<br>int b[5];<br><br>Both arrays have 5 elements in them, but array a is already initialized.",human
+245,What is the stack operation corresponding to the enqueue operation in queues?,The stack operation corresponding to enqueue in queues is the push operation.,human
+246,Using an index outside the bounds of the array generates an error. Is this a compilation error or a run-time error?,compilation error,human
+247,How many comparisons does it take to find an element in a binary search tree?,n-1/2 is the algorithm to compare and find an element.,human
+248,Using an index outside the bounds of the array generates an error. Is this a compilation error or a run-time error?,A run-time error.,ai_generated
+249,How are infix expressions evaluated by computers?,by converting them to postfix expressions and putting the operations in a stack,human
+250,What are the main operations associated with a stack?,push and pop.,ai_generated
+251,What are the two different ways of specifying the length of an array?,"In the array declaration, or by using an initializer list.",human
+252,How can you implement a stack with an array?,Use an array plus a variable tracking the index of the top element.,ai_generated
+253,How can you implement a stack with an array?,You predetermine the size of the stack as you would an array.  This type can not grow.,human
+254,What is the difference between a function prototype and a function definition?,A prototype declares a function's signature without a body; a definition provides the actual code.,ai_generated
+255,"When defining a recursive function, what are possible causes for infinite recursion?","If the recursion step is defined incorrectly, or if the base case is not included.",human
+256,What is the experimental approach for measuring the running time of an algorithm?,Implement the algorithm and measure the physical running time.,human
+257,Where are variables declared in a C++ program?,"anywhere in the code, can be at the top, or in the middle of the code, or anywhere.",human
+258,How can an array be addressed in pointer/offset notation?,"As pointer + offset, e.g. *(array + i) is equivalent to array[i].",ai_generated
+259,What is the main difference between strings declared using the type string versus strings declared using an array of characters?,"strings that are used in an char array are much easier to manipulate than as a string object, because each character is stored separately rather than as a whole",human
+260,What are the two main functions defined by a queue?,"enqueue, dequeue",human
+261,What is the main difference between a string of characters that is read into a variable of type string versus a variable of type char[]?,an array of characters stores a null character at the end,human
+262,What is the main advantage of a doubly-linked list over a basic linked list?,You can move forwards and backwards in the double-linked list. Basic only moves forwards.,human
+263,"How are bi-dimensional arrays stored in memory, by rows or by columns?",By rows,human
+264,What are the two main functions defined by a stack?,push and pop.,human
+265,How are objects initialized when they are created?,they are initialized to 0,human
+266,What stages in the software life cycle are influenced by the testing stage?,"Elaboration, Construction, and Transition are all affected by testing",human
+267,"In one sentence, what is the main idea implemented by insertion sort?","Every iteration of an insertion sort takes away an element from the input data, inserting it at the right position in the sorted list.",human
+268,How can you implement a queue with a list?,"Use a linked list, adding at the tail and removing from the head.",ai_generated
+269,What is the inorder traversal of a binary tree?,"Visit left subtree, then the node, then right subtree.",ai_generated
+270,What is a recursive function?,A function that calls itself.,human
+271,What is the main advantage of linked lists over arrays?,"Easy insertion and deletion without shifting elements, and dynamic size.",ai_generated
+272,What is the main advantage of linked lists over arrays?,The linked lists can be of variable length.,human
+273,What does the star (*) operator return?,An alias (synonym) for the name of the object that its operand points to in memory. It is the dereferencing operator.,human
+274,What is a leaf?,A node that has no children.,human
+275,What are the two main functions defined by a queue?,enqueue (add an element) and dequeue (remove the front element).,ai_generated
+276,Where are variables declared in a C++ program?,Variables can be declared anywhere in a program. They can be declared inside a function (local variables) or outside the functions (global variables),human
+277,Briefly describe in one sentence how does merge sort work?,"It splits the array in half, recursively sorts each half, then merges the two sorted halves.",ai_generated
+278,How can you implement a queue with an array?,"Use an array with front and rear indices, often as a circular buffer.",ai_generated
+279,What does a function signature include?,The function name plus the number and types of its parameters.,ai_generated
+280,What are the two main functions defined by a queue?,enqueue and dequeue,human
+281,When does C++ create a default constructor?,When the class does not explicitly include a constructor.,human
+282,"In one sentence, what is the main idea implemented by selection sort?",Selection sort is an algorithm that selects the larges item the array and puts it in its place; then select the next largest until the array is sorted,human
+283,What is a stack?,"A data structure that can store elements, which has the property that the last item added will be the first to be removed (or last-in-first-out)",human
+284,"In one sentence, what is the main idea implemented by insertion sort?","Taking one array element at a time, from left to right, it inserts it in the right position among the already sorted elements on its left.",human
+285,What is a variable?,A named storage location in memory that holds a value which can change during program execution.,ai_generated
+286,What is the alternative way to solve a problem that could be solved through recursive functions?,Iteration by using loops,human
+287,What are the elements typically included in a class definition?,"Data members, functions and function definitions, variables.",human
+288,Briefly describe in one sentence how does merge sort work?,Merge sort continuously breaks an array in half then sorts the arrays as it concatenates them back together into one sorted array.,human
+289,What are the access-specifiers that can be used in a C++ class definition?,public and private,human
+290,What is a function pointer?,"A function pointer contains the memory address of a function. Using a function pointer, a function can be passed to or returned by another function. Function pointers can also be stored in arrays.",human
+291,What does the address (&) operator return?,The memory address of its operand.,human
+292,How many constructors can be created for a class?,As many as the programmer wants to create.,human
+293,What is the difference between a data member and a local variable inside a member function?,A data member belongs to the object and persists between function calls; a local variable exists only while its function runs.,ai_generated
+294,What is a queue?,"a queue is a list of data that follows the fifo principle, an example of this would be when you get into a line at a movie theater...the first one there gets to buy a ticket first",human
+295,What are the elements typically included in a class definition?,"Constructor, functions, and variables native to the class.",human
+296,What is the difference between a constructor and a function?,A constructor initializes an object and has no return type; a function has a return type and can be called any time.,ai_generated
+297,"What is the number of operations for insertion sort under a best-case scenario, and what is the best-case scenario?",N (the length of the array) operations achieved for a sorted array.,human
+298,How are linked lists passed as arguments to a function?,- A function with access to a linked list's head pointer has access to the entire list.<br><br>      - Pass the head ponter to a function as a reference argument.,human
+299,What is a pointer?,its a data type with a memory address and a value,human
+300,How are overloaded functions differentiated by the compiler?,"By the number, type, and order of their parameters, not by return type.",ai_generated
+301,"Which implementation (array-based vs. list-based) is preferred for a queue, and why?","List-based, because when you enqueue (or dequeue depending upon your implementation) you would need to shift all elements to another space with an array, causing a horrid time complexity for large data sets, where as you can just modify the pointers in a list for a constant time complexity",human
+302,"Briefly, how does selection sort work?",It repeatedly selects the smallest remaining element and swaps it into its correct position.,ai_generated
+303,What is the main difference between a string of characters that is read into a variable of type string versus a variable of type char[]?,"When you read a string of characters, you also read in the white space.  When you read characters declared char you only read the characters, no white space.",human
+304,What is a recursive function?,A function that calls itself to solve smaller instances of the same problem.,ai_generated
+305,What is the role of a prototype program in problem solving?,To simulate the behaviour of portions of the desired software product.,human
+306,What are the main advantages associated with object-oriented programming?,Using different modules allows for easier debugging,human
+307,What are the different ways to pass a pointer to a function?,pass by value and pass by reference with reference or pointer arguments.,human
+308,"How are bi-dimensional arrays stored in memory, by rows or by columns?",By rows.,human
+309,How many steps does it take to search a node in a binary search tree?,The height of the tree.,human
+310,How do you delete a node from a binary search tree?,"Find the node, then replace it with its in-order successor (or predecessor) and remove that successor from its original spot.",ai_generated
+311,How many constructors can be created for a class?,Unlimited number.,human
+312,"Which implementation (array-based vs. list-based) is preferred, and why?",List-based.  Allows more flexablity with size of the stack.,human
+313,What are the similarities between iteration and recursion?,"Iteration and recursion both use repetition and perform several simple operations and algorithms successively until they reach a certain limit.  So both involve a termination test to find that limit and both slowly approach that termination limit.  Both are based on a control statement as well.  <br><br>If coded poorly, both can continue on for forever until the compiler or the computer either locks up, shuts down or halts the operation.",human
+314,What are the access-specifiers that can be used in a C++ class definition?,public - can be accessed by any of the program<br><br>private - can only be accessed by the class functions themselves and no outside functions or calls,human
+315,What is the main advantage of arrays over linked lists?,"The elements in an array can be accessed directly (as opposed to linked lists, which require iterative traversal).",human
+316,Where do C++ programs begin to execute?,At the main function.,human
+317,How can you implement a queue with a list?,"fairly easy... singly linked list with a pointer to the head and tail of hte list.<br><br>deque first item in que, create temp pointer to next element, delete head, and then make head the temporary pointer.<br><br>enque new item, use pointer to end of list, add a new item to the next item of the tail, and make the tail the next item of the current tail.",human
+318,What is the stack operation corresponding to the enqueue operation in queues?,push.,ai_generated
+319,When does C++ create a default constructor?,"at the very beginning when you run a complier, matter a fact in C++ it generates its own default constructor for the class provided if no other constructors have been provided by user",human
+320,What are the two different ways of specifying the length of an array?,"A constant/literal value, or a constant variable, in the array declaration.",ai_generated
+321,"In one sentence, what is the main idea implemented by selection sort?","Taking one array element at a time, from left to right, it identifies the minimum from the remaining elements and swaps it with the current element.",human
+322,What is a function pointer?,"A pointer that stores the address of a function, allowing the function to be called indirectly.",ai_generated
+323,What are the main advantages associated with object-oriented programming?,"Code reuse through inheritance, better data protection through encapsulation, and easier maintenance through modularity.",ai_generated
+324,What is a queue?,A data structure where elements are added at one end and removed from the other (FIFO).,ai_generated
+325,What is the scope of global variables?,they can be accessed by any C++ file anywhere.,human
+326,What is the main advantage of arrays over linked lists?,"On the other hand, arrays allow random access, while linked lists allow only sequential access to elements. Singly-linked lists, in fact, can only be traversed in one direction.",human
+327,What is the stack operation corresponding to the enqueue operation in queues?,Push.,human
+328,What is a variable?,An object with a location in memory where value can be stored<br>,human
+329,What is a linked list?,A data type that contains a pointer to at least the next  element in a list.,human
+330,Briefly describe the divide-and-conquer paradigm.,"Break a problem into smaller subproblems, solve each recursively, then combine the results.",ai_generated
+331,What is a pointer?,The address of a location in memory.,human
+332,What is the experimental approach for measuring the running time of an algorithm?,Big O(h) notation,human
+333,How many steps does it take to search a node in a binary search tree?,"At most the height of the tree, roughly log(n) if balanced.",ai_generated
+334,How can you implement a queue with a list?,"Utilizing a front pointer and a back pointer.  The front poiner and back pointer points to the first item into the queue.  As you add items, the front remains the same but the back poiner 'next' points to the new item and the new item is assigned to become the 'new' back pointer.",human
+335,How many dimensions need to be specified when passing a multi-dimensional array as an argument to a function?,"All the dimensions, except the first one.",human
+336,What does the address (&) operator return?,The address (&) operator returns the memory address of its operand.,human
+337,What is the base case for a recursive implementation of merge sort?,A list or array of only 1 element.,human
+338,What is the scope of global variables?,"The entire file in which they are declared, and any file that includes it.",ai_generated
+339,What is the advantage of linked lists over arrays?,"The primary advantage of linked lists over arrays is their ability to become larger or smaller as data is added and removed from the list, whereas arrays may waste memory for small data sets, and run out of space for large data sets.",human

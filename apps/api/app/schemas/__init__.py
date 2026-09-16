@@ -1,4 +1,5 @@
 from .auth_schema import MeResponse, SessionResponse
+from .batch_schema import BatchProgressResponse, BatchResponse
 from .check_schema import CheckListResponse, CheckResponse, CheckSummary, DetectorInfo
 from .user_schema import (
     StatusChangeRequest,
@@ -22,4 +23,6 @@ __all__ = [
     "CheckSummary",
     "CheckListResponse",
     "DetectorInfo",
+    "BatchResponse",
+    "BatchProgressResponse",
 ]

@@ -38,8 +38,8 @@ class Check(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     # The author. Reads are scoped to this - see services/checks.list_checks.
     actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
-    # Client-assigned grouping for a CSV run. There is no `batches` table: a
-    # batch is these rows sharing an id, which is all any screen needs.
+    # Set only by the Worker (apps/worker), never client-supplied - see
+    # DECISION LOG [0.13.0] in docs/openapi.yaml.
     batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     # The uploaded file's name, repeated on every row of the run. Denormalised
     # on purpose: it is the only part of a batch that cannot be derived from
