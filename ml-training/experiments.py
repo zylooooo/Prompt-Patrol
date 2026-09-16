@@ -136,7 +136,7 @@ TRIAL = ROBERTA_LORA.variant(
         # no bf16 on Apple MPS
         "optim.precision": "fp32",
 
-        # The project default selects on tpr_at_fpr_0.01. Val here has 51
+        # The project default selects on oracle_tpr_at_fpr_0.01. Val here has 51
         # negatives, so a 1% FPR budget permits 0.51 false positives - i.e.
         # zero - and TPR at that point moves in jumps of 1/17. That is a coin
         # flip as a model-selection signal, so the smoke run selects on AUROC.

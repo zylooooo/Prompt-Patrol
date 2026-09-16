@@ -93,7 +93,10 @@ class OptimConfig(_Strict):
     max_grad_norm: float = 1.0
     precision: Literal["fp32", "fp16", "bf16"] = "bf16"
     early_stopping_patience: int = 3
-    metric_for_best_model: str = "tpr_at_fpr_0.01"   # bare name, as Trainer wants it
+    # the name metrics.py emits; Trainer prepends "eval_" itself. The oracle
+    # prefix is literal - per-epoch selection picks the threshold on val with
+    # val labels in hand. The deployed number comes later, from the frozen one.
+    metric_for_best_model: str = "oracle_tpr_at_fpr_0.01"
     # "balanced" reweights the loss by inverse class frequency. The real
     # marking pile is ~5% AI, so a detector trained on a balanced corpus and
     # deployed on an imbalanced one is a different model than it looks.

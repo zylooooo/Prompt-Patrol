@@ -36,11 +36,13 @@ from transformers import (
 
 from config import RunConfig
 from metrics import (
+    HEADLINE_FPR,
     LENGTH_BINS,
     POSITIVE_LABEL,
     SLICE_BY,
     evaluate,
     operating_point_metrics,
+    oracle_tpr_at_fpr,
     ranking_metrics,
     slice_report,
     threshold_at_fpr,
@@ -259,13 +261,24 @@ def probs_from_logits(logits) -> np.ndarray:
 
 def compute_metrics(eval_pred) -> dict[str, float]:
     """
-    Per-epoch validation metrics. Threshold-free on purpose: the deployed
-    threshold is fitted once on the finished model, not re-chosen every epoch.
-    Names are bare so optim.metric_for_best_model can name one directly.
+    Per-epoch validation metrics. No deployed threshold here on purpose: that
+    one is fitted once on the finished model, not re-chosen every epoch. The
+    oracle TPR does pick a threshold, but on val with val labels and only to
+    rank checkpoints - it never leaves this function.
+
+    Names match the protocol names in metrics.py so
+    optim.metric_for_best_model can name one directly.
     """
     y_prob = probs_from_logits(eval_pred.predictions)
     y_true = np.asarray(eval_pred.label_ids).ravel()
-    return ranking_metrics(y_true, y_prob)
+
+    out = ranking_metrics(y_true, y_prob)
+    # the headline selection metric. 0.0 when no threshold meets the FPR
+    # budget, which is the conservative direction for greater_is_better.
+    out[f"oracle_tpr_at_fpr_{HEADLINE_FPR:g}"] = oracle_tpr_at_fpr(
+        y_true, y_prob, HEADLINE_FPR
+    )
+    return out
 
 
 class WeightedTrainer(Trainer):
