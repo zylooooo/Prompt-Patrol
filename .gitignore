@@ -254,3 +254,9 @@ lerna-debug.log*
 
 # Research notes — local only
 docs/research/*
+
+# MLflow local store (we track to DagsHub, never local)
+mlruns/
+ml-training/reports/
+
+mlflow
