@@ -1,5 +1,7 @@
 # Prompt-Patrol
 
+[![CI](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml/badge.svg)](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml)
+
 SMU CS480 Capstone Project building an web application based triage tool for university instructors to detect AI-generated short answers.
 
 | Package                          | What it is                                                  |

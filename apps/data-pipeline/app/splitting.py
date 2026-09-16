@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
-from cleaning import CLEANED_PATH
 from config import DATASET_REVISION, SPLIT_RATIOS, SPLIT_SEED
+from mohler.cleaning import CLEANED_PATH
 
 logger = logging.getLogger(__name__)
 
