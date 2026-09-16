@@ -1,8 +1,9 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import ActiveSession, SessionFailure, generate_session_token, hash_token
@@ -10,8 +11,8 @@ from models import User, UserSession, UserStatusEnum
 
 logger = logging.getLogger(__name__)
 
-SESSION_ABSOLUTE_TTL = timedelta(hours=12)
-SESSION_IDLE_TTL = timedelta(minutes=90)
+SESSION_ABSOLUTE_TTL = timedelta(hours=4)
+SESSION_IDLE_TTL = timedelta(minutes=30)
 SESSION_ACTIVITY_RESOLUTION = timedelta(seconds=60)
 
 
@@ -90,10 +91,13 @@ async def authenticate_session(
 async def revoke_all_for_user(db: AsyncSession, user_id: uuid.UUID) -> int:
     # deleted_at IS NULL, so an already-revoked row keeps the timestamp that
     # records when it actually ended.
-    result = await db.execute(
-        update(UserSession)
-        .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
-        .values(deleted_at=datetime.now(UTC))
+    result = cast(
+        CursorResult,
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
+            .values(deleted_at=datetime.now(UTC))
+        ),
     )
     await db.commit()
     return result.rowcount
@@ -107,7 +111,7 @@ async def sign_out_everywhere(db: AsyncSession, raw_token: str) -> User | None:
     and the only other lever is an admin deactivating the whole account. Ending
     just the calling browser would leave someone who signed out on a shared
     machine with no remedy at all. The cost is bounded the other way - sessions
-    already die after 90 minutes idle or 12 hours absolute, and signing back in
+    already die after 30 minutes idle or 4 hours absolute, and signing back in
     is one Auth0 click.
 
     The user is resolved from a *live* session on purpose: a stale token must not

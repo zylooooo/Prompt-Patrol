@@ -32,6 +32,14 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
+  lint-openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint API contract
+        run: npx --yes @redocly/cli@latest lint docs/openapi.yaml
+
   lint-frontend:
     runs-on: ubuntu-latest
     defaults:

@@ -47,10 +47,6 @@ class CheckCreateRequest(BaseModel):
     external_ref: str | None = Field(default=None, max_length=128)
     strictness: str = "standard"
     retain_answer: bool = True
-    # A batch is rows sharing an id the client assigns; the server has no batch
-    # concept of its own. The file name rides along so history can name the run.
-    batch_id: uuid.UUID | None = None
-    batch_file_name: str | None = Field(default=None, max_length=255)
 
 
 def _error(status_code: int, error: str, message: str) -> JSONResponse:
@@ -103,8 +99,6 @@ async def create_check_route(
             external_ref=body.external_ref,
             strictness=body.strictness,
             retain_answer=body.retain_answer,
-            batch_id=body.batch_id,
-            batch_file_name=body.batch_file_name,
         )
     except DetectorTimeoutError:
         return _error(504, "detector_timeout", "Detector exceeded the 10s budget.")

@@ -106,7 +106,8 @@ export interface BatchRowInput {
 export type BatchRow = CheckResult;
 
 export interface BatchFailure {
-  externalRef: string;
+  rowNumber: number;
+  externalRef: string | null;
   reason: string;
 }
 
@@ -120,6 +121,30 @@ export interface BatchRun {
   counts: Record<Verdict, number>;
   failures?: BatchFailure[];
 }
+
+export interface BatchInfo {
+  batchId: string;
+  actorId: string;
+  fileName: string;
+  strictness: Strictness;
+  createdAt: string;
+  rowTotal: number;
+}
+
+export interface BatchProgress {
+  batch: BatchInfo;
+  completed: number;
+  failed: number;
+  pending: number;
+  rowTotal: number;
+  cancelled: boolean;
+  failures: BatchFailure[];
+}
+
+export type ColumnMapping = Record<
+  string,
+  "external_ref" | "answer_text" | "question_text"
+>;
 
 export interface SingleCheck extends CheckResult {
   kind: "single";

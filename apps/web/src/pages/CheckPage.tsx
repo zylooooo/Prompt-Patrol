@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import BatchTab from "../components/BatchTab";
+import { useSearchParams } from "react-router-dom";
 import { hasScreeningAccess } from "../api/checks";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -20,7 +21,10 @@ const CHECK_TABS: TabOption<TabId>[] = [
 export default function CheckPage() {
   usePageTitle("Screen New Answers");
   const { user } = useAuth();
-  const [tab, setTab] = useState<TabId>("single");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<TabId>(
+    searchParams.get("tab") === "batch" ? "batch" : "single",
+  );
 
   const unassigned = !user || !hasScreeningAccess(user);
 

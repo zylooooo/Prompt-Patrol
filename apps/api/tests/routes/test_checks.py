@@ -2,31 +2,11 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from db import get_db
-from main import app
 from models import Check, User, UserRoleEnum
 from routes.checks_routes import require_any_user, require_screening
 from services.detector_client import MODEL_VERSION, Score
-
-
-@pytest_asyncio.fixture
-async def client(db_session):
-    async def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
-    # httpx.AsyncClient over ASGITransport runs the app in-process on the
-    # current event loop, unlike fastapi.testclient.TestClient which spins up
-    # a fresh thread+event loop per call - asyncpg connections are bound to
-    # the loop that opened them, so a Postgres-backed db_session breaks the
-    # moment a request touches it from that other loop.
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
-        yield ac
-    app.dependency_overrides.clear()
 
 
 async def _signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, email=None):
@@ -57,8 +37,8 @@ async def _signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, e
     async def override():
         return user
 
-    app.dependency_overrides[require_any_user] = override
-    app.dependency_overrides[require_screening] = override
+    client.app.dependency_overrides[require_any_user] = override
+    client.app.dependency_overrides[require_screening] = override
     return user
 
 
@@ -68,7 +48,7 @@ HUMAN_LIKE = "idk it just kinda works because we set the pointer to null before 
 
 @pytest.mark.asyncio
 async def test_create_check_without_session_returns_401(client):
-    response = (await client.post("/api/checks", json={"answer_text": HUMAN_LIKE}))
+    response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
     assert response.status_code == 401
 
 
@@ -80,10 +60,10 @@ async def test_create_check_happy_path(client, db_session):
         "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
-        response = (await client.post(
+        response = await client.post(
             "/api/checks",
             json={"answer_text": AI_LIKE, "strictness": "standard"},
-        ))
+        )
 
     assert response.status_code == 201
     body = response.json()
@@ -103,10 +83,10 @@ async def test_create_check_abstains_on_short_answer(client, db_session):
         "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
-        response = (await client.post(
+        response = await client.post(
             "/api/checks",
             json={"answer_text": "too short reply"},
-        ))
+        )
 
     assert response.status_code == 201
     body = response.json()
@@ -118,10 +98,21 @@ async def test_create_check_abstains_on_short_answer(client, db_session):
 async def test_create_check_rejects_unknown_field(client, db_session):
     await _signed_in(client, db_session, email="ta3@smu.edu.sg")
 
-    response = (await client.post(
+    response = await client.post(
         "/api/checks",
         json={"answer_text": HUMAN_LIKE, "instructor_id": str(uuid.uuid4())},
-    ))
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_check_rejects_client_supplied_batch_id(client, db_session):
+    await _signed_in(client, db_session, email="ta3b@smu.edu.sg")
+
+    response = await client.post(
+        "/api/checks",
+        json={"answer_text": HUMAN_LIKE, "batch_id": str(uuid.uuid4())},
+    )
     assert response.status_code == 422
 
 
@@ -129,7 +120,7 @@ async def test_create_check_rejects_unknown_field(client, db_session):
 async def test_create_check_rejects_too_short_below_floor(client, db_session):
     await _signed_in(client, db_session, email="ta4@smu.edu.sg")
 
-    response = (await client.post("/api/checks", json={"answer_text": "short"}))
+    response = await client.post("/api/checks", json={"answer_text": "short"})
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_request"
 
@@ -138,7 +129,7 @@ async def test_create_check_rejects_too_short_below_floor(client, db_session):
 async def test_get_detector_capabilities(client, db_session):
     await _signed_in(client, db_session, email="ta5@smu.edu.sg")
 
-    response = (await client.get("/api/detector"))
+    response = await client.get("/api/detector")
     assert response.status_code == 200
     body = response.json()
     assert body["requires_question_text"] is False
@@ -151,7 +142,7 @@ async def test_get_detector_capabilities(client, db_session):
 
 @pytest.mark.asyncio
 async def test_detector_status_without_session_returns_401(client):
-    response = (await client.get("/api/detector/status"))
+    response = await client.get("/api/detector/status")
     assert response.status_code == 401
 
 
@@ -160,7 +151,7 @@ async def test_detector_status_reports_ready(client, db_session):
     await _signed_in(client, db_session, email="ta6@smu.edu.sg")
 
     with patch("routes.checks_routes.detector_health", new=AsyncMock(return_value="ready")):
-        response = (await client.get("/api/detector/status"))
+        response = await client.get("/api/detector/status")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "model_version": MODEL_VERSION}
@@ -174,7 +165,7 @@ async def test_a_detector_that_cannot_score_is_still_a_200(client, db_session, r
     await _signed_in(client, db_session, email=f"ta-{reported}@smu.edu.sg")
 
     with patch("routes.checks_routes.detector_health", new=AsyncMock(return_value=reported)):
-        response = (await client.get("/api/detector/status"))
+        response = await client.get("/api/detector/status")
 
     assert response.status_code == 200
     assert response.json()["status"] == reported
@@ -185,7 +176,18 @@ SCORED = AsyncMock(return_value=Score(raw_score=0.9, truncated=False))
 
 async def _make_check(client, **body):
     with patch("services.checks_service.score_text", new=SCORED):
-        return (await client.post("/api/checks", json={"answer_text": AI_LIKE, **body}))
+        return await client.post("/api/checks", json={"answer_text": AI_LIKE, **body})
+
+
+async def _assign_to_batch(db_session, check_id, batch_id, batch_file_name=None):
+    """batch_id/batch_file_name are no longer client-settable on POST
+    /api/checks (only the Worker sets them - see DECISION LOG [0.13.0] in
+    docs/openapi.yaml); simulate that direct write for tests exercising
+    listing/rendering of already-batched rows."""
+    check = (await db_session.execute(select(Check).where(Check.id == uuid.UUID(check_id)))).scalar_one()
+    check.batch_id = uuid.UUID(batch_id)
+    check.batch_file_name = batch_file_name
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
@@ -195,7 +197,7 @@ async def test_a_check_survives_the_request_that_made_it(client, db_session):
     await _signed_in(client, db_session)
     created = (await _make_check(client)).json()
 
-    fetched = (await client.get(f"/api/checks/{created['check_id']}"))
+    fetched = await client.get(f"/api/checks/{created['check_id']}")
 
     assert fetched.status_code == 200
     assert fetched.json()["check_id"] == created["check_id"]
@@ -222,7 +224,7 @@ async def test_listing_returns_only_your_own_checks(client, db_session):
     async def back_to_mine():
         return mine
 
-    app.dependency_overrides[require_any_user] = back_to_mine
+    client.app.dependency_overrides[require_any_user] = back_to_mine
     items = (await client.get("/api/checks")).json()["items"]
 
     assert [i["external_ref"] for i in items] == ["MINE"]
@@ -233,7 +235,7 @@ async def test_listing_filters_by_verdict(client, db_session):
     await _signed_in(client, db_session)
     await _make_check(client, external_ref="AI")
     with patch("services.checks_service.score_text", new=AsyncMock(return_value=Score(raw_score=0.1, truncated=False))):
-        (await client.post("/api/checks", json={"answer_text": HUMAN_LIKE, "external_ref": "HUMAN"}))
+        await client.post("/api/checks", json={"answer_text": HUMAN_LIKE, "external_ref": "HUMAN"})
 
     items = (await client.get("/api/checks?verdict=ai_generated")).json()["items"]
 
@@ -244,7 +246,8 @@ async def test_listing_filters_by_verdict(client, db_session):
 async def test_listing_filters_by_batch_id(client, db_session):
     await _signed_in(client, db_session)
     batch_id = str(uuid.uuid4())
-    await _make_check(client, external_ref="IN_BATCH", batch_id=batch_id)
+    in_batch = (await _make_check(client, external_ref="IN_BATCH")).json()
+    await _assign_to_batch(db_session, in_batch["check_id"], batch_id)
     await _make_check(client, external_ref="NOT_IN_BATCH")
 
     items = (await client.get(f"/api/checks?batch_id={batch_id}")).json()["items"]
@@ -270,7 +273,7 @@ async def test_listing_inverted_date_range_is_just_empty_not_an_error(client, db
     await _signed_in(client, db_session)
     await _make_check(client)
 
-    response = (await client.get("/api/checks?from=2099-01-01T00:00:00Z&to=2000-01-01T00:00:00Z"))
+    response = await client.get("/api/checks?from=2099-01-01T00:00:00Z&to=2000-01-01T00:00:00Z")
 
     assert response.status_code == 200
     assert response.json()["items"] == []
@@ -290,7 +293,7 @@ async def test_actor_id_filter_is_silently_ignored_for_a_non_admin(client, db_se
     async def back_to_mine():
         return mine
 
-    app.dependency_overrides[require_any_user] = back_to_mine
+    client.app.dependency_overrides[require_any_user] = back_to_mine
     items = (await client.get(f"/api/checks?actor_id={theirs_actor_id}")).json()["items"]
 
     assert [i["external_ref"] for i in items] == ["MINE"]
@@ -319,9 +322,8 @@ async def test_listing_includes_summary_fields_the_history_table_needs(client, d
     openapi.yaml DECISION LOG [0.5.8]."""
     await _signed_in(client, db_session)
     batch_id = str(uuid.uuid4())
-    await _make_check(
-        client, strictness="strict", batch_id=batch_id, batch_file_name="midterm.csv"
-    )
+    created = (await _make_check(client, strictness="strict")).json()
+    await _assign_to_batch(db_session, created["check_id"], batch_id, batch_file_name="midterm.csv")
 
     item = (await client.get("/api/checks")).json()["items"][0]
 
@@ -461,7 +463,7 @@ async def _really_signed_in(client, db_session, role=UserRoleEnum.teaching_assis
 async def test_an_unsupervised_assistant_cannot_screen(client, db_session):
     await _really_signed_in(client, db_session)
 
-    response = (await client.post("/api/checks", json={"answer_text": HUMAN_LIKE}))
+    response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
 
     assert response.status_code == 403
 
@@ -471,7 +473,7 @@ async def test_the_refusal_is_the_reason_not_a_bare_forbidden(client, db_session
     # They can act on this one: it names what is missing and who fixes it.
     await _really_signed_in(client, db_session)
 
-    response = (await client.post("/api/checks", json={"answer_text": HUMAN_LIKE}))
+    response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
 
     assert "not assigned to an instructor" in response.json()["detail"]
 
@@ -486,7 +488,7 @@ async def test_a_supervised_assistant_can_screen(client, db_session):
         "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
-        response = (await client.post("/api/checks", json={"answer_text": AI_LIKE}))
+        response = await client.post("/api/checks", json={"answer_text": AI_LIKE})
 
     assert response.status_code == 201
 
@@ -501,7 +503,7 @@ async def test_an_instructor_screens_without_a_supervisor_of_their_own(client, d
         "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
-        response = (await client.post("/api/checks", json={"answer_text": AI_LIKE}))
+        response = await client.post("/api/checks", json={"answer_text": AI_LIKE})
 
     assert response.status_code == 201
 
@@ -514,7 +516,7 @@ async def test_a_root_admin_screens_without_a_supervisor(client, db_session):
         "services.checks_service.score_text",
         new=AsyncMock(return_value=Score(raw_score=0.9, truncated=False)),
     ):
-        response = (await client.post("/api/checks", json={"answer_text": AI_LIKE}))
+        response = await client.post("/api/checks", json={"answer_text": AI_LIKE})
 
     assert response.status_code == 201
 
@@ -526,7 +528,7 @@ async def test_an_unsupervised_assistant_may_still_read_their_own_history(client
     # here is a script-provisioned account that has no history to read.
     await _really_signed_in(client, db_session)
 
-    response = (await client.get("/api/checks"))
+    response = await client.get("/api/checks")
 
     assert response.status_code == 200
     assert response.json()["items"] == []

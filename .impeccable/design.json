@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-10T00:00:00Z",
+  "title": "Design System: Prompt Patrol",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "Deep Indigo", "canonical": "#4338ca", "tonalRamp": ["#1c1650", "#241c6e", "#2e2589", "#3730a3", "#4338ca", "#6f68d9", "#a5a0e8", "#dcdaf5"] },
+      "accent": { "role": "primary", "displayName": "Indigo Accent", "canonical": "#6366f1", "tonalRamp": ["#22206a", "#2d2a86", "#3c39a8", "#4f46e5", "#6366f1", "#8c8ef5", "#bdbff6", "#ebecfe"] },
+      "secondary": { "role": "secondary", "displayName": "Slate", "canonical": "#5a6080", "tonalRamp": ["#1f212e", "#2c2f42", "#3c405a", "#474c69", "#5a6080", "#8388a3", "#c8ccde", "#e8eaf3"] },
+      "background": { "role": "neutral", "displayName": "Faint Indigo White", "canonical": "#f9fafc", "tonalRamp": ["#1e2030", "#585d75", "#9ca0b4", "#d9ddec", "#eef0f8", "#f5f6fb", "#f9fafc", "#ffffff"] },
+      "danger": { "role": "neutral", "displayName": "Alert Red", "canonical": "#b91c1c", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#f87171", "#fca5a5", "#fee2e2"] },
+      "flag": { "role": "neutral", "displayName": "Flagged Amber", "canonical": "#924a0a", "tonalRamp": ["#3d1f04", "#5c2e06", "#7a3d08", "#924a0a", "#b05c0e", "#d17b2f", "#e6a568", "#fdeede"] },
+      "human": { "role": "neutral", "displayName": "Human-Written Green", "canonical": "#1a7038", "tonalRamp": ["#0a2f17", "#0f4622", "#145c2d", "#1a7038", "#218f47", "#3fb866", "#8fd8a6", "#e4f4ea"] },
+      "unsure": { "role": "neutral", "displayName": "Uncertain Grey", "canonical": "#545a78", "tonalRamp": ["#1e202e", "#2b2e42", "#3a3e59", "#454a68", "#545a78", "#7a7f9c", "#b3b6c9", "#e9ebf3"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "One per page, in PageHeader's h1." },
+      "body": { "displayName": "Body", "purpose": "Default UI text for labels, buttons, cells, inputs." },
+      "mono": { "displayName": "Mono / Evidentiary", "purpose": "Scores, timestamps, model status — anything the system reported rather than the product authored." }
+    },
+    "shadows": [
+      { "name": "card-float", "value": "shadow-md", "purpose": "Result panels and the single-check form card — the primary artifact on the page." },
+      { "name": "modal-float", "value": "shadow-xl", "purpose": "Dialogs and confirmation modals, the strongest elevation in the system." },
+      { "name": "button-whisper", "value": "shadow-xs", "purpose": "Secondary and destructive-outline buttons only." }
+    ],
+    "motion": [
+      { "name": "fadeInUp", "value": "180ms ease-out", "purpose": "Entrance for newly appeared content blocks (e.g. result panel)." },
+      { "name": "fadeIn", "value": "150ms ease-out", "purpose": "Simple opacity entrance." },
+      { "name": "toastIn", "value": "200ms ease-out", "purpose": "Toast notification entrance." }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Default call-to-action button (e.g. Run check, Save).",
+      "html": "<button class=\"ds-btn-primary\">Run check</button>",
+      "css": ".ds-btn-primary { font-family: Figtree, ui-sans-serif, system-ui, sans-serif; font-weight: 500; font-size: 0.875rem; color: #ffffff; background: #4338ca; border: 1px solid transparent; border-radius: 8px; padding: 12px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background-color 0.15s; } .ds-btn-primary:hover { background: #3730a3; } .ds-btn-primary:focus-visible { background: #3730a3; outline: none; } .ds-btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Lower-emphasis action alongside a primary button (e.g. Cancel).",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { font-family: Figtree, ui-sans-serif, system-ui, sans-serif; font-weight: 500; font-size: 0.875rem; color: #1e2030; background: #ffffff; border: 1px solid #d9ddec; border-radius: 8px; padding: 10px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background-color 0.15s; } .ds-btn-secondary:hover { background: #eef0f8; } .ds-btn-secondary:focus-visible { background: #ebecfe; outline: none; }"
+    },
+    {
+      "name": "Verdict Chip",
+      "kind": "chip",
+      "refersTo": "verdict-chip",
+      "description": "Pill showing a check's verdict (ai_generated / human_written / uncertain) with a redundant colored dot.",
+      "html": "<span class=\"ds-chip-flag\"><span class=\"ds-chip-dot\"></span>Flagged as AI</span>",
+      "css": ".ds-chip-flag { display: inline-flex; align-items: center; gap: 8px; border-radius: 9999px; padding: 4px 12px; font-family: Figtree, sans-serif; font-size: 13px; font-weight: 500; white-space: nowrap; background: #fdeede; color: #924a0a; } .ds-chip-flag .ds-chip-dot { height: 7px; width: 7px; border-radius: 9999px; background: #924a0a; }"
+    },
+    {
+      "name": "Result Card",
+      "kind": "card",
+      "refersTo": "result-card",
+      "description": "Floating content card for a check result or the single-check form.",
+      "html": "<div class=\"ds-card\"><h2 class=\"ds-card-title\">Check result</h2><p class=\"ds-card-body\">Score, verdict, and evidence render here.</p></div>",
+      "css": ".ds-card { display: flex; flex-direction: column; border-radius: 12px; background: #ffffff; padding: 28px; box-shadow: 0 4px 12px rgba(30,32,48,0.08); font-family: Figtree, sans-serif; } .ds-card-title { font-size: 18px; font-weight: 600; color: #1e2030; margin: 0 0 8px; } .ds-card-body { font-size: 14px; color: #585d75; margin: 0; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "text-input",
+      "description": "Default form input / textarea field.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Paste student answer\" />",
+      "css": ".ds-input { width: 100%; border-radius: 8px; border: 1px solid #d9ddec; background: #ffffff; font-family: Figtree, sans-serif; font-size: 14px; color: #1e2030; padding: 10px 12px; transition: background-color 0.15s, border-color 0.15s; } .ds-input::placeholder { color: #7a7f96; font-weight: 400; } .ds-input:focus-visible { background: #ebecfe; border-color: #4338ca; outline: none; }"
+    },
+    {
+      "name": "Model Status Badge",
+      "kind": "custom",
+      "refersTo": "model-status-badge",
+      "description": "Signature component: shows detector-service health via a colored dot + monospace status text, visually distinct from verdict chips.",
+      "html": "<span class=\"ds-status-badge\"><span class=\"ds-status-dot\"></span>Detector ready</span>",
+      "css": ".ds-status-badge { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; align-self: flex-start; border-radius: 9999px; border: 1px solid #d9ddec; background: #ffffff; padding: 6px 12px; font-family: 'DM Mono', ui-monospace, monospace; font-size: 12px; color: #585d75; white-space: nowrap; } .ds-status-dot { height: 7px; width: 7px; border-radius: 9999px; background: #1a7038; }"
+    },
+    {
+      "name": "Sidebar Nav Link",
+      "kind": "nav",
+      "refersTo": "sidebar-nav-link",
+      "description": "Active/inactive nav item inside the fixed indigo sidebar.",
+      "html": "<a class=\"ds-nav-link ds-nav-link--active\"><span class=\"ds-nav-accent\"></span>Checks</a>",
+      "css": ".ds-nav-link { display: flex; align-items: center; gap: 12px; border-radius: 6px; padding: 8px 0; font-family: Figtree, sans-serif; font-size: 14px; color: rgba(255,255,255,0.7); text-decoration: none; transition: color 0.15s; } .ds-nav-link--active { font-weight: 600; color: #ffffff; } .ds-nav-accent { height: 16px; width: 3px; flex-shrink: 0; border-radius: 9999px; background: transparent; } .ds-nav-link--active .ds-nav-accent { background: #6366f1; } .ds-nav-link:hover { color: #ffffff; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Instructor's Command Deck",
+    "overview": "Prompt Patrol reads as an instrument panel for a serious, evidence-based decision — not a consumer dashboard. A fixed deep-indigo sidebar acts as the deck's control column: wordmark, navigation, and identity anchored in one place while the workspace beneath it stays a calm, near-white surface tuned for reading and comparing evidence. Score readouts, timestamps, and detector status render in monospace (DM Mono) against a sans-serif (Figtree) interface voice, giving numeric/technical facts a distinct, deliberate register from prose and UI copy. Color is otherwise conserved. The palette is a single indigo family (primary, accent, and their soft/border steps) doing almost all of the UI's decorative work, with saturated color spent only where it carries meaning: the three verdict colors (flag/human/unsure) and the three detector-status colors (ready/warming/down) are deliberately separate token families from each other and from the neutral indigo chrome, so a 'service is up' signal and a 'flagged as AI' signal can never be mistaken for one another.",
+    "keyCharacteristics": [
+      "Fixed indigo command-column sidebar; flat, light workspace for content",
+      "Verdict and status color are their own token families — never reused for decoration",
+      "Numeric/technical facts always render in DM Mono; everything else in Figtree",
+      "Flat by default; shadow reserved for surfaces that float above the workspace",
+      "Precise, restrained component feel — no scale/glow theatrics on hover or focus"
+    ],
+    "rules": [
+      { "name": "The Reserved Signal Rule", "body": "Verdict colors and detector-status colors are separate token families from each other, even where hex values coincide. Never reuse a verdict token to express detector status, or vice versa.", "section": "colors" },
+      { "name": "The One Hue Rule", "body": "Outside of verdict/status signal and the danger family, every color in the interface comes from the indigo hue family. Pull from the existing scale before introducing a new hue.", "section": "colors" },
+      { "name": "The Mono-For-Facts Rule", "body": "If a piece of text is a number, timestamp, or system-reported status the instructor did not type themselves, render it in DM Mono. If it's UI copy, render it in Figtree.", "section": "typography" },
+      { "name": "The Flat-Workspace Rule", "body": "Structural chrome (sidebar, nav rows, table rows, page background) never uses box-shadow. Shadow is earned only by content that's meant to feel like a floating artifact.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do render every score, timestamp, or system-reported value in DM Mono; render every authored label/copy in Figtree.",
+      "Do reuse the existing indigo scale for any new neutral or accent need before introducing a new hue.",
+      "Do give verdict and detector-status their own token families even when a hex value would coincide with another family.",
+      "Do use shadow-md/shadow-xl only for content that visually floats above the flat workspace.",
+      "Do keep the radius scale to rounded-md/lg for controls, rounded-xl for containers, rounded-full for state indicators."
+    ],
+    "donts": [
+      "Don't add a box-shadow to structural chrome (sidebar, nav rows, table rows, page background).",
+      "Don't express focus state as an outline/ring; every interactive element defines an explicit focus-visible background/border shift instead.",
+      "Don't reuse a verdict color token to represent something that isn't a verdict, or a status color token for something that isn't detector health.",
+      "Don't introduce a sharp (0px) or heavily rounded (>12px) corner anywhere in the system."
+    ]
+  }
+}
