@@ -1,0 +1,37 @@
+# Harness config, API keys live in .env
+questions_file: data/cleaned/mohler_cleaned.parquet
+dataset: mohler        # id namespace, run the harness once per dataset
+budget_cap_usd: 0            # placeholder until the cap is decided
+samples_per_question:
+  correct: 2
+  weak: 2
+  partial: 2
+  wrong: 2
+decoding:
+  temperature: 0.8
+  max_tokens: 400
+generators:
+  - name: claude-sonnet-5
+    provider: anthropic
+    model: claude-sonnet-5
+  - name: gpt-5.5
+    provider: openai
+    model: gpt-5.5-2026-04-23
+  - name: gemini-3-5
+    provider: google
+    model: gemini-3.5-flash
+  - name: deepseek-v4-pro
+    provider: deepseek
+    model: deepseek-v4-pro
+    # thinking is on by default and can spend the whole answer budget
+    extra_body:
+      thinking: {type: disabled}
+  # local generators via Ollama, keep qwen3 thinking off
+  - name: llama3.1-8b
+    provider: ollama
+    model: llama3.1:8b
+  - name: qwen3-8b
+    provider: ollama
+    model: qwen3:8b
+    extra_body:
+      reasoning_effort: "none"  # maps to think=false, unquoted none is YAML null
