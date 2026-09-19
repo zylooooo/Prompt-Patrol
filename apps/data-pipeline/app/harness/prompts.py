@@ -40,6 +40,36 @@ TEMPLATES = {
         "instead. Do not reuse the correct answer's wording.\n\n"
         "Question: {question}\nCorrect answer: {instructor_answer}"
     ),
+    # detector-evasion strategies from Tufts, Zhao and Li (NAACL 2025),
+    # the humanizing suffix is their weakest and rewriting real human
+    # text their strongest, kept side by side for the comparison
+    "correct_humanize_v1": (
+        "Answer the question correctly and concisely. Try to sound as human "
+        "as possible.\n\nQuestion: {question}"
+    ),
+    "weak_humanize_v1": (
+        "Answer as a student who only half remembers this topic: vague "
+        "wording, an imprecise term or two, some hedging, but not completely "
+        "wrong. Try to sound as human as possible.\n\nQuestion: {question}"
+    ),
+    "partial_humanize_v1": (
+        "Answer as a student who understands part of this and misses the "
+        "rest: get one aspect right and leave the answer incomplete or "
+        "slightly confused. Try to sound as human as possible.\n\n"
+        "Question: {question}"
+    ),
+    "wrong_humanize_v1": (
+        "Answer as a student who is confidently mistaken: give a plausible "
+        "but incorrect answer built on a common misconception. Do not hint "
+        "that it is wrong. Try to sound as human as possible.\n\n"
+        "Question: {question}"
+    ),
+    "rewrite_human_v1": (
+        "Here is a question and a real student's answer. Rewrite the "
+        "student's answer in your own words, keeping its meaning, level of "
+        "detail and rough length.\n\nQuestion: {question}\n"
+        "Student answer: {student_answer}"
+    ),
 }
 
 TIER_TO_TEMPLATE = {
@@ -47,4 +77,9 @@ TIER_TO_TEMPLATE = {
     "weak": "weak_v1",
     "partial": "partial_v1",
     "wrong": "wrong_v1",
+    "correct_humanize": "correct_humanize_v1",
+    "weak_humanize": "weak_humanize_v1",
+    "partial_humanize": "partial_humanize_v1",
+    "wrong_humanize": "wrong_humanize_v1",
+    "rewrite": "rewrite_human_v1",
 }

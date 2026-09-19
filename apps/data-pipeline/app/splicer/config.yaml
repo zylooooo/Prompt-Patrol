@@ -1,7 +1,7 @@
 # Splicer config, pairs the human corpus with harness output
 human_corpus: data/cleaned/mohler_cleaned.parquet
 dataset: mohler        # id namespace, run once per dataset
-ai_answers: data/generated/pilot/answers.jsonl
+ai_answers: data/generated/pilot/answers.jsonl   # the run to splice, harness folders are timestamped
 out_dir: data/spliced
 seed: 480
 target_fractions: [0.25, 0.5, 0.75]

@@ -1,9 +1,10 @@
 """API clients for the generation harness.
 
-DeepSeek and local Ollama models speak the OpenAI protocol, so one
-client class covers all three with different base URLs. Transport
-failures retry with exponential backoff. Refusals are not retried, the
-run loop records them.
+OpenAI, DeepSeek and local Ollama models speak the OpenAI chat
+protocol, so one client class covers all three with different base
+URLs. Transport failures retry with exponential backoff. A refusal is
+not an error at this layer: it arrives as ordinary answer text and is
+recorded like any other result.
 """
 
 import os
@@ -22,6 +23,12 @@ RETRYABLE_CODES = {429, 500, 502, 503, 504}
 
 @dataclass
 class GenerationResult:
+    """One model call's output.
+
+    params_honoured records only the decoding parameters the request
+    actually carried, which differ per provider.
+    """
+
     text: str
     model_version: str
     params_honoured: dict
@@ -50,7 +57,7 @@ class AnthropicClient:
                 exc, (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError)
             )
 
-        # the current sdk no longer takes temperature, sampling is model-managed
+        # the anthropic sdk takes no temperature, sampling is model-managed
         resp = _retry(
             lambda: self._client.messages.create(
                 model=self.model,
@@ -69,7 +76,8 @@ class AnthropicClient:
 
 
 class OpenAIChatClient:
-    """OpenAI, and DeepSeek through its OpenAI-compatible endpoint."""
+    """OpenAI, and DeepSeek or local Ollama through their
+    OpenAI-compatible endpoints."""
 
     def __init__(
         self,
@@ -84,13 +92,14 @@ class OpenAIChatClient:
         self._send_temperature = send_temperature
         self._token_param = token_param
         self._extra_body = extra_body
+        # Ollama ignores the key but the sdk requires a non-empty one
         api_key = os.environ[api_key_env] if api_key_env else "ollama"
         self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
     def generate(self, system: str, user: str, decoding: dict) -> GenerationResult:
         def is_retryable(exc):
             if isinstance(exc, openai.RateLimitError) and "insufficient_quota" in str(exc):
-                return False  # empty wallet, retrying cannot help
+                return False  # billing, not load, retrying cannot help
             return isinstance(exc, (openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError))
 
         kwargs = {self._token_param: decoding["max_tokens"]}
@@ -106,7 +115,7 @@ class OpenAIChatClient:
             ),
             is_retryable,
         )
-        # Reasoning models put their traces in a separate reasoning_content
+        # reasoning models put their traces in a separate reasoning_content
         # field, so reading .content keeps only the final answer
         return GenerationResult(
             text=(resp.choices[0].message.content or "").strip(),
@@ -123,6 +132,8 @@ class GeminiClient:
 
     def generate(self, system: str, user: str, decoding: dict) -> GenerationResult:
         def is_retryable(exc):
+            # the google sdk distinguishes failures only by the http code
+            # on APIError, the other sdks raise a class per condition
             return isinstance(exc, genai_errors.APIError) and exc.code in RETRYABLE_CODES
 
         resp = _retry(
@@ -133,21 +144,49 @@ class GeminiClient:
                     "system_instruction": system,
                     "temperature": decoding["temperature"],
                     "max_output_tokens": decoding["max_tokens"],
+                    # thinking shares max_output_tokens, minimal is the
+                    # lowest setting on gemini 3.5, there is no off
+                    "thinking_config": {"thinking_level": "minimal"},
                 },
             ),
             is_retryable,
         )
         meta = resp.usage_metadata
+        # a safety-blocked response reports None token counts
         return GenerationResult(
             text=(resp.text or "").strip(),
             model_version=getattr(resp, "model_version", None) or self.model,
-            params_honoured={"temperature": decoding["temperature"], "max_tokens": decoding["max_tokens"]},
-            usage={"prompt_tokens": meta.prompt_token_count, "completion_tokens": meta.candidates_token_count},
+            params_honoured={
+                "temperature": decoding["temperature"], "max_output_tokens": decoding["max_tokens"],
+                "thinking_level": "minimal",
+            },
+            # thoughts bill like answer tokens, count them the way the
+            # other providers do
+            usage={
+                "prompt_tokens": meta.prompt_token_count or 0,
+                "completion_tokens": (meta.candidates_token_count or 0) + (meta.thoughts_token_count or 0),
+            },
         )
+
+
+KEY_ENVS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
 
 
 def build_clients(config: dict) -> dict:
     """Map generator name -> client, from the generators list in config."""
+    # a blank value from a copied .env.example fails as clearly as a
+    # missing one, and before any client construction
+    missing = sorted({
+        KEY_ENVS[g["provider"]] for g in config["generators"]
+        if g["provider"] in KEY_ENVS and not os.environ.get(KEY_ENVS[g["provider"]])
+    })
+    if missing:
+        raise SystemExit(f"missing API keys, fill these in .env: {missing}")
     built = {}
     for gen in config["generators"]:
         provider, model = gen["provider"], gen["model"]

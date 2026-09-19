@@ -1,12 +1,14 @@
 # Harness config, API keys live in .env
 questions_file: data/cleaned/mohler_cleaned.parquet
 dataset: mohler        # id namespace, run the harness once per dataset
-budget_cap_usd: 0            # placeholder until the cap is decided
 samples_per_question:
   correct: 2
   weak: 2
   partial: 2
   wrong: 2
+# further categories: correct_humanize, weak_humanize, partial_humanize,
+# wrong_humanize, rewrite
+# template_overrides remaps a tier to another template, for example wrong: wrong_ref_v1
 decoding:
   temperature: 0.8
   max_tokens: 400
@@ -26,7 +28,7 @@ generators:
     # thinking is on by default and can spend the whole answer budget
     extra_body:
       thinking: {type: disabled}
-  # local generators via Ollama, keep qwen3 thinking off
+  # local generators via Ollama
   - name: llama3.1-8b
     provider: ollama
     model: llama3.1:8b
@@ -34,4 +36,4 @@ generators:
     provider: ollama
     model: qwen3:8b
     extra_body:
-      reasoning_effort: "none"  # maps to think=false, unquoted none is YAML null
+      reasoning_effort: "none"  # the string none maps to think=false on the OpenAI endpoint

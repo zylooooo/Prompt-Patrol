@@ -1,9 +1,9 @@
 # Spliced corpus record schema
 
-One JSON object per line in data/spliced/spliced.jsonl. Example:
+One JSON object per line in data/spliced/spliced_<dataset>.jsonl. Example:
 
     {
-      "doc_id": "spliced/f50/0007",
+      "doc_id": "spliced/mohler/f50/0007",
       "question_id": "mohler/E03.Q03",
       "human_answer_id": "mohler/E03.Q03.A05",
       "ai_answer_id": "mohler/E03.Q03/gpt-5.5/weak/01",
@@ -24,5 +24,9 @@ Field notes:
   reports by ai_fraction.
 - sentences preserves document order. label is "human" or "ai", nothing
   else.
-- Human donors pass the eligibility rule in app/splicer/splice.py.
+- Human base answers pass the eligibility rule in app/splicer/splice.py.
+  The AI donor side is gated only by splice_pair's sentence-count check.
   Excluded counts are logged at build time.
+- An answer is never paired with its own rewrite. Harness records that
+  paraphrase a student answer carry its id as source_answer_id, and the
+  splicer skips that pair.

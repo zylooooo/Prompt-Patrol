@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("en_core_web_sm")
+pytest.importorskip("en_core_web_sm")  # skip when the spacy model is not installed
 
 from splicer.segment import segment
 
@@ -39,3 +39,4 @@ def test_break_after_conjunction_is_a_wrap_not_a_boundary():
 
 def test_lowercase_leading_conjunction_joins():
     assert len(segment("no base case<br>or if the base case is never reached")) == 1
+    

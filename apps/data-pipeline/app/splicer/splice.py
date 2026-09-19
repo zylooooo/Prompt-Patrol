@@ -10,16 +10,14 @@ AI fractions. Deterministic for a fixed config and seed.
 import random
 import re
 
-from splicer.segment import segment
-
 # signals from docs/segmentation_review_v3.md: code fragments, notation
-# lists and ellipsis-heavy answers make bad splice donors
+# lists and ellipsis-heavy answers make bad splice bases
 _CODE = re.compile(r"[{};]|//|==|\[\]|\+\+")
 _ELLIPSES = re.compile(r"\.\.\.")
 
 
 def is_eligible(sentences: list[str], min_sentences: int) -> bool:
-    """A donor answer must be prose with enough sentences, no code
+    """A base human answer must be prose with enough sentences, no code
     fragments, few ellipses and mostly full-length sentences."""
     if len(sentences) < min_sentences:
         return False
@@ -37,14 +35,18 @@ def splice_pair(human_sentences, ai_sentences, target_fraction, rng):
     """Replace positions in the human answer with AI sentences.
 
     Returns (labelled_sentences, actual_fraction). k is clamped so the
-    result always mixes both authors. Returns None when the AI answer
-    has too few sentences to fill the chosen positions.
+    result always mixes both authors. Returns None when the human answer
+    is too short to mix or the AI answer has too few sentences to fill
+    the chosen positions.
     """
     n = len(human_sentences)
+    if n < 2:
+        return None
     k = max(1, min(n - 1, round(target_fraction * n)))
     if len(ai_sentences) < k:
         return None
     positions = sorted(rng.sample(range(n), k))
+    # a prefix rather than a sample, shuffled sentences read incoherently
     replacements = ai_sentences[:k]
     labelled = []
     replaced = 0

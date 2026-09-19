@@ -6,6 +6,7 @@ Deterministic for a fixed config and seed. The record shape is
 documented in docs/spliced-schema.md.
 """
 
+import argparse
 import json
 import logging
 from pathlib import Path
@@ -56,7 +57,11 @@ def load_ai_answers(path):
             sentences = segment(record["answer"])
             if sentences:
                 grouped.setdefault(record["question_id"], []).append(
-                    {"answer_id": record["answer_id"], "sentences": sentences}
+                    {
+                        "answer_id": record["answer_id"],
+                        "sentences": sentences,
+                        "source_answer_id": record.get("source_answer_id"),
+                    }
                 )
     return grouped
 
@@ -64,20 +69,28 @@ def load_ai_answers(path):
 def build_corpus(humans, ais, config, rng):
     """The assembly itself, pure enough to test without files."""
     records = []
+    # set order varies with hash randomisation, sorting keeps runs deterministic
     questions = sorted(set(humans) & set(ais))
+    if not questions:
+        logger.warning("no overlapping questions between the corpora, check the dataset namespaces")
     for fraction in config["target_fractions"]:
+        # each fraction draws from the full pool, the same pair can recur
+        # across fractions
         pairs = [(h, a) for q in questions for h in humans[q] for a in ais[q]]
         rng.shuffle(pairs)
         count = 0
         for human, ai in pairs:
             if count >= config["docs_per_fraction"]:
                 break
+            if ai.get("source_answer_id") == human["answer_id"]:
+                # never pair an answer with its own rewrite
+                continue
             result = splice_pair(human["sentences"], ai["sentences"], fraction, rng)
             if result is None:
                 continue
             labelled, actual = result
             records.append({
-                "doc_id": f"spliced/f{int(fraction * 100):02d}/{count:04d}",
+                "doc_id": f"spliced/{config['dataset']}/f{round(fraction * 100):02d}/{count:04d}",
                 "question_id": human["question_id"],
                 "human_answer_id": human["answer_id"],
                 "ai_answer_id": ai["answer_id"],
@@ -92,20 +105,26 @@ def build_corpus(humans, ais, config, rng):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="Build the spliced corpus from one harness run.")
+    parser.add_argument("--ai-answers", default=None, help="answers.jsonl to splice, overrides the config value")
+    args = parser.parse_args()
     config = yaml.safe_load(open(DEFAULT_CONFIG, encoding="utf-8"))
-    ai_path = PIPELINE_DIR / config["ai_answers"]
+    ai_path = PIPELINE_DIR / (args.ai_answers or config["ai_answers"])
     if not ai_path.exists():
-        logger.error("no AI answers at %s, run the harness pilot first", ai_path)
-        return
+        raise SystemExit(
+            f"no AI answers at {ai_path}, point ai_answers in app/splicer/config.yaml "
+            "or --ai-answers at a run folder's answers.jsonl"
+        )
     humans = load_human_answers(PIPELINE_DIR / config["human_corpus"], config["min_sentences"], config["dataset"])
     ais = load_ai_answers(ai_path)
     records = build_corpus(humans, ais, config, make_rng(config["seed"]))
     out_dir = PIPELINE_DIR / config["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "spliced.jsonl", "w", encoding="utf-8") as out:
+    out_path = out_dir / f"spliced_{config['dataset']}.jsonl"
+    with open(out_path, "w", encoding="utf-8") as out:
         for record in records:
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
-    logger.info("wrote %d documents to %s", len(records), out_dir / "spliced.jsonl")
+    logger.info("wrote %d documents to %s", len(records), out_path)
 
 
 if __name__ == "__main__":

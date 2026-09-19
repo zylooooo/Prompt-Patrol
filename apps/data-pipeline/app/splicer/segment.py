@@ -1,12 +1,14 @@
+"""Sentence segmentation for student answers: line-break heuristics, then spaCy."""
+
 import re
 
 import spacy
 
 MODEL = "en_core_web_sm"
 _BREAKS = re.compile(r"(?:<br\s*/?>|\n)+")
-# Endings that cannot close a sentence (comma, colon, open bracket,
-# conjunction, article, possessive) mark the following line break as a
-# wrap rather than a boundary
+# endings that cannot close a sentence (comma, semicolon, colon, open
+# bracket, conjunction, article, possessive) mark the following line
+# break as a wrap rather than a boundary
 _CONTINUATION = re.compile(r"([,;:(]|\b(and|or|but|a|an|the|its|their))\s*$", re.IGNORECASE)
 _LEADING_CONTINUATION = re.compile(r"^(and|or|but|nor)\b")
 _nlp = None
@@ -15,6 +17,8 @@ _nlp = None
 def _pipeline():
     global _nlp
     if _nlp is None:
+        # the parser sets sentence boundaries, dropping ner and
+        # lemmatizer only trims load time
         _nlp = spacy.load(MODEL, exclude=["ner", "lemmatizer"])
     return _nlp
 
