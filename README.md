@@ -8,6 +8,7 @@ SMU CS480 Capstone Project building an web application based triage tool for uni
 | -------------------------------- | ----------------------------------------------------------- |
 | [`apps/api`](apps/api/README.md) | FastAPI + SQLAlchemy + Postgres, Auth0 sign-in              |
 | [`apps/web`](apps/web/README.md) | React 19 + TypeScript + Vite frontend                       |
+| [`apps/data-pipeline`](apps/data-pipeline/README.md) | Corpus tooling: dataset ingest and cleaning, the AI-answer generation harness, and the splicer |
 
 ## Local dev
 
