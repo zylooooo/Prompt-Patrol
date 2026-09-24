@@ -15,7 +15,11 @@ def _stub_invite_user(monkeypatch):
     async def fake_invite_user(email):
         return None
 
+    async def fake_find(email):
+        return None
+
     monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find)
 
 
 async def _signed_in(client, db_session, role):

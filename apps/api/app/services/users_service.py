@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import delete_auth0_user, invite_user
+from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user
 from exceptions import (
+    Auth0ProvisioningError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
@@ -436,6 +437,15 @@ async def create_user(
         raise EmailAlreadyExistsError(email)
     # reuse the most recently deleted row if it exists, otherwise create a new one. This prevents further duplicates
     reusable = existing_rows[0] if existing_rows else None
+
+    # A credential Auth0 already holds for this email has no live local row behind it (checked above) and
+    # would 409 the create. Never adopt it: whoever knows its password (a previous holder of the address)
+    # would sign in to the new account. Replace it, so the sub and password are ours alone.
+    stale_auth0_id = await find_auth0_user_id_by_email(email)
+    if stale_auth0_id is not None:
+        logger.warning("Auth0 already has a credential for %s with no live user - replacing it.", email)
+        if not await delete_auth0_user(stale_auth0_id):
+            raise Auth0ProvisioningError(f"Could not remove the stale Auth0 credential for {email}")
 
     # Get the Auth0 sub to lazily inject into the local row.
     auth0_user_id = await invite_user(email)

@@ -53,7 +53,10 @@ async def invite_user(email: str) -> str:
         )
         created.raise_for_status()
         auth0_user_id = created.json()["user_id"]
+    except httpx.HTTPError as exc:
+        raise Auth0ProvisioningError(f"Could not create an Auth0 credential for {email}: {exc}") from exc
 
+    try:
         # Send the invite email with password reset link directly to the user.
         invite = await _client.post(
             "/dbconnections/change_password",
@@ -65,7 +68,9 @@ async def invite_user(email: str) -> str:
         )
         invite.raise_for_status()
     except httpx.HTTPError as exc:
-        raise Auth0ProvisioningError(f"Could not create an Auth0 credential for {email}: {exc}") from exc
+        # The credential exists but the invitee can never learn that; don't leave it to 409 the retry.
+        await delete_auth0_user(auth0_user_id)
+        raise Auth0ProvisioningError(f"Could not email an invite to {email}: {exc}") from exc
 
     return auth0_user_id
 

@@ -40,7 +40,11 @@ def _stub_invite_user(monkeypatch):
     async def fake_delete_auth0_user(auth0_user_id):
         return True
 
+    async def fake_find_auth0_user_id_by_email(email):
+        return None
+
     monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find_auth0_user_id_by_email)
     monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete_auth0_user)
 
 
@@ -225,6 +229,65 @@ async def test_orphaned_auth0_user_is_deleted_when_local_commit_fails(db_session
         await create_user(db_session, admin, "orphaned2@smu.edu.sg", UserRoleEnum.instructor)
 
     assert deleted_ids == ["auth0|stub-id"]
+
+
+@pytest.mark.asyncio
+async def test_stale_auth0_credential_is_replaced_not_adopted(db_session, monkeypatch):
+    """Auth0 already holds a credential for an email with no live local row (a failed Auth0 delete,
+    a recycled address). Adopting it would hand the account to whoever knows that old password, so it
+    is deleted and a fresh credential invited instead."""
+
+    async def fake_find(email):
+        return "auth0|stale"
+
+    calls = []
+
+    async def fake_delete(auth0_user_id):
+        calls.append(("delete", auth0_user_id))
+        return True
+
+    async def fake_invite(email):
+        calls.append(("invite", email))
+        return "auth0|fresh"
+
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find)
+    monkeypatch.setattr("services.users_service.delete_auth0_user", fake_delete)
+    monkeypatch.setattr("services.users_service.invite_user", fake_invite)
+
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    created = await create_user(db_session, admin, "existing@smu.edu.sg", UserRoleEnum.instructor)
+
+    assert created.auth0_sub == "auth0|fresh"
+    assert calls == [("delete", "auth0|stale"), ("invite", "existing@smu.edu.sg")]
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_created_when_the_stale_credential_cannot_be_removed(db_session, monkeypatch):
+    from exceptions import Auth0ProvisioningError
+
+    async def fake_find(email):
+        return "auth0|stale"
+
+    async def failing_delete(auth0_user_id):
+        return False
+
+    async def must_not_invite(email):
+        raise AssertionError("invited while the stale credential still exists")
+
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find)
+    monkeypatch.setattr("services.users_service.delete_auth0_user", failing_delete)
+    monkeypatch.setattr("services.users_service.invite_user", must_not_invite)
+
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    with pytest.raises(Auth0ProvisioningError):
+        await create_user(db_session, admin, "existing2@smu.edu.sg", UserRoleEnum.instructor)
+
+    result = await db_session.execute(select(User).where(User.email == "existing2@smu.edu.sg"))
+    assert result.scalar_one_or_none() is None
 
 
 @pytest.mark.asyncio

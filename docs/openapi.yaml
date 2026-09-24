@@ -18,6 +18,10 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.17.0 POST /api/users now replaces an Auth0 Database credential that
+#          already exists for the email (deleting it, then inviting afresh)
+#          instead of failing `502`. No wire-format change. See DECISION LOG
+#          [0.17.0].
 #   0.16.0 BatchProgress gains `failures` (array of BatchRowFailure) — the
 #          schema was defined in [0.13.0] but never referenced by any
 #          endpoint, so instructors only ever saw a `failed` count with no
@@ -1005,8 +1009,9 @@ paths:
           description: |
             User provisioned. `first_login_at` is null until they sign in.
             Auth0 has already emailed the invitee a one-time link to set
-            their own password — there is nothing further for this response
-            to hand back.
+            their own password (replacing any stale credential for that
+            email — see DECISION LOG [0.17.0]) — there is nothing further
+            for this response to hand back.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
@@ -2663,6 +2668,34 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.17.0] Provisioning replaces a stale Auth0 credential instead of failing.
+#
+#   PROBLEM. `POST /api/users` always asked Auth0 to create a credential.
+#   For an email that already had one in Auth0 but no live local row (a
+#   row deleted while the Auth0 delete failed, an account made by hand in
+#   the dashboard, or a developer's earlier seed), Auth0 answers `409`,
+#   which surfaced as `502 "Could not create an Auth0 credential"` — an
+#   admin could not provision that person at all, and had no Auth0 access
+#   to clear it.
+#
+#   OPTIONS CONSIDERED. (a) Return `409` and ask the admin to clean up
+#   Auth0 by hand. Rejected: admins have no Auth0 access by design. (b)
+#   Adopt the existing credential (bind its `sub`, reuse `scripts.
+#   provision_user`'s behaviour). Rejected: its password is known to
+#   whoever set it — a previous holder of a recycled address, or whoever
+#   the failed delete left it with — and that password would now open the
+#   new account. Emailing a reset link does not invalidate it. (c) Replace
+#   it (chosen).
+#
+#   DECISION. If Auth0's Database connection holds a credential for the
+#   email (and, checked earlier, no live local row does), delete it, then
+#   create and invite exactly as for a new email. The new credential has a
+#   new `sub` and a random password nobody knows. If the delete fails,
+#   nothing is created (`502`). If the local commit later fails, the
+#   credential just created is removed, as before. Response unchanged.
+#   `scripts.provision_user` still adopts, because the operator running it
+#   is the tenant owner seeding their own root admin.
 #
 # [0.16.0] BatchProgress now returns the actual failure reasons, not just a count.
 #
