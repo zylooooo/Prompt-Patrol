@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.13.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.19.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,24 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.19.0 `User` gains nullable `first_login_at` (null until the person's
+#          first successful sign-in, i.e. "invite pending"), and
+#          `POST /api/users/{id}/resend-invite` re-sends the Auth0
+#          password-set email for an account that has never signed in.
+#          Purely additive: no field or endpoint removed. See DECISION LOG
+#          [0.19.0].
+#   0.18.0 Users module catch-up: the contract described a `deleted_at`
+#          soft-delete and `POST /api/users/{id}/restore`; the shipped API
+#          uses a three-state `status` (`active` / `deactivated` /
+#          `deleted`). `User` drops `deleted_at` and `first_login_at` and
+#          gains `status`; `GET /api/users` swaps `include_deleted` for a
+#          repeatable `status` filter (default `active`); added
+#          `POST /api/users/{id}/deactivate` and `.../reactivate`; removed
+#          `/restore`; `DELETE` is root_admin-only, returns `200 User`, and
+#          `409`s on an already-deleted target instead of `204`; login
+#          rejection gains a distinct `deleted` code. No behaviour change:
+#          this brings the document in line with the code. See DECISION LOG
+#          [0.18.0].
 #   0.17.0 POST /api/users now replaces an Auth0 Database credential that
 #          already exists for the email (deleting it, then inviting afresh)
 #          instead of failing `502`. No wire-format change. See DECISION LOG
@@ -645,18 +663,19 @@ paths:
 
         | Case | Match | Action |
         |------|-------|--------|
-        | Returning user | `external_id` (Auth0 `sub`), `deleted_at IS NULL` | Return the row |
-        | First login | `email` (case-insensitive) where `external_id IS NULL` and `deleted_at IS NULL` | Bind `sub`, set `display_name`, stamp `first_login_at`, return |
-        | Deactivated | match found (by either rule above) but `deleted_at IS NOT NULL` | **Reject** — `deactivated`, not `not_provisioned` |
-        | Unprovisioned | no match at all | **Reject** — `not_provisioned` |
+        | Allowed | `auth0_sub` matches a row whose `status` is `active` (the `sub` is stored when the credential is created at provisioning) | Return the row |
+        | Deactivated | no active match, but the newest row for the token's `email` has `status = deactivated` | **Reject** — `deactivated` |
+        | Deleted | same, with `status = deleted` | **Reject** — `deleted` |
+        | Unprovisioned | no row for the email at all | **Reject** — `not_provisioned` |
 
         On rejection: **no user row is created/modified and no session is
-        issued.** Redirect to the SPA's `not_provisioned` or `deactivated`
-        route accordingly — these are deliberately distinguishable in the
-        response and in the audit log (never had access, vs. access was
-        revoked), even if you choose to show the end user the same generic
-        front-end copy for both. Repeated unprovisioned or deactivated login
-        attempts against this endpoint are a signal worth retaining.
+        issued.** Redirect to the SPA's `not_provisioned`, `deactivated` or
+        `deleted` route accordingly — these are deliberately distinguishable
+        in the response and in the audit log (never had access, vs. access
+        was paused, vs. the account was removed), even if you choose to show
+        the end user the same generic front-end copy for all. Repeated
+        rejected login attempts against this endpoint are a signal worth
+        retaining.
 
         Auth never names a role, never writes `users.role`, and never decides
         eligibility. It delegates and acts on the answer.
@@ -1007,7 +1026,7 @@ paths:
       responses:
         "201":
           description: |
-            User provisioned. `first_login_at` is null until they sign in.
+            User provisioned, `status: active`.
             Auth0 has already emailed the invitee a one-time link to set
             their own password (replacing any stale credential for that
             email — see DECISION LOG [0.17.0]) — there is nothing further
@@ -1028,11 +1047,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: |
-            `email` already has a `users` row. If that row is soft-deleted,
-            use `POST /api/users/{id}/restore` instead — restoring an
-            existing account and provisioning a new one are different
-            audited actions, and collapsing them into upsert semantics here
-            would blur that distinction in the audit trail.
+            `email` already belongs to a row whose `status` is `active` or
+            `deactivated` (use `POST /api/users/{id}/reactivate` for the
+            latter). A `deleted` row does not block provisioning: the new
+            account reuses that row, with a fresh Auth0 credential and a
+            `deleted → active` entry in the status history.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1078,10 +1097,19 @@ paths:
           schema:
             type: string
             enum: [root_admin, instructor, teaching_assistant]
-        - name: include_deleted
+        - name: status
           in: query
-          schema: { type: boolean, default: false }
-          description: Include soft-deleted rows. Excluded by default.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/UserStatus" }
+            default: [active]
+          description: |
+            Repeat to widen, e.g. `?status=active&status=deactivated`.
+            Defaults to `active` only, so `deleted` rows are returned only
+            when asked for by name and an ordinary screen cannot show them
+            by accident.
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
@@ -1156,63 +1184,201 @@ paths:
     delete:
       tags: [users]
       operationId: deleteUser
-      summary: Soft-delete a user and revoke all of their sessions
+      summary: Delete a user (terminal) and revoke all of their sessions
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.18.0]"
       description: |
-        Sets `deleted_at = now()`. Never a hard delete — the audit trail's
-        referential integrity depends on the row surviving, same rationale
-        as soft-deleted sessions.
+        Moves the row to `status = deleted`. The row is never removed — the
+        audit trail's referential integrity depends on it surviving, same
+        rationale as soft-deleted sessions. Optional `{reason}` body (max 500
+        characters) is stored on the `UserStatusEvent`.
 
-        Delegation-scoped, same chain as `POST /api/users`: `root_admin` may
-        delete anyone; `instructor` may only delete `teaching_assistant`
-        rows they themselves provisioned; `teaching_assistant` may delete
-        no one. Unauthorized attempts return `403`, not `404` — this is a
-        role-level gate, not an object-level visibility check, so there's
-        nothing to hide about the target's existence once the actor is
-        already known to be able to see users of that kind.
+        **`root_admin` only**, and never another `root_admin`. Deletion is
+        terminal and also removes the person's Auth0 credential, so it sits
+        above the reversible deactivation an instructor may perform on their
+        own teaching assistants. `403` for anyone else. Nobody may delete
+        their own account.
 
-        **Immediately revokes every active session belonging to this user**,
-        not just the profile flag. This is the users module calling back
-        into auth-owned state — the mirror image of auth calling
-        `users.resolve_or_reject` at callback time (see
-        `/api/auth/callback` step 6), just in the other direction:
+        **Immediately revokes every active session belonging to this user.**
+        This is why the gateway authorizer's `result_ttl_seconds = 0`
+        matters (see `x-gateway-configuration`): a cached "session valid"
+        decision would outlive this revocation.
 
-        ```python
-        await sessions.revoke_all_for_user(user_id)
-        # internal cross-module call, not a public endpoint.
-        ```
-
-        This is why the gateway authorizer's `result_ttl_seconds = 0` matters
-        (see `x-gateway-configuration`): without it, a cached "session valid"
-        decision could outlive this revocation by up to the cache TTL, and
-        "immediately" would be false.
+        Removes the Auth0 credential after the local change commits. If that
+        call fails the row is still `deleted` and the failure is logged;
+        re-provisioning the email replaces the stale credential (see
+        DECISION LOG [0.17.0]).
 
         A deleted user hitting `/api/auth/callback` afterward is rejected
-        with the distinct `deactivated` error code, not `not_provisioned` —
-        the audit trail should be able to tell "never had access" apart from
-        "access was revoked."
-
-        Distinct from `DELETE /api/admin/sessions/{session_id}`, which
-        revokes exactly one session and does not touch the user record.
+        with the distinct `deleted` code.
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
       responses:
-        "204":
+        "200":
           description: |
-            Deleted; all sessions for this user revoked. Idempotent — an
-            already-deleted user returns 204.
+            The row, now `deleted`. Returned rather than `204` so the caller
+            sees the resulting status without a second read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already deleted. Deletion is terminal, not idempotent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/deactivate:
+    post:
+      tags: [users]
+      operationId: deactivateUser
+      summary: Pause an account (reversible) and revoke its sessions
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.18.0]"
+      description: |
+        `active → deactivated`. Delegation-scoped: `root_admin` may act on
+        anyone but themselves; `instructor` only on `teaching_assistant` rows
+        they provisioned; `teaching_assistant` on no one. Nobody may act on
+        their own account (a lone root admin would lock the system out).
+        Revokes every live session in the same commit. Optional `{reason}`
+        body, stored on the `UserStatusEvent` and never shown to the user.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
+      responses:
+        "200":
+          description: The row, now `deactivated`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a legal transition (e.g. the target is already deactivated or deleted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/reactivate:
+    post:
+      tags: [users]
+      operationId: reactivateUser
+      summary: Return a deactivated account to active
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.18.0]"
+      description: |
+        `deactivated → active`, same delegation scope and body as
+        `/deactivate`. Cannot revive a `deleted` account (`409`) — that takes
+        a fresh `POST /api/users`. Old sessions stay revoked: the person
+        signs in again.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
+      responses:
+        "200":
+          description: The row, now `active`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a legal transition (the target is not currently deactivated).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/resend-invite:
+    post:
+      tags: [users]
+      operationId: resendUserInvite
+      summary: Re-send the password-set email to an invitee who has never signed in
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.19.0]"
+      description: |
+        Asks Auth0 to email the invitee the same password-set link again for
+        the credential created at provisioning. Creates nothing and changes
+        no local state. Only valid for an `active` account whose
+        `first_login_at` is null; anything else is `409`.
+
+        Delegation-scoped like `/deactivate`: `root_admin` may act on anyone
+        but themselves; `instructor` only on `teaching_assistant` rows they
+        provisioned; `teaching_assistant` on no one (`403`).
+
+        Not audited beyond the application log — it changes no access. No
+        rate limit of its own: Auth0's per-tenant limits apply, and a
+        refused send surfaces as `502`. The link's lifetime is an Auth0
+        tenant setting and is deliberately not stated here.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The unchanged row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The account is not active, or has already signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Auth0 could not send the email. Nothing changed; retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/users/{id}/role:
     patch:
@@ -1330,63 +1496,6 @@ paths:
           description: |
             The target is deleted. Deletion is terminal, so there is nothing to
             assign them to.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /api/users/{id}/restore:
-    post:
-      tags: [users]
-      operationId: restoreUser
-      summary: Reactivate a soft-deleted user
-      security:
-        - sessionCookie: []
-      x-auth-enforcement: GATEWAY
-      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
-      description: |
-        Clears `deleted_at`. Kept as its own endpoint rather than folded into
-        `POST /api/users` as upsert-on-conflict — see the 409 note there.
-        Provisioning a new account and restoring an existing one are
-        different audited actions even though the end state looks similar.
-
-        Delegation-scoped, mirroring `DELETE /api/users/{id}`: `root_admin`
-        may restore anyone except another `root_admin` row; `instructor` may
-        only restore `teaching_assistant` rows they themselves provisioned;
-        `teaching_assistant` may restore no one. A `root_admin` target is
-        always rejected with `403` regardless of actor — there is exactly
-        one `root_admin`, and it is never soft-deleted through this API in
-        the first place, so this is a defensive rejection rather than a
-        reachable path today.
-
-        `409` if the target exists and is visible to the actor's delegation
-        scope but is not currently deleted — restoring an already-active
-        user is a no-op the caller should notice, not silently accept.
-
-        Does **not** restore old sessions — all of the user's sessions were
-        revoked at deletion time and stay revoked. The user must complete
-        `/api/auth/login` again. `external_id`/`tenant_id` bound before
-        deletion are preserved, so the next login resolves as the
-        **returning-user** case in `/api/auth/callback`, not a second
-        first-login/provisioning event.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "200":
-          description: Restored user.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: User is not currently deleted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1906,7 +2015,7 @@ components:
 
     User:
       type: object
-      required: [id, email, role, created_at]
+      required: [id, email, role, status, created_at]
       description: |
         Profile and authorization state. Owned entirely by the users module —
         the auth module never reads or writes `role` or `provisioned_by`; see
@@ -1934,19 +2043,44 @@ components:
           format: uuid
           nullable: true
           description: The provisioning caller's `user_id`. NULL only for the seeded `root_admin`.
+        status:
+          $ref: "#/components/schemas/UserStatus"
         first_login_at:
           type: string
           format: date-time
           nullable: true
-          description: NULL means invite pending — this row has never completed a login.
+          description: |
+            Stamped once, on the first successful sign-in, and never changed
+            after. Null means the invite is still pending: the account was
+            provisioned but the person has never signed in. Derive "pending"
+            as `status == active && first_login_at == null`; `deactivated`
+            and `deleted` take display precedence. Reset to null when a
+            deleted email is re-provisioned (a fresh credential). Tier 2
+            (nullable) — do not make it required.
         created_at:
           type: string
           format: date-time
-        deleted_at:
+
+    UserStatus:
+      type: string
+      enum: [active, deactivated, deleted]
+      description: |
+        `active` may sign in. `deactivated` is a reversible pause: sessions
+        are revoked and sign-in is refused until `.../reactivate`.
+        `deleted` is terminal: sessions revoked, Auth0 credential removed,
+        and the only way back is re-provisioning the email. Allowed
+        transitions: `active ⇄ deactivated`, and either → `deleted`.
+        Each transition is recorded in `UserStatusEvent`.
+
+    StatusChangeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
           type: string
-          format: date-time
+          maxLength: 500
           nullable: true
-          description: Soft-delete marker. NULL means active.
+          description: Free-text note stored on the audit event, never shown to the affected user.
 
     UserCreateRequest:
       type: object
@@ -2598,11 +2732,13 @@ components:
             - session_expired # 401 — session existed, clock fired (auth)
             - not_provisioned # authenticated at Auth0, no user record (users)
             - deactivated # authenticated at Auth0, user record exists
-              # but soft-deleted (users)
+              # but `status = deactivated` (users)
+            - deleted # authenticated at Auth0, user record exists
+              # but `status = deleted` (users)
             - forbidden # 403 — valid session, insufficient role (users)
             - not_found
-            - conflict # 409 — duplicate email, or invalid state
-              # transition e.g. restoring a non-deleted user (users)
+            - conflict # 409 — duplicate email, or an illegal status
+              # transition e.g. reactivating a deleted user (users)
             - state_mismatch
             - upstream_idp_error
             - payload_too_large # 413 — answer_text over 10,000 chars (checks)
@@ -2668,6 +2804,63 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.19.0] "Pending" is a stored fact (`first_login_at`), and invites can be re-sent.
+#
+#   PROBLEM. [0.18.0] recorded that "invite sent, never signed in" was not
+#   modelled. An admin could not tell a new invitee from a long-time user,
+#   and an invitee who lost the email had to be deleted and re-provisioned.
+#
+#   OPTIONS CONSIDERED. (a) Derive "never signed in" from the `sessions`
+#   table (no session row ever). Rejected: it silently breaks the day a
+#   session-purge job exists (see the append-only note in the sessions
+#   design) and adds a join to every list query. (b) A `pending` value on
+#   `UserStatus`. Rejected: pending is orthogonal to active/deactivated
+#   (a deactivated invitee is still one who never signed in) and would add
+#   states to a machine whose transitions are already audited. (c) A
+#   nullable `first_login_at` column (chosen).
+#
+#   DECISION. `users.first_login_at`, null until the first successful
+#   callback stamps it; never updated again. A migration backfills it from
+#   each existing user's earliest session so no current user shows as
+#   pending. Re-provisioning a deleted email resets it to null (a new
+#   credential is a new invite). "Pending" is display-only:
+#   `status == active && first_login_at == null`.
+#
+#   RESEND. `POST /api/users/{id}/resend-invite` re-triggers Auth0's
+#   password-set email for the existing credential. It is a command, not an
+#   edit, and changes no local state, so it writes no `UserStatusEvent`.
+#   Bulk resend and automatic reminders are out of scope.
+#
+# [0.18.0] Users lifecycle is a three-state `status`; the contract now says so.
+#
+#   PROBLEM. The contract still described [0.4.0]'s design — a `deleted_at`
+#   timestamp, `first_login_at`, and `POST .../restore` — while the shipped
+#   API (`explicit account lifecycle management`) uses `status` and separate
+#   deactivate / reactivate / delete transitions. Anyone building a client
+#   from the document would call an endpoint that does not exist and read
+#   fields that are not returned.
+#
+#   DECISION. Document what shipped. [0.4.0]'s "Deletion is a timestamp, not
+#   a status enum" is superseded: pausing an account (reversible) and
+#   deleting it (terminal) are different acts with different authority, and
+#   a nullable timestamp could not express both. Email uniqueness is a
+#   partial index over rows whose `status <> 'deleted'`, which is what lets
+#   a deleted address be provisioned again (the row is reused, with a
+#   `deleted → active` event). `UserStatusEvent` is the audit trail for
+#   every transition.
+#
+#   DELETE AUTHORITY. [0.5.4] extended delete to the instructor delegation
+#   chain. That is narrowed: delete is `root_admin` only. It is terminal and
+#   removes the Auth0 credential, so it needs more than the reversible
+#   deactivation an instructor already has over their own assistants (plus
+#   unassigning them, [0.5.6]). Backed by
+#   `test_delete_endpoint_is_refused_to_an_instructor`.
+#
+#   NOT MODELLED. "Invite sent, never signed in" is not stored: there is no
+#   `first_login_at`. Provisioning binds the Auth0 `sub` up front, so the
+#   callback matches on `sub` rather than on first-login email. A pending
+#   state needs its own column and is left for a later entry.
 #
 # [0.17.0] Provisioning replaces a stale Auth0 credential instead of failing.
 #

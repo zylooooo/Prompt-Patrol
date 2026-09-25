@@ -16,6 +16,7 @@ class UserResponse(BaseModel):
     role: UserRoleEnum
     status: UserStatusEnum
     provisioned_by: uuid.UUID | None
+    first_login_at: datetime | None
     created_at: datetime
 
 

@@ -16,6 +16,7 @@ from services import (
     SESSION_IDLE_TTL,
     LoginRejection,
     create_session,
+    mark_first_login,
     resolve_user,
     sign_out_everywhere,
 )
@@ -76,6 +77,8 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
         return_to = f"{FRONTEND_URL}/login?error={resolved.value}"
         return RedirectResponse(url=_auth0_logout_url(return_to), status_code=status.HTTP_303_SEE_OTHER)
     user = resolved
+    # on first successful login, mark the timestamp
+    await mark_first_login(db, user)
 
     raw_token = await create_session(db, user.id)
     response = RedirectResponse(url=FRONTEND_URL, status_code=status.HTTP_303_SEE_OTHER)

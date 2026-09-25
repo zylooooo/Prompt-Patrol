@@ -1,15 +1,18 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
 
 from exceptions import (
+    Auth0ProvisioningError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
     UserNotFoundError,
 )
 from models import User, UserRoleEnum, UserRoleEvent, UserStatusEnum, UserStatusEvent
+from schemas import UserResponse
 from services.users_service import (
     LoginRejection,
     _can_view_user,
@@ -20,8 +23,10 @@ from services.users_service import (
     delete_user,
     get_user_by_id,
     list_users,
+    mark_first_login,
     normalize_email,
     reactivate_user,
+    resend_invite,
     resolve_user,
     set_supervisor,
 )
@@ -1431,3 +1436,112 @@ async def test_an_instructor_may_not_claim_an_unassigned_assistant(db_session):
 
     with pytest.raises(PermissionError):
         await set_supervisor(db_session, instructor, ta.id, instructor.id)
+
+
+@pytest.mark.asyncio
+async def test_a_new_user_has_never_signed_in(db_session):
+    user = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, user)
+
+    await db_session.refresh(user)
+
+    assert user.first_login_at is None
+    assert UserResponse.model_validate(user).first_login_at is None
+
+
+@pytest.mark.asyncio
+async def test_first_login_is_stamped_once_and_never_moved(db_session):
+    user = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, user)
+
+    await mark_first_login(db_session, user)
+    first = user.first_login_at
+    assert first is not None
+
+    await mark_first_login(db_session, user)
+    assert user.first_login_at == first
+
+
+@pytest.mark.asyncio
+async def test_reprovisioning_a_deleted_email_makes_it_pending_again(db_session):
+    admin = _user(UserRoleEnum.root_admin)
+    old = _deleted_user(UserRoleEnum.teaching_assistant, email="back@smu.edu.sg")
+    old.first_login_at = datetime.now(UTC)
+    await _seed(db_session, admin, old)
+
+    again = await create_user(db_session, admin, "back@smu.edu.sg", UserRoleEnum.teaching_assistant)
+
+    assert again.id == old.id
+    assert again.first_login_at is None
+
+
+@pytest.fixture
+def sent_invites(monkeypatch):
+    sent: list[str] = []
+
+    async def fake_resend(email):
+        sent.append(email)
+
+    monkeypatch.setattr("services.users_service.resend_invite_email", fake_resend)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_can_resend_to_their_own_pending_assistant(db_session, sent_invites):
+    instructor = _user(UserRoleEnum.instructor)
+    own = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id, email="own@smu.edu.sg")
+    await _seed(db_session, instructor, own)
+
+    result = await resend_invite(db_session, instructor, own.id)
+
+    assert result.id == own.id
+    assert sent_invites == ["own@smu.edu.sg"]
+
+
+@pytest.mark.asyncio
+async def test_resend_is_refused_for_someone_elses_assistant(db_session, sent_invites):
+    instructor = _user(UserRoleEnum.instructor)
+    other = _user(UserRoleEnum.instructor)
+    theirs = _user(UserRoleEnum.teaching_assistant, provisioned_by=other.id)
+    await _seed(db_session, instructor, other, theirs)
+
+    with pytest.raises(PermissionError):
+        await resend_invite(db_session, instructor, theirs.id)
+    assert sent_invites == []
+
+
+@pytest.mark.asyncio
+async def test_resend_is_refused_once_the_person_has_signed_in(db_session, sent_invites):
+    admin = _user(UserRoleEnum.root_admin)
+    active = _user(UserRoleEnum.teaching_assistant)
+    active.first_login_at = datetime.now(UTC)
+    await _seed(db_session, admin, active)
+
+    with pytest.raises(InvalidStatusTransitionError):
+        await resend_invite(db_session, admin, active.id)
+    assert sent_invites == []
+
+
+@pytest.mark.asyncio
+async def test_resend_is_refused_for_a_deactivated_invitee(db_session, sent_invites):
+    admin = _user(UserRoleEnum.root_admin)
+    paused = _user(UserRoleEnum.teaching_assistant)
+    paused.status = UserStatusEnum.deactivated
+    await _seed(db_session, admin, paused)
+
+    with pytest.raises(InvalidStatusTransitionError):
+        await resend_invite(db_session, admin, paused.id)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_send_surfaces_as_an_auth0_error_and_changes_nothing(db_session, monkeypatch):
+    async def boom(email):
+        raise Auth0ProvisioningError("nope")
+
+    monkeypatch.setattr("services.users_service.resend_invite_email", boom)
+    admin = _user(UserRoleEnum.root_admin)
+    pending = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, pending)
+
+    with pytest.raises(Auth0ProvisioningError):
+        await resend_invite(db_session, admin, pending.id)

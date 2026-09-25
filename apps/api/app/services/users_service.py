@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user
+from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user, resend_invite_email
 from exceptions import (
     Auth0ProvisioningError,
     EmailAlreadyExistsError,
@@ -86,6 +86,16 @@ async def _classify_rejection(db: AsyncSession, email: str) -> LoginRejection:
         return LoginRejection.deleted
     logger.info("Refused sign-in: %s is not provisioned.", email)
     return LoginRejection.not_provisioned
+
+
+async def mark_first_login(db: AsyncSession, user: User) -> None:
+    """Records the first successful sign-in. Set once, never moved: null means
+    the invite is still pending."""
+    if user.first_login_at is not None:
+        return
+    user.first_login_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(user)
 
 
 _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
@@ -190,6 +200,17 @@ async def reactivate_user(db: AsyncSession, actor: User, user_id: uuid.UUID, rea
     target = await _load_manageable(db, user_id)
     _assert_may_manage(actor, target, "reactivate")
     return await _transition(db, actor, target, UserStatusEnum.active, reason)
+
+
+async def resend_invite(db: AsyncSession, actor: User, user_id: uuid.UUID) -> User:
+    """Re-sends the Auth0 password-set email to an invitee who has never signed in before."""
+    target = await _load_manageable(db, user_id)
+    _assert_may_manage(actor, target, "resend an invite to")
+    if target.status != UserStatusEnum.active or target.first_login_at is not None:
+        raise InvalidStatusTransitionError("Only an active account that has never signed in can be re-invited.")
+    await resend_invite_email(target.email)
+    logger.info("Invite re-sent to user %s by %s.", target.id, actor.id)
+    return target
 
 
 async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
@@ -457,6 +478,7 @@ async def create_user(
         reusable.provisioned_by = provisioned_by
         reusable.auth0_sub = auth0_user_id
         reusable.status = UserStatusEnum.active
+        reusable.first_login_at = None
         user = reusable
         db.add(
             UserStatusEvent(

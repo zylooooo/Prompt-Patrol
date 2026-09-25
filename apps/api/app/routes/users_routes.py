@@ -30,6 +30,7 @@ from services import (
     get_user_by_id,
     list_users,
     reactivate_user,
+    resend_invite,
     set_supervisor,
 )
 
@@ -218,6 +219,31 @@ async def reactivate_user_route(
 ):
     """Returns a deactivated user to active. Cannot revive a deleted one."""
     return await _transition_route(reactivate_user, db, actor, user_id, body)
+
+
+@router.post("/{user_id}/resend-invite", response_model=UserResponse)
+async def resend_invite_route(
+    user_id: uuid.UUID,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-sends the password-set email to an invitee who has never signed in."""
+    try:
+        return await resend_invite(db, actor, user_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to re-invite this user.",
+        )
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except Auth0ProvisioningError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send the invite email. Try again.",
+        )
 
 
 @router.delete("/{user_id}", response_model=UserResponse)

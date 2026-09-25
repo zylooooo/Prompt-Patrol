@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -433,3 +434,37 @@ async def test_an_assistant_cannot_reach_the_supervisor_endpoint(client, db_sess
     response = await client.post(f"/api/users/{target.id}/supervisor", json={"supervisor_id": None})
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_endpoint_maps_outcomes(client, db_session, monkeypatch):
+    sent = []
+
+    async def fake_resend(email):
+        sent.append(email)
+
+    monkeypatch.setattr("services.users_service.resend_invite_email", fake_resend)
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    pending = await _target(db_session)
+
+    ok = await client.post(f"/api/users/{pending.id}/resend-invite")
+    assert ok.status_code == 200
+    assert ok.json()["first_login_at"] is None
+    assert sent == [pending.email]
+
+    missing = await client.post(f"/api/users/{uuid.uuid4()}/resend-invite")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_endpoint_is_refused_to_signed_in_users(client, db_session, monkeypatch):
+    async def fake_resend(email):
+        return None
+
+    monkeypatch.setattr("services.users_service.resend_invite_email", fake_resend)
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session)
+    target.first_login_at = datetime.now(UTC)
+    await db_session.commit()
+
+    assert (await client.post(f"/api/users/{target.id}/resend-invite")).status_code == 409

@@ -51,6 +51,11 @@ class User(Base):
     provisioned_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
+    # Stamped once by the first successful sign-in and never changed. Null means
+    # the invite is still pending. Reset to null when a deleted email is
+    # re-provisioned.
+    first_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     # Partial uniqueness, not plain UNIQUE: identifiers are reserved only while a
     # user is still part of the system. Declared on the model so the SQLite test
     # schema matches the Postgres one - both support partial indexes.

@@ -664,3 +664,18 @@ async def test_an_ordinary_request_still_keeps_a_working_user_signed_in(client, 
 
     await db_session.refresh(row)
     assert row.last_active_at.replace(tzinfo=None) > aged.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_callback_stamps_the_first_login(client, db_session):
+    user = User(id=uuid.uuid4(), email="new@smu.edu.sg", auth0_sub="oid-new", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    assert user.first_login_at is None
+
+    fake_token = {"userinfo": {"sub": "oid-new", "email": "new@smu.edu.sg"}}
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(return_value=fake_token)):
+        await client.get("/api/auth/callback", follow_redirects=False)
+
+    await db_session.refresh(user)
+    assert user.first_login_at is not None
