@@ -8,7 +8,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 /**
  * The dead end this covers: a newly provisioned TA has no instructor, so the
  * history query 403s. The page used to swallow that and render "No checks yet -
- * run your first check from the Check answers page", pointing them at the one
+ * run your first check from the Screen New Answers page", pointing them at the one
  * page that also tells them they cannot do anything.
  */
 
