@@ -5,6 +5,7 @@ import {
   deleteUser,
   listMyAssistants,
   listUsers,
+  resendInvite,
   setSupervisor,
   setUserActive,
 } from "../users";
@@ -32,6 +33,7 @@ const ME = {
   status: "active",
   provisioned_by: null,
   created_at: "2026-07-01T00:00:00.000Z",
+  first_login_at: "2026-07-02T00:00:00.000Z",
 };
 
 const row = (id: string, over: Record<string, unknown> = {}) => ({
@@ -137,7 +139,32 @@ describe("listUsers", () => {
       status: "deactivated",
       provisionedBy: "id-admin",
       createdAt: "2026-07-01T00:00:00.000Z",
+      firstLoginAt: "2026-07-02T00:00:00.000Z",
     });
+  });
+
+  it("maps a null first_login_at through as null", async () => {
+    route(() => ({
+      items: [row("ta-1", { first_login_at: null })],
+      next_cursor: null,
+    }));
+
+    const [user] = await listUsers(ADMIN);
+
+    expect(user.firstLoginAt).toBeNull();
+  });
+});
+
+describe("resendInvite", () => {
+  it("posts to the user's resend-invite route and returns the row", async () => {
+    const mock = route(() => row("u1", { first_login_at: null }));
+
+    const user = await resendInvite(ADMIN, "u1");
+
+    expect(mock.mock.calls[0][0]).toBe("/api/users/u1/resend-invite");
+    expect(mock.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    expect(user.id).toBe("u1");
+    expect(user.firstLoginAt).toBeNull();
   });
 });
 

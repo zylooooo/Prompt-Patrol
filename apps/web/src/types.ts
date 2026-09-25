@@ -197,6 +197,7 @@ export interface AppUser {
   status: UserStatus;
   provisionedBy: string | null;
   createdAt: string;
+  firstLoginAt: string | null;
 }
 
 export function isActive(user: AppUser): boolean {
@@ -207,8 +208,17 @@ export function canReactivate(user: AppUser): boolean {
   return user.status === "deactivated";
 }
 
+/** Invited but never signed in. Display-only: deactivated and deleted accounts keep their own status. */
+export function isPending(user: AppUser): boolean {
+  return user.status === "active" && user.firstLoginAt === null;
+}
+
+export function userStatusLabel(user: AppUser): string {
+  return isPending(user) ? "Pending" : USER_STATUS_TEXT[user.status];
+}
+
 export function statusLabel(user: AppUser): string {
-  return USER_STATUS_TEXT[user.status];
+  return userStatusLabel(user);
 }
 
 export function displayName(user: AppUser): string {

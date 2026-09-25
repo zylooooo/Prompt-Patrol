@@ -7,7 +7,6 @@ import {
   type UserRole,
   type UserStatus,
 } from "../types";
-import * as stub from "./stub";
 import type { User } from "./auth";
 import { apiRequest } from "./client";
 
@@ -33,6 +32,7 @@ interface UserResponse {
   status: UserStatus;
   provisioned_by: string | null;
   created_at: string;
+  first_login_at: string | null;
 }
 
 interface UserListResponse {
@@ -49,6 +49,7 @@ function toAppUser(row: UserResponse): AppUser {
     status: row.status,
     provisionedBy: row.provisioned_by,
     createdAt: row.created_at,
+    firstLoginAt: row.first_login_at,
   };
 }
 
@@ -206,6 +207,10 @@ export async function deleteUser(_actor: User, id: string): Promise<AppUser> {
   );
 }
 
-export function resendInvite(actor: User, id: string): Promise<void> {
-  return stub.resendInvite(actor, id);
+export async function resendInvite(_actor: User, id: string): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}/resend-invite`, {
+      method: "POST",
+    }),
+  );
 }

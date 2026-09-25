@@ -414,6 +414,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: null,
     status: "active",
     createdAt: T0,
+    firstLoginAt: T0,
   },
   {
     id: ID_INSTRUCTOR_A,
@@ -423,6 +424,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: ID_ADMIN,
     status: "active",
     createdAt: T0,
+    firstLoginAt: T0,
   },
   {
     id: ID_INSTRUCTOR_B,
@@ -432,6 +434,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: ID_ADMIN,
     status: "active",
     createdAt: T1,
+    firstLoginAt: T1,
   },
   {
     id: ID_TA_A,
@@ -441,6 +444,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: ID_INSTRUCTOR_A,
     status: "active",
     createdAt: T1,
+    firstLoginAt: T1,
   },
   {
     id: ID_TA_B,
@@ -450,6 +454,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: ID_INSTRUCTOR_A,
     status: "active",
     createdAt: T1,
+    firstLoginAt: T1,
   },
   {
     id: ID_TA_C,
@@ -459,6 +464,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: ID_INSTRUCTOR_B,
     status: "active",
     createdAt: T2,
+    firstLoginAt: T2,
   },
   {
     id: ID_TA_D,
@@ -470,6 +476,7 @@ const SEED_USERS: AppUser[] = [
     provisionedBy: null,
     status: "active",
     createdAt: T2,
+    firstLoginAt: T2,
   },
 ];
 
@@ -591,6 +598,7 @@ function requireActor(actor: User): AppUser {
     provisionedBy: null,
     status: "active",
     createdAt: new Date().toISOString(),
+    firstLoginAt: new Date().toISOString(),
   };
   saveUsers([...loadUsers(), adopted]);
   seedHistoryFor(adopted);
@@ -814,6 +822,7 @@ export async function createAccount(
     provisionedBy: resolved.id,
     status: "active",
     createdAt: new Date().toISOString(),
+    firstLoginAt: null,
   };
   saveUsers([...loadUsers(), user]);
   return user;
@@ -851,15 +860,4 @@ export async function setUserActive(
   user.status = active ? "active" : "deactivated";
   saveUsers(users);
   return user;
-}
-
-export async function resendInvite(actor: User, id: string): Promise<void> {
-  await delay(200);
-  const user = findUserById(id);
-  if (!user) throw new ApiError(404, "That account no longer exists.");
-  if (user.role === "teaching_assistant") {
-    requireRole(actor, "instructor");
-  } else {
-    requireAdmin(actor);
-  }
 }

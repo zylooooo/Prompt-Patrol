@@ -1,11 +1,12 @@
 import DataTable, {
-  TABLE_ACTION_COLUMN_WIDTH,
+  TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
   TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
   useCreateAccount,
   useMyAssistants,
+  useResendInvite,
   useSetSupervisor,
 } from "../hooks/useUsers";
 import { useState } from "react";
@@ -15,10 +16,17 @@ import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
 import RowAction from "../components/ui/RowAction";
+import EmailTypoHint from "../components/ui/EmailTypoHint";
+import FormNotice from "../components/ui/FormNotice";
+import { useEmailTypoGuard } from "../hooks/useEmailTypoGuard";
 import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { displayName, type AppUser } from "../types";
+import {
+  displayName,
+  isPending as isPendingInvite,
+  type AppUser,
+} from "../types";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
 import { SECTION_LABEL } from "../components/ui/section-label";
@@ -32,19 +40,21 @@ export default function TeachingAssistantsPage() {
   const { data: assistants, isPending, isError, refetch } = useMyAssistants();
   const createAccount = useCreateAccount();
   const release = useSetSupervisor();
+  const resendInvite = useResendInvite();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{
-    id: string;
-    message: string;
-  } | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
 
+  const typo = useEmailTypoGuard(email, setEmail);
+
   async function onAdd() {
+    if (!typo.check()) return;
     setError(null);
+    setEmailError(null);
     try {
       const created = await createAccount.mutateAsync({
         name: name.trim() || undefined,
@@ -53,11 +63,13 @@ export default function TeachingAssistantsPage() {
       });
       setName("");
       setEmail("");
-      showToast(`${created.email} added — Auth0 emailed them a link to set their password`);
+      showToast(
+        `${created.email} added. They will get an email with a link to set their password.`,
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError(
-          "That email already has an account. Ask your administrator to assign them to you.",
+        setEmailError(
+          "That email already has an account. If they should be on your team, ask an administrator.",
         );
         return;
       }
@@ -67,19 +79,29 @@ export default function TeachingAssistantsPage() {
     }
   }
 
+  async function onResendInvite(target: AppUser) {
+    try {
+      await resendInvite.mutateAsync(target.id);
+      showToast(`Invite resent to ${target.email}.`);
+    } catch {
+      showToast(`Couldn't resend the invite to ${target.email}. Try again.`, {
+        tone: "error",
+      });
+    }
+  }
+
   async function onConfirmRemove() {
     if (!confirmRemove) return;
     const target = confirmRemove;
-    setRowError(null);
     setPending(target.id);
     try {
       await release.mutateAsync({ id: target.id, supervisorId: null });
-      showToast(`${displayName(target)} removed from your teaching assistants`);
+      showToast(`${displayName(target)} removed from your team.`);
       setConfirmRemove(null);
     } catch (err) {
-      setRowError({
-        id: target.id,
-        message: err instanceof Error ? err.message : "Could not remove them.",
+      const reason = err instanceof Error ? err.message : "Try again.";
+      showToast(`Couldn't remove ${displayName(target)}. ${reason}`, {
+        tone: "error",
       });
       setConfirmRemove(null);
     } finally {
@@ -95,7 +117,9 @@ export default function TeachingAssistantsPage() {
       header: "Name",
       width: "minmax(0,1.2fr)",
       cell: (ta) => (
-        <span className="min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground">
+        <span
+          className={`min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground ${ta.status === "active" ? "" : "opacity-70"}`}
+        >
           {displayName(ta)}
         </span>
       ),
@@ -105,7 +129,10 @@ export default function TeachingAssistantsPage() {
       header: "Email",
       width: "minmax(0,1.5fr)",
       cell: (ta) => (
-        <span className="min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground">
+        <span
+          title={ta.email}
+          className={`min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground ${ta.status === "active" ? "" : "opacity-70"}`}
+        >
           {ta.email}
         </span>
       ),
@@ -125,27 +152,33 @@ export default function TeachingAssistantsPage() {
       id: "status",
       header: "Status",
       width: TABLE_STATUS_COLUMN_WIDTH,
-      cell: (ta) => <UserStatusChip status={ta.status} />,
+      cell: (ta) => <UserStatusChip user={ta} />,
     },
     {
       id: "actions",
       header: "",
-      width: TABLE_ACTION_COLUMN_WIDTH,
+      width: TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
       align: "right",
       cell: (ta) => (
-        <RowAction
-          onClick={() => setConfirmRemove(ta)}
-          disabled={pending === ta.id}
-        >
-          Remove
-        </RowAction>
+        <span className="flex items-center justify-end gap-1">
+          {isPendingInvite(ta) && (
+            <RowAction
+              onClick={() => void onResendInvite(ta)}
+              disabled={resendInvite.isPending}
+            >
+              Resend invite
+            </RowAction>
+          )}
+          <RowAction
+            onClick={() => setConfirmRemove(ta)}
+            disabled={pending === ta.id}
+          >
+            Remove from team
+          </RowAction>
+        </span>
       ),
     },
   ];
-
-  const erroredAssistant = rowError
-    ? list.find((ta) => ta.id === rowError.id)
-    : undefined;
 
   return (
     <Page>
@@ -179,8 +212,19 @@ export default function TeachingAssistantsPage() {
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setEmailError(null);
+              }}
               placeholder="name@smu.edu.sg"
+              aria-invalid={emailError ? true : undefined}
+              aria-describedby={
+                emailError
+                  ? "add-email-error"
+                  : typo.suggestion
+                    ? "add-email-hint"
+                    : undefined
+              }
               className={`w-64 ${FIELD}`}
             />
           </label>
@@ -190,6 +234,20 @@ export default function TeachingAssistantsPage() {
           >
             {createAccount.isPending ? "Adding…" : "Add teaching assistant"}
           </Button>
+          {(typo.suggestion || emailError) && (
+            <div className="flex basis-full flex-col gap-1.5">
+              <EmailTypoHint
+                suggestion={typo.suggestion}
+                onUse={typo.applySuggestion}
+                onKeep={typo.keepAsTyped}
+              />
+              {emailError && (
+                <FormNotice tone="error" id="add-email-error" role="alert">
+                  {emailError}
+                </FormNotice>
+              )}
+            </div>
+          )}
         </form>
 
         {error && (
@@ -230,18 +288,12 @@ export default function TeachingAssistantsPage() {
               </div>
             }
           />
-          {rowError && (
-            <p className="mt-3 shrink-0 text-xs text-danger" role="alert">
-              {erroredAssistant ? `${displayName(erroredAssistant)}: ` : ""}
-              {rowError.message}
-            </p>
-          )}
         </PageFill>
       )}
 
       {confirmRemove && (
         <Modal
-          title={`Remove ${displayName(confirmRemove)}`}
+          title={`Remove ${displayName(confirmRemove)} from your team?`}
           busy={release.isPending}
           onClose={() => setConfirmRemove(null)}
           footer={
@@ -257,15 +309,15 @@ export default function TeachingAssistantsPage() {
                 onClick={() => void onConfirmRemove()}
                 disabled={release.isPending}
               >
-                {release.isPending ? "Removing…" : "Remove"}
+                {release.isPending ? "Removing…" : "Remove from team"}
               </Button>
             </>
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            They keep their account, and it stays active. They stop being able
-            to screen answers until an administrator assigns them to an
-            instructor again.
+            Their account stays active, but they can't screen answers until an
+            administrator assigns them to an instructor again. You can't undo
+            this yourself.
           </p>
         </Modal>
       )}

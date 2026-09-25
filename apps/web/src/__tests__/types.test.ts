@@ -5,6 +5,8 @@ import {
   displayName,
   entryId,
   isActive,
+  isPending,
+  userStatusLabel,
   roleLabel,
   ROLE_TEXT,
   type AppUser,
@@ -35,7 +37,27 @@ const user = (over: Partial<AppUser> = {}): AppUser => ({
   provisionedBy: null,
   status: "active",
   createdAt: "2026-01-01T00:00:00Z",
+  firstLoginAt: "2026-01-02T00:00:00Z",
   ...over,
+});
+
+describe("pending accounts", () => {
+  const never = { firstLoginAt: null };
+
+  it("is pending only while active and never signed in", () => {
+    expect(isPending(user(never))).toBe(true);
+    expect(isPending(user())).toBe(false);
+    expect(isPending(user({ ...never, status: "deactivated" }))).toBe(false);
+    expect(isPending(user({ ...never, status: "deleted" }))).toBe(false);
+  });
+
+  it("labels a pending account Pending and otherwise the status", () => {
+    expect(userStatusLabel(user(never))).toBe("Pending");
+    expect(userStatusLabel(user())).toBe("Active");
+    expect(userStatusLabel(user({ status: "deactivated" }))).toBe(
+      "Deactivated",
+    );
+  });
 });
 
 describe("atLeastRole", () => {
