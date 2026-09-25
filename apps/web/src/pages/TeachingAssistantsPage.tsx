@@ -1,5 +1,5 @@
 import DataTable, {
-  TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
+  TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
   TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
@@ -8,14 +8,17 @@ import {
   useMyAssistants,
   useResendInvite,
   useSetSupervisor,
+  useSetUserActive,
 } from "../hooks/useUsers";
 import { useState } from "react";
 import { ApiError } from "../api/client";
+import DeactivateReasonDialog from "../components/DeactivateReasonDialog";
 import Modal from "../components/ui/Modal";
 import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
 import RowAction from "../components/ui/RowAction";
+import RowActionMenu from "../components/ui/RowActionMenu";
 import EmailTypoHint from "../components/ui/EmailTypoHint";
 import FormNotice from "../components/ui/FormNotice";
 import { useEmailTypoGuard } from "../hooks/useEmailTypoGuard";
@@ -24,6 +27,7 @@ import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import {
   displayName,
+  canReactivate,
   isPending as isPendingInvite,
   type AppUser,
 } from "../types";
@@ -41,6 +45,7 @@ export default function TeachingAssistantsPage() {
   const createAccount = useCreateAccount();
   const release = useSetSupervisor();
   const resendInvite = useResendInvite();
+  const setActive = useSetUserActive();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -48,6 +53,7 @@ export default function TeachingAssistantsPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
+  const [reasoning, setReasoning] = useState<AppUser | null>(null);
 
   const typo = useEmailTypoGuard(email, setEmail);
 
@@ -87,6 +93,37 @@ export default function TeachingAssistantsPage() {
       showToast(`Couldn't resend the invite to ${target.email}. Try again.`, {
         tone: "error",
       });
+    }
+  }
+
+  async function applyActive(
+    target: AppUser,
+    active: boolean,
+    reason?: string,
+  ) {
+    setPending(target.id);
+    try {
+      await setActive.mutateAsync({ id: target.id, active, reason });
+      const name = displayName(target);
+      showToast(
+        active ? `${name} reactivated` : `${name} deactivated`,
+        active
+          ? undefined
+          : {
+              action: {
+                label: "Undo",
+                onClick: () => void applyActive(target, true),
+              },
+            },
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Try again.";
+      showToast(
+        `Couldn't ${active ? "reactivate" : "deactivate"} ${displayName(target)}. ${reason}`,
+        { tone: "error" },
+      );
+    } finally {
+      setPending(null);
     }
   }
 
@@ -156,27 +193,45 @@ export default function TeachingAssistantsPage() {
     },
     {
       id: "actions",
-      header: "",
-      width: TABLE_ACTIONS_COMPACT_COLUMN_WIDTH,
+      header: "Actions",
+      width: TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
       align: "right",
-      cell: (ta) => (
-        <span className="flex items-center justify-end gap-1">
-          {isPendingInvite(ta) && (
+      cell: (ta) => {
+        // One inline primary action; everything else lives in the menu, so
+        // the column never has to grow (same layout as the admin roster).
+        const items = isPendingInvite(ta)
+          ? [
+              {
+                label: "Resend invite",
+                onClick: () => void onResendInvite(ta),
+                disabled: resendInvite.isPending,
+              },
+              { label: "Deactivate", onClick: () => setReasoning(ta) },
+            ]
+          : [
+              canReactivate(ta)
+                ? {
+                    label: "Reactivate",
+                    onClick: () => void applyActive(ta, true),
+                  }
+                : { label: "Deactivate", onClick: () => setReasoning(ta) },
+            ];
+        return (
+          <span className="flex items-center justify-end gap-1">
             <RowAction
-              onClick={() => void onResendInvite(ta)}
-              disabled={resendInvite.isPending}
+              onClick={() => setConfirmRemove(ta)}
+              disabled={pending === ta.id}
             >
-              Resend invite
+              Remove from team
             </RowAction>
-          )}
-          <RowAction
-            onClick={() => setConfirmRemove(ta)}
-            disabled={pending === ta.id}
-          >
-            Remove from team
-          </RowAction>
-        </span>
-      ),
+            <RowActionMenu
+              items={items}
+              ariaLabel={`More actions for ${displayName(ta)}`}
+              disabled={pending === ta.id}
+            />
+          </span>
+        );
+      },
     },
   ];
 
@@ -289,6 +344,20 @@ export default function TeachingAssistantsPage() {
             }
           />
         </PageFill>
+      )}
+
+      {reasoning && (
+        <DeactivateReasonDialog
+          user={reasoning}
+          busy={pending === reasoning.id}
+          onClose={() => setReasoning(null)}
+          onConfirm={(reason) => {
+            const target = reasoning;
+            void applyActive(target, false, reason).then(() =>
+              setReasoning(null),
+            );
+          }}
+        />
       )}
 
       {confirmRemove && (

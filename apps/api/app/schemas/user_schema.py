@@ -1,10 +1,14 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from models import UserRoleEnum, UserStatusEnum
+
+# C0/C1 controls except tab and newline, plus angle brackets.
+_UNSAFE_REASON_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f<>]")
 
 
 class UserResponse(BaseModel):
@@ -59,6 +63,15 @@ class StatusChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: str | None) -> str | None:
+        # Plain-text note: keep markup and control characters out of the audit
+        # record. Rendering must still encode - this is defence in depth.
+        if value is None:
+            return None
+        return _UNSAFE_REASON_CHARS.sub("", value).strip() or None
 
 
 class UserListResponse(BaseModel):

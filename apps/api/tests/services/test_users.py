@@ -906,6 +906,19 @@ async def test_instructor_may_deactivate_only_their_own_ta(db_session):
 
 
 @pytest.mark.asyncio
+async def test_pending_ta_can_be_deactivated_by_their_instructor_and_by_root_admin(db_session):
+    # Pending = never signed in. Display-only, not a permission fence (DECISION LOG [0.20.0]).
+    admin = _user(UserRoleEnum.root_admin)
+    instructor = _user(UserRoleEnum.instructor)
+    mine = _user(UserRoleEnum.teaching_assistant, provisioned_by=instructor.id)
+    other = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, instructor, mine, other)
+
+    assert (await deactivate_user(db_session, instructor, mine.id)).status == UserStatusEnum.deactivated
+    assert (await deactivate_user(db_session, admin, other.id)).status == UserStatusEnum.deactivated
+
+
+@pytest.mark.asyncio
 async def test_deletion_is_root_admin_only(db_session):
     # Deletion is terminal, so it needs a stronger privilege than the reversible
     # deactivation an instructor performs when offboarding their own TA.

@@ -31,13 +31,21 @@ async def _signed_in(client, db_session, role):
     return actor
 
 
-async def _target(db_session, role=UserRoleEnum.teaching_assistant, provisioned_by=None, status=UserStatusEnum.active):
+async def _target(
+    db_session,
+    role=UserRoleEnum.teaching_assistant,
+    provisioned_by=None,
+    status=UserStatusEnum.active,
+    signed_in=True,
+):
+    # signed_in=False is a pending invite (first_login_at null).
     user = User(
         id=uuid.uuid4(),
         email=f"target-{uuid.uuid4()}@smu.edu.sg",
         role=role,
         provisioned_by=provisioned_by,
         status=status,
+        first_login_at=datetime.now(UTC) if signed_in else None,
     )
     db_session.add(user)
     await db_session.commit()
@@ -445,7 +453,7 @@ async def test_resend_invite_endpoint_maps_outcomes(client, db_session, monkeypa
 
     monkeypatch.setattr("services.users_service.resend_invite_email", fake_resend)
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
-    pending = await _target(db_session)
+    pending = await _target(db_session, signed_in=False)
 
     ok = await client.post(f"/api/users/{pending.id}/resend-invite")
     assert ok.status_code == 200
@@ -464,7 +472,130 @@ async def test_resend_invite_endpoint_is_refused_to_signed_in_users(client, db_s
     monkeypatch.setattr("services.users_service.resend_invite_email", fake_resend)
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
     target = await _target(db_session)
-    target.first_login_at = datetime.now(UTC)
-    await db_session.commit()
 
     assert (await client.post(f"/api/users/{target.id}/resend-invite")).status_code == 409
+
+
+# --- status-change reason ---------------------------------------------------
+
+
+async def _events(db_session, user_id):
+    from sqlalchemy import select
+
+    from models import UserStatusEvent
+
+    rows = await db_session.execute(select(UserStatusEvent).where(UserStatusEvent.user_id == user_id))
+    return list(rows.scalars())
+
+
+@pytest.mark.asyncio
+async def test_deactivate_stores_the_reason_on_the_event(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session)
+
+    response = await client.post(f"/api/users/{target.id}/deactivate", json={"reason": "semester ended"})
+
+    assert response.status_code == 200
+    (event,) = await _events(db_session, target.id)
+    assert event.reason == "semester ended"
+
+
+@pytest.mark.asyncio
+async def test_a_reason_is_stored_without_markup_or_control_characters(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session)
+
+    response = await client.post(
+        f"/api/users/{target.id}/deactivate",
+        json={"reason": "  <script>alert(1)</script> left\x00 the course\nsee note  "},
+    )
+
+    assert response.status_code == 200
+    (event,) = await _events(db_session, target.id)
+    assert event.reason == "scriptalert(1)/script left the course\nsee note"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [None, {}, {"reason": None}, {"reason": "   "}, {"reason": "<>"}])
+async def test_a_missing_or_blank_reason_is_stored_as_null(client, db_session, body):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session)
+
+    response = await client.post(f"/api/users/{target.id}/deactivate", json=body)
+
+    assert response.status_code == 200
+    (event,) = await _events(db_session, target.id)
+    assert event.reason is None
+
+
+@pytest.mark.asyncio
+async def test_an_over_long_reason_is_rejected_and_changes_nothing(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session)
+
+    response = await client.post(f"/api/users/{target.id}/deactivate", json={"reason": "x" * 501})
+
+    assert response.status_code == 422
+    assert await _events(db_session, target.id) == []
+
+
+@pytest.mark.asyncio
+async def test_reactivate_stores_its_reason_too(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    target = await _target(db_session, status=UserStatusEnum.deactivated)
+
+    await client.post(f"/api/users/{target.id}/reactivate", json={"reason": "back for summer term"})
+
+    (event,) = await _events(db_session, target.id)
+    assert event.reason == "back for summer term"
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_can_deactivate_and_reactivate_their_own_assistant(client, db_session):
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    assistant = await _target(db_session, provisioned_by=instructor.id)
+
+    off = await client.post(f"/api/users/{assistant.id}/deactivate", json={"reason": "on leave"})
+    on = await client.post(f"/api/users/{assistant.id}/reactivate")
+
+    assert (off.status_code, off.json()["status"]) == (200, "deactivated")
+    assert (on.status_code, on.json()["status"]) == (200, "active")
+    assert [e.reason for e in sorted(await _events(db_session, assistant.id), key=lambda e: e.to_status.value)] == [
+        None,
+        "on leave",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_cannot_deactivate_or_reactivate_someone_elses_assistant(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+    theirs = await _target(db_session, provisioned_by=colleague.id)
+    theirs_off = await _target(db_session, provisioned_by=colleague.id, status=UserStatusEnum.deactivated)
+
+    assert (await client.post(f"/api/users/{theirs.id}/deactivate")).status_code == 403
+    assert (await client.post(f"/api/users/{theirs_off.id}/reactivate")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_instructor_can_deactivate_a_pending_assistant(client, db_session):
+    # Pending (never signed in) is display-only; it must not fence deactivation.
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    pending = await _target(db_session, provisioned_by=instructor.id, signed_in=False)
+
+    response = await client.post(f"/api/users/{pending.id}/deactivate", json={"reason": "wrong email"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "deactivated"
+    (event,) = await _events(db_session, pending.id)
+    assert event.reason == "wrong email"
+
+
+@pytest.mark.asyncio
+async def test_a_root_admin_can_deactivate_or_delete_a_pending_user(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    to_pause = await _target(db_session, signed_in=False)
+    to_delete = await _target(db_session, signed_in=False)
+
+    assert (await client.post(f"/api/users/{to_pause.id}/deactivate")).status_code == 200
+    assert (await client.request("DELETE", f"/api/users/{to_delete.id}")).status_code == 200

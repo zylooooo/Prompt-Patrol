@@ -150,11 +150,12 @@ export async function setUserActive(
   _actor: User,
   id: string,
   active: boolean,
+  reason?: string,
 ): Promise<AppUser> {
   return toAppUser(
     await apiRequest<UserResponse>(
       `${USERS_PATH}${id}/${active ? "reactivate" : "deactivate"}`,
-      { method: "POST" },
+      reason ? { method: "POST", body: { reason } } : { method: "POST" },
     ),
   );
 }

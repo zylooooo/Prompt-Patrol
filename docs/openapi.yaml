@@ -18,6 +18,13 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.20.0 `StatusChangeRequest.reason` is now normalised server-side
+#          (trimmed, control characters and `<`/`>` removed, blank -> null).
+#          Clarification, no behaviour change: a pending account (`status =
+#          active`, `first_login_at` null) may be deactivated by whoever may
+#          manage it (`instructor` for their own TAs, `root_admin` for
+#          anyone) and deleted by `root_admin`. No field or endpoint added
+#          or removed. See DECISION LOG [0.20.0].
 #   0.19.0 `User` gains nullable `first_login_at` (null until the person's
 #          first successful sign-in, i.e. "invite pending"), and
 #          `POST /api/users/{id}/resend-invite` re-sends the Auth0
@@ -2080,7 +2087,11 @@ components:
           type: string
           maxLength: 500
           nullable: true
-          description: Free-text note stored on the audit event, never shown to the affected user.
+          description: |
+            Free-text note stored on the audit event, never shown to the
+            affected user. Plain text: the server trims it, drops control
+            characters (other than newline/tab) and `<` `>`, and stores a blank
+            result as null. Clients must still render it as text, never HTML.
 
     UserCreateRequest:
       type: object
@@ -2804,6 +2815,23 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.20.0] Status-change reasons are normalised; pending accounts are not special-cased.
+#
+#   REASON. `reason` is free text that reaches an audit table with no
+#   server-side hygiene, relying on every future renderer to escape it. It
+#   is now trimmed, stripped of control characters and `<`/`>`, and stored
+#   as null if nothing is left. Output encoding at render time remains the
+#   actual XSS defence; this only keeps markup out of the audit record.
+#   Stripping (rather than rejecting) so a paste never blocks a
+#   deactivation.
+#
+#   PENDING. A guard refusing an instructor's deactivate of a pending TA
+#   (409) was added and then removed in the same revision. Deactivation is
+#   reversible and leaves the Auth0 credential and invite untouched, so a
+#   pending row is no riskier to pause than any other, and an instructor
+#   needs it to cancel a mistyped invite. Resend-invite stays alongside it.
+#   Pending is display-only ([0.19.0]) and gates only `resend-invite`.
 #
 # [0.19.0] "Pending" is a stored fact (`first_login_at`), and invites can be re-sent.
 #

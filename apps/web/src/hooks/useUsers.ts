@@ -78,8 +78,16 @@ export function useChangeUserRole() {
 
 export function useSetUserActive() {
   const actor = useActor();
-  return useRosterMutation(({ id, active }: { id: string; active: boolean }) =>
-    setUserActive(requireActor(actor), id, active),
+  return useRosterMutation(
+    ({
+      id,
+      active,
+      reason,
+    }: {
+      id: string;
+      active: boolean;
+      reason?: string;
+    }) => setUserActive(requireActor(actor), id, active, reason),
   );
 }
 

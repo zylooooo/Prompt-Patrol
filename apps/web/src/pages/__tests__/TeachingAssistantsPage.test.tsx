@@ -21,12 +21,14 @@ vi.mock("../../hooks/useToast", () => ({
 const assistantsMock = vi.fn();
 const resendMock = vi.fn();
 const createMock = vi.fn();
+const setActiveMock = vi.fn();
 vi.mock("../../hooks/useUsers", () => {
   const idle = () => ({ mutateAsync: vi.fn(), isPending: false });
   return {
     useMyAssistants: () => assistantsMock() as unknown,
     useCreateAccount: () => createMock() as unknown,
     useSetSupervisor: idle,
+    useSetUserActive: () => setActiveMock() as unknown,
     useResendInvite: () => resendMock() as unknown,
   };
 });
@@ -69,6 +71,13 @@ async function rowFor(name: string): Promise<HTMLElement> {
   return row;
 }
 
+async function openMenuItem(row: HTMLElement, name: string, item: string) {
+  fireEvent.click(
+    within(row).getByRole("button", { name: `More actions for ${name}` }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
 beforeEach(() => {
   installDomStubs({ matches: false });
   vi.clearAllMocks();
@@ -79,6 +88,7 @@ beforeEach(() => {
   });
   resendMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   createMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  setActiveMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 afterEach(cleanup);
 
@@ -89,7 +99,7 @@ describe("TeachingAssistantsPage - pending invites", () => {
     renderPage();
 
     const row = await rowFor("New Assistant");
-    fireEvent.click(within(row).getByRole("button", { name: "Resend invite" }));
+    await openMenuItem(row, "New Assistant", "Resend invite");
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith("ta-new"));
     expect(showToastMock).toHaveBeenCalledWith(
@@ -101,9 +111,105 @@ describe("TeachingAssistantsPage - pending invites", () => {
     renderPage();
 
     const row = await rowFor("Signed In Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for Signed In Assistant",
+      }),
+    );
+    await screen.findByRole("menuitem", { name: "Deactivate" });
     expect(
-      within(row).queryByRole("button", { name: "Resend invite" }),
+      screen.queryByRole("menuitem", { name: "Resend invite" }),
     ).toBeNull();
+  });
+});
+
+describe("TeachingAssistantsPage - deactivate and reactivate", () => {
+  it("offers Deactivate in the menu for a pending assistant", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(PENDING);
+    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const row = await rowFor("New Assistant");
+    await openMenuItem(row, "New Assistant", "Deactivate");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Deactivate account" }),
+    );
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: "ta-new",
+        active: false,
+        reason: undefined,
+      }),
+    );
+  });
+
+  it("sends the typed reason with markup stripped", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const row = await rowFor("Signed In Assistant");
+    await openMenuItem(row, "Signed In Assistant", "Deactivate");
+    fireEvent.change(await screen.findByLabelText(/Reason/), {
+      target: { value: "  <img src=x onerror=alert(1)> on leave  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate account" }));
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: "ta-old",
+        active: false,
+        reason: "img src=x onerror=alert(1) on leave",
+      }),
+    );
+  });
+
+  it("sends no reason when the box is left blank", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const row = await rowFor("Signed In Assistant");
+    await openMenuItem(row, "Signed In Assistant", "Deactivate");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Deactivate account" }),
+    );
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: "ta-old",
+        active: false,
+        reason: undefined,
+      }),
+    );
+  });
+
+  it("reactivates a deactivated assistant from the menu without a dialog", async () => {
+    const off = user({
+      id: "ta-off",
+      name: "Paused Assistant",
+      status: "deactivated",
+    });
+    assistantsMock.mockReturnValue({
+      data: [off],
+      isPending: false,
+      isError: false,
+    });
+    const mutateAsync = vi.fn().mockResolvedValue(off);
+    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const row = await rowFor("Paused Assistant");
+    await openMenuItem(row, "Paused Assistant", "Reactivate");
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: "ta-off",
+        active: true,
+        reason: undefined,
+      }),
+    );
   });
 });
 

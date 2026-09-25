@@ -44,6 +44,7 @@ import SupervisorDialog from "../components/SupervisorDialog";
 import { SECTION_LABEL } from "../components/ui/section-label";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
+import DeactivateReasonDialog from "../components/DeactivateReasonDialog";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 import ChangeRoleDialog from "../components/ChangeRoleDialog";
 
@@ -115,6 +116,7 @@ export default function UsersPage() {
   const [query, setQuery] = useState("");
   const [assigning, setAssigning] = useState<AppUser | null>(null);
   const [deactivating, setDeactivating] = useState<AppUser | null>(null);
+  const [reasoning, setReasoning] = useState<AppUser | null>(null);
   const [changingRole, setChangingRole] = useState<AppUser | null>(null);
 
   const instructors = useMemo(
@@ -193,11 +195,15 @@ export default function UsersPage() {
     });
   }
 
-  async function applyActive(target: AppUser, active: boolean) {
+  async function applyActive(
+    target: AppUser,
+    active: boolean,
+    reason?: string,
+  ) {
     setError(null);
     setPending(target.id);
     try {
-      await setActive.mutateAsync({ id: target.id, active });
+      await setActive.mutateAsync({ id: target.id, active, reason });
       const name = displayName(target);
       if (active) {
         showToast(`${name} reactivated`);
@@ -233,6 +239,10 @@ export default function UsersPage() {
   function onStatusClick(target: AppUser) {
     if (isActive(target) && target.role === "instructor") {
       setDeactivating(target);
+      return;
+    }
+    if (isActive(target)) {
+      setReasoning(target);
       return;
     }
     void applyActive(target, !isActive(target));
@@ -566,6 +576,20 @@ export default function UsersPage() {
           instructor={deactivating}
           allUsers={users ?? []}
           onClose={() => setDeactivating(null)}
+        />
+      )}
+
+      {reasoning && (
+        <DeactivateReasonDialog
+          user={reasoning}
+          busy={pending === reasoning.id}
+          onClose={() => setReasoning(null)}
+          onConfirm={(reason) => {
+            const target = reasoning;
+            void applyActive(target, false, reason).then(() =>
+              setReasoning(null),
+            );
+          }}
         />
       )}
 
