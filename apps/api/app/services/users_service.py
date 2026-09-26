@@ -5,7 +5,8 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user, resend_invite_email
@@ -16,7 +17,7 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import User, UserRoleEnum, UserRoleEvent, UserSession, UserStatusEnum, UserStatusEvent
+from models import Supervision, User, UserRoleEnum, UserRoleEvent, UserSession, UserStatusEnum, UserStatusEvent
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,6 @@ logger = logging.getLogger(__name__)
 # Normalizes an email address for consistent storage and comparison.
 def normalize_email(email: str) -> str:
     return email.strip().lower()
-
-
-# Normalizes a display label; whitespace-only collapses to NULL, never a blank name.
-def normalize_display_name(display_name: str | None) -> str | None:
-    if display_name is None:
-        return None
-    return display_name.strip() or None
 
 
 class LoginRejection(str, enum.Enum):
@@ -55,7 +49,7 @@ async def resolve_user(db: AsyncSession, sub: str, email: str) -> User | LoginRe
         db (AsyncSession): The database session.
         sub (str): The Auth0 sub of the user.
         email (str): The email of the user.
-    
+
     Returns:
         User: The user object if the user is allowed to log in.
         LoginRejection: The reason for rejection if the user is not allowed to log in.
@@ -105,19 +99,47 @@ _ALLOWED_TRANSITIONS: dict[UserStatusEnum, frozenset[UserStatusEnum]] = {
 }
 
 
+async def _revoke_sessions(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Ends every live session in the caller's transaction (no commit), so the
+    revocation lands with whatever change caused it."""
+    await db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == user_id, UserSession.deleted_at.is_(None))
+        .values(deleted_at=datetime.now(UTC))
+    )
+
+
+async def _end_links(db: AsyncSession, user_id: uuid.UUID, actor_id: uuid.UUID) -> None:
+    """Ends every active supervision the user is on, as TA or as instructor. No
+    commit - it rides with the delete or role change that needs it."""
+    await db.execute(
+        update(Supervision)
+        .where(
+            or_(Supervision.ta_id == user_id, Supervision.instructor_id == user_id),
+            Supervision.ended_at.is_(None),
+        )
+        .values(ended_at=datetime.now(UTC), ended_by=actor_id)
+    )
+
+
+def _supervises(actor: User, target: User) -> bool:
+    """An instructor holds a TA through an active supervision link, whoever
+    provisioned them (DECISION LOG [0.21.0])."""
+    return target.role == UserRoleEnum.teaching_assistant and actor.id in target.supervisor_ids
+
+
 # Helper function for authorization checks
 def _may_manage(actor: User, target: User) -> bool:
     """Delegation chain as a predicate. _assert_may_manage raises on the same rule."""
     if actor.role == UserRoleEnum.root_admin:
         return True
     if actor.role == UserRoleEnum.instructor:
-        return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.id
+        return _supervises(actor, target)
     return False
 
 
 def _assert_may_manage(actor: User, target: User, verb: str) -> None:
-    """Delegation chain: TAs manage nobody, instructors manage only the TAs they
-    provisioned, root admins manage anyone - but nobody manages themselves."""
+    """Delegation chain: TAs manage nobody, instructors manage only the TAs they supervise, root admins manage anyone - but nobody manages themselves."""
     # Self-transition is refused for everyone. A root admin deactivating their
     # own account has their sessions revoked immediately and cannot sign back in,
     # and no one else can reactivate them: instructors may only manage their own
@@ -129,10 +151,9 @@ def _assert_may_manage(actor: User, target: User, verb: str) -> None:
     if actor.role == UserRoleEnum.teaching_assistant:
         logger.warning("Actor %s may not %s users.", actor.id, verb)
         raise PermissionError(f"role {actor.role} may not {verb} any users")
-    if actor.role == UserRoleEnum.instructor:
-        if target.role != UserRoleEnum.teaching_assistant or target.provisioned_by != actor.id:
-            logger.warning("Actor %s may not %s user %s.", actor.id, verb, target.id)
-            raise PermissionError(f"role {actor.role} may not {verb} user ID: {target.id}")
+    if actor.role == UserRoleEnum.instructor and not _supervises(actor, target):
+        logger.warning("Actor %s may not %s user %s.", actor.id, verb, target.id)
+        raise PermissionError(f"role {actor.role} may not {verb} user ID: {target.id}")
 
 
 async def _transition(
@@ -167,11 +188,13 @@ async def _transition(
     # Any exit from active must invalidate credentials immediately - a session
     # issued a second before deactivation must not outlive it.
     if to_status != UserStatusEnum.active:
-        await db.execute(
-            update(UserSession)
-            .where(UserSession.user_id == current.id, UserSession.deleted_at.is_(None))
-            .values(deleted_at=datetime.now(UTC))
-        )
+        await _revoke_sessions(db, current.id)
+
+    # A deleted account supervises no one and is supervised by no one
+    # (DECISION LOG [0.21.0]). Deactivation keeps its links on purpose, so
+    # reactivating restores the same teams.
+    if to_status == UserStatusEnum.deleted:
+        await _end_links(db, current.id, actor.id)
 
     db.add(
         UserStatusEvent(
@@ -190,13 +213,20 @@ async def _transition(
 
 async def deactivate_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
     """Removes operational access while keeping the user part of the system."""
+    # Root admin only since a TA can be shared, one instructor's deactivate would lock TAs out of every team.
+    if actor.role != UserRoleEnum.root_admin:
+        logger.warning("Actor %s may not deactivate users.", actor.id)
+        raise PermissionError(f"role {actor.role} may not deactivate users")
     target = await _load_manageable(db, user_id)
     _assert_may_manage(actor, target, "deactivate")
     return await _transition(db, actor, target, UserStatusEnum.deactivated, reason)
 
 
 async def reactivate_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason: str | None = None) -> User:
-    """Restores access to a deactivated user. Cannot revive a deleted one."""
+    """Restores access to a deactivated user. Cannot reactivate a deleted one."""
+    if actor.role != UserRoleEnum.root_admin:
+        logger.warning("Actor %s may not reactivate users.", actor.id)
+        raise PermissionError(f"role {actor.role} may not reactivate users")
     target = await _load_manageable(db, user_id)
     _assert_may_manage(actor, target, "reactivate")
     return await _transition(db, actor, target, UserStatusEnum.active, reason)
@@ -267,6 +297,9 @@ async def change_user_role(db: AsyncSession, actor: User, user_id: uuid.UUID, ne
 
     from_role = target.role
     target.role = new_role
+    # A link means instructor-supervises-TA; neither end survives a role swap.
+    if from_role != new_role:
+        await _end_links(db, target.id, actor.id)
     db.add(UserRoleEvent(user_id=target.id, actor_id=actor.id, from_role=from_role, to_role=new_role))
     await db.commit()
     await db.refresh(target)
@@ -327,10 +360,10 @@ def _can_view_user(actor: User, target: User) -> bool:
         return False
     if actor.role == UserRoleEnum.instructor:
         # Exactly what list_users returns for an instructor.
-        return target.role == UserRoleEnum.teaching_assistant and target.provisioned_by == actor.id
+        return _supervises(actor, target)
     if actor.role == UserRoleEnum.teaching_assistant:
-        # TAs only can view their own supervisor.
-        return target.id == actor.provisioned_by
+        # TAs only see their own supervisors.
+        return target.id in actor.supervisor_ids
     return False
 
 
@@ -346,136 +379,122 @@ async def _assert_supervisor_available(db: AsyncSession, supervisor_id: uuid.UUI
         raise InvalidSupervisorError("a supervisor must be an active account")
 
 
-async def _resolve_supervisor(
-    db: AsyncSession, actor: User, role: UserRoleEnum, supervisor_id: uuid.UUID | None
-) -> uuid.UUID | None:
-    """Decides what `provisioned_by` holds on a new account.
+async def _link(db: AsyncSession, actor: User, ta: User, instructor_id: uuid.UUID) -> None:
+    """Adds an active link unless the pair already has one, commits, and
+    reloads `ta.supervisors` so the caller returns a current row."""
+    existing = await db.execute(
+        select(Supervision.id).where(
+            Supervision.ta_id == ta.id,
+            Supervision.instructor_id == instructor_id,
+            Supervision.ended_at.is_(None),
+        )
+    )
+    if existing.first() is None:
+        db.add(Supervision(ta_id=ta.id, instructor_id=instructor_id, created_by=actor.id))
+        try:
+            await db.commit()
+        except IntegrityError:
+            # A concurrent request linked the same pair first; the partial
+            # unique index kept exactly one. Same outcome as ours.
+            await db.rollback()
+    await db.refresh(ta)
 
-    For a teaching assistant this column *is* the supervision edge - the only one
-    the schema has - so it names an instructor or nobody at all. For an instructor
-    it records who created them and nothing gates on it.
+
+async def link_supervisor(db: AsyncSession, actor: User, ta_id: uuid.UUID, instructor_id: uuid.UUID) -> User:
+    """root_admin places a teaching assistant on an instructor's team.
+
+    This operation is additive, other supervisors are kept. An existing link is a no-op.
+    Instructors add TAs to themsleves by calling the add_teaching_assistant function.
     """
-    # Only TAs can have a supervisor.
-    if role != UserRoleEnum.teaching_assistant:
-        if supervisor_id is not None:
-            raise InvalidSupervisorError("only a teaching assistant has a supervisor")
-        return actor.id
+    if actor.role != UserRoleEnum.root_admin:
+        logger.warning("Actor %s may not place assistants.", actor.id)
+        raise PermissionError(f"role {actor.role} may not place assistants")
 
-    if actor.role == UserRoleEnum.instructor:
-        # An instructor may only place an assistant under themselves.
-        if supervisor_id is not None and supervisor_id != actor.id:
-            logger.warning("Instructor %s attempted to assign supervisor %s.", actor.id, supervisor_id)
-            raise PermissionError(f"role {actor.role} may not assign another instructor")
-        return actor.id
-
-    # Root admin can create TAs without assigning them to any instructor
-    if supervisor_id is None:
-        return None
-    await _assert_supervisor_available(db, supervisor_id)
-    return supervisor_id
-
-
-async def set_supervisor(db: AsyncSession, actor: User, user_id: uuid.UUID, supervisor_id: uuid.UUID | None) -> User:
-    """Moves a teaching assistant to another instructor, or unassigns them.
-
-    Placing people is a root admin act. An instructor may only *release* their
-    own assistant, never take one: `provisioned_by` is what grants management of
-    the row, so letting them assign would let them hand a colleague access, or
-    help themselves to someone else's assistant.
-    """
-    if actor.role == UserRoleEnum.teaching_assistant:
-        logger.warning("Actor %s may not reassign supervisors.", actor.id)
-        raise PermissionError(f"role {actor.role} may not reassign supervisors")
-
-    target = await _load_manageable(db, user_id)
+    target = await _load_manageable(db, ta_id)
     if target.role != UserRoleEnum.teaching_assistant:
         raise InvalidSupervisorError("only a teaching assistant has a supervisor")
-    if target.status == UserStatusEnum.deleted:
-        raise InvalidStatusTransitionError("cannot reassign a deleted user")
+    if target.status != UserStatusEnum.active:
+        raise InvalidStatusTransitionError("only an active teaching assistant can be placed")
+    await _assert_supervisor_available(db, instructor_id)
 
-    if actor.role == UserRoleEnum.instructor and (
-        target.provisioned_by != actor.id or supervisor_id not in (None, actor.id)
-    ):
-        logger.warning("Instructor %s may not set supervisor %s on %s.", actor.id, supervisor_id, target.id)
-        raise PermissionError(f"role {actor.role} may only release their own assistant")
-
-    if supervisor_id is not None:
-        await _assert_supervisor_available(db, supervisor_id)
-
-    if target.provisioned_by == supervisor_id:
-        return target
-
-    target.provisioned_by = supervisor_id
-
-    # Revoke user's session when they are unassigned from any supervisor.
-    if supervisor_id is None:
-        await db.execute(
-            update(UserSession)
-            .where(UserSession.user_id == target.id, UserSession.deleted_at.is_(None))
-            .values(deleted_at=datetime.now(UTC))
-        )
-
-    await db.commit()
-    await db.refresh(target)
-    logger.info("Assistant %s assigned to supervisor %s by %s.", target.id, supervisor_id, actor.id)
+    await _link(db, actor, target, instructor_id)
+    logger.info("Assistant %s linked to instructor %s by %s.", target.id, instructor_id, actor.id)
     return target
 
 
-# Provisions a new user when the actor has permission to assign the requested role.
-# Auth0 emails the invitee their own password-set link directly. 
-# Disable Sign Ups means that's the only way they get a credential.
-async def create_user(
+async def end_supervision(db: AsyncSession, actor: User, ta_id: uuid.UUID, instructor_id: uuid.UUID) -> User:
+    """Ends one instructor's supervision of a TA ("Remove from team").
+
+    root_admin may end any link but an instructor can only end their own.
+    Every refusal is a UserNotFoundError to prevent enumeration of team structure.
+    Ending the TA's last link will atomically revoke their session.
+    """
+    if actor.role != UserRoleEnum.root_admin and actor.id != instructor_id:
+        raise UserNotFoundError(str(ta_id))
+
+    result = await db.execute(
+        select(Supervision).where(
+            Supervision.ta_id == ta_id,
+            Supervision.instructor_id == instructor_id,
+            Supervision.ended_at.is_(None),
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise UserNotFoundError(str(ta_id))
+
+    link.ended_at = datetime.now(UTC)
+    link.ended_by = actor.id
+    await db.flush()
+
+    target = await _load_manageable(db, ta_id)
+    await db.refresh(target)
+    if not target.supervisor_ids:
+        await _revoke_sessions(db, target.id)
+    await db.commit()
+    logger.info("Supervision of %s by %s ended by %s.", target.id, instructor_id, actor.id)
+    return target
+
+
+async def _rows_for_email(db: AsyncSession, email: str) -> list[User]:
+    """Every row for this (normalised) email, most recent first. Deleted rows
+    are kept for attribution, so there can be several."""
+    result = await db.execute(select(User).where(User.email == email).order_by(User.created_at.desc()))
+    return list(result.scalars().all())
+
+
+async def _provision(
     db: AsyncSession,
     actor: User,
     email: str,
     role: UserRoleEnum,
-    display_name: str | None = None,
+    reusable: User | None,
     supervisor_id: uuid.UUID | None = None,
 ) -> User:
-    logger.debug("Attempting to create user with email: %s and role: %s by actor: %s", email, role, actor)
+    """Creates the Auth0 credential and the local row together, plus an
+    optional supervision link, in one commit.
 
-    email = normalize_email(email)
-
-    if role == UserRoleEnum.root_admin:
-        logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor)
-        raise PermissionError("root_admin cannot be provisioned via this endpoint")
-    if actor.role == UserRoleEnum.teaching_assistant:
-        logger.warning("Actor %s with role %s cannot create users. Insufficient permissions.", actor, actor.role)
-        raise PermissionError(f"role {actor.role} may not provision any users")
-    if actor.role == UserRoleEnum.instructor and role != UserRoleEnum.teaching_assistant:
-        logger.warning(
-            "Actor %s with role %s cannot create user with role %s. Insufficient permissions.", actor, actor.role, role
-        )
-        raise PermissionError(f"role {actor.role} may not provision role {role}")
-
-    provisioned_by = await _resolve_supervisor(db, actor, role, supervisor_id)
-
-    # Every row for this email, most recent first, search for all duplicate roles in case there are duplicates.
-    existing = await db.execute(select(User).where(User.email == email).order_by(User.created_at.desc()))
-    existing_rows = existing.scalars().all()
-    if any(row.status != UserStatusEnum.deleted for row in existing_rows):
-        logger.warning("Attempted to provision duplicate email: %s", email)
-        raise EmailAlreadyExistsError(email)
-    # reuse the most recently deleted row if it exists, otherwise create a new one. This prevents further duplicates
-    reusable = existing_rows[0] if existing_rows else None
-
-    # A credential Auth0 already holds for this email has no live local row behind it (checked above) and
-    # would 409 the create. Never adopt it: whoever knows its password (a previous holder of the address)
-    # would sign in to the new account. Replace it, so the sub and password are ours alone.
+    Auth0 emails the invitee their own password-set link; Disable Sign Ups
+    means that is the only way they get a credential. A local row without a
+    credential is a permanent lockout, so a failed commit removes the
+    credential again.
+    """
+    # A stale Auth0 credential is never adopted. Instead, a new invite will replace the account.
+    # Prevents old credentials from being used to sign in to a new account.
     stale_auth0_id = await find_auth0_user_id_by_email(email)
     if stale_auth0_id is not None:
         logger.warning("Auth0 already has a credential for %s with no live user - replacing it.", email)
         if not await delete_auth0_user(stale_auth0_id):
             raise Auth0ProvisioningError(f"Could not remove the stale Auth0 credential for {email}")
 
-    # Get the Auth0 sub to lazily inject into the local row.
     auth0_user_id = await invite_user(email)
 
-    # Update the reusable row if it exists
     if reusable is not None:
+        # Re-using a deleted row: the address may now belong to someone else, so
+        # nothing personal carries over. provisioned_by records this invite.
         reusable.role = role
-        reusable.display_name = normalize_display_name(display_name)
-        reusable.provisioned_by = provisioned_by
+        reusable.display_name = None
+        reusable.provisioned_by = actor.id
         reusable.auth0_sub = auth0_user_id
         reusable.status = UserStatusEnum.active
         reusable.first_login_at = None
@@ -490,26 +509,60 @@ async def create_user(
             )
         )
     else:
-        user = User(
-            email=email,
-            role=role,
-            display_name=normalize_display_name(display_name),
-            provisioned_by=provisioned_by,
-            auth0_sub=auth0_user_id,
-        )
+        user = User(id=uuid.uuid4(), email=email, role=role, provisioned_by=actor.id, auth0_sub=auth0_user_id)
         db.add(user)
 
     try:
+        if supervisor_id is not None:
+            # Flush the user first: no ORM relationship orders the two inserts,
+            # and the link's FK needs the row. Same transaction, so still atomic.
+            await db.flush()
+            db.add(Supervision(ta_id=user.id, instructor_id=supervisor_id, created_by=actor.id))
         await db.commit()
     except Exception:
-        # Rollback mechanism and log out the user from Auth0 if the commit fails.
+        # Roll back the Auth0 credential too, or the email is stuck.
         await db.rollback()
         await delete_auth0_user(auth0_user_id)
         raise
     await db.refresh(user)
-    logger.info("User created successfully")
-
+    logger.info("User %s provisioned as %s by %s.", user.id, role.value, actor.id)
     return user
+
+
+async def create_user(
+    db: AsyncSession,
+    actor: User,
+    email: str,
+    role: UserRoleEnum,
+    supervisor_id: uuid.UUID | None = None,
+) -> User:
+    """root_admin provisioning (POST /api/users). Instructors add TAs through
+    add_teaching_assistant instead.
+
+    A deleted email is re-provisioned by re-using its row, so deleting someone
+    never makes them unprovisionable. An optional supervisor is linked in the
+    same commit as the account and the invite; everything is validated before
+    Auth0 is called, so a refusal leaves nothing to clean up.
+    """
+    if actor.role != UserRoleEnum.root_admin:
+        logger.warning("Actor %s with role %s may not provision users.", actor.id, actor.role)
+        raise PermissionError(f"role {actor.role} may not provision users")
+    if role == UserRoleEnum.root_admin:
+        logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor.id)
+        raise PermissionError("root_admin cannot be provisioned via this endpoint")
+
+    if supervisor_id is not None:
+        if role != UserRoleEnum.teaching_assistant:
+            raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+        await _assert_supervisor_available(db, supervisor_id)
+
+    email = normalize_email(email)
+    rows = await _rows_for_email(db, email)
+    if any(row.status != UserStatusEnum.deleted for row in rows):
+        logger.warning("Attempted to provision duplicate email: %s", email)
+        raise EmailAlreadyExistsError(email)
+
+    return await _provision(db, actor, email, role, rows[0] if rows else None, supervisor_id)
 
 
 # Encodes a user ID as a URL-safe pagination cursor.
@@ -542,11 +595,14 @@ async def list_users(
     query = select(User)
 
     if actor.role == UserRoleEnum.instructor:
-        # An instructor's directory is the TAs they provisioned
         if role is not None and role != UserRoleEnum.teaching_assistant:
             logger.warning("Actor %s may not list role %s.", actor.id, role)
             raise PermissionError(f"role {actor.role} may not list role {role}")
-        query = query.where(User.role == UserRoleEnum.teaching_assistant, User.provisioned_by == actor.id)
+        # The TA that they currently supervise, found from the Supervision table
+        supervised = select(Supervision.ta_id).where(
+            Supervision.instructor_id == actor.id, Supervision.ended_at.is_(None)
+        )
+        query = query.where(User.role == UserRoleEnum.teaching_assistant, User.id.in_(supervised))
     elif role is not None:
         query = query.where(User.role == role)
 

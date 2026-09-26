@@ -121,9 +121,11 @@ async def me(
     session: ActiveSession = Depends(get_current_session),
 ):
     return MeResponse(
+        id=user.id,
         email=user.email,
+        display_name=user.display_name,
         role=user.role,
-        provisioned_by=user.provisioned_by,
+        supervisor_ids=user.supervisor_ids,
         session=SessionResponse(
             expires_at=session.expires_at,
             idle_expires_at=session.idle_expires_at,
