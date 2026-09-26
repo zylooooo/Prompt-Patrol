@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Admin] Delete the throwaway TA"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  Terminal. Also removes its Auth0 credential and ends any links it still has.
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "reason": "Postman cleanup"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("deleted", () => pm.expect(body.status).to.eql("deleted"));
+    language: text/javascript
+order: 7000

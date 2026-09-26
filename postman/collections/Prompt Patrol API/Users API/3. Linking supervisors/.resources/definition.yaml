@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  POST /api/users/{id}/supervisors: root_admin places a TA on an instructor's team. Additive and idempotent.
+order: 3000

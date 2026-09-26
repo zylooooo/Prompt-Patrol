@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Only the throwaway TA from Provisioning is re-roled and deleted.
+order: 8000

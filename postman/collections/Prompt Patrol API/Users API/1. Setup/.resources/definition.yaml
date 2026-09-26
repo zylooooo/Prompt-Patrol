@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Reads the three sessions, stores their ids as globals, and makes sure the TA is on the instructor's team. Run first.
+order: 1000

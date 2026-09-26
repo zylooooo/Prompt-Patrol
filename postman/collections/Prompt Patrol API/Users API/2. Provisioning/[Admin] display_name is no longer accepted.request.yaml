@@ -1,0 +1,28 @@
+$kind: http-request
+name: "[Admin] display_name is no longer accepted"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  Removed in 0.21.0: people choose their own name. extra=forbid makes the field a loud 422.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-refused-{{$timestamp}}@gmail.com",
+      "role": "instructor",
+      "display_name": "Amirah"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("422", () => pm.response.to.have.status(422));
+      const body = pm.response.json();
+      pm.test("names the forbidden field", () => pm.expect(JSON.stringify(body.detail)).to.include("display_name"));
+    language: text/javascript
+order: 5000

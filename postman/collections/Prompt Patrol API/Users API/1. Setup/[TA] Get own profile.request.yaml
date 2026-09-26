@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[TA] Get own profile"
+description: |-
+  Environment: Prompt Patrol Dev - TA
+
+  GET /api/users/me returns the caller's UserResponse, which carries supervisor_ids.
+url: "{{BASE_URL}}/api/users/me"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - TA environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("is me", () => pm.expect(body.id).to.eql(pm.globals.get("TA_USER_ID")));
+      pm.test("supervised by the instructor", () => pm.expect(body.supervisor_ids).to.include(pm.globals.get("INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 5000

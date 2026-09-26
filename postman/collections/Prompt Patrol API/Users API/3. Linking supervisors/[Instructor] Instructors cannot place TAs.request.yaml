@@ -1,0 +1,25 @@
+$kind: http-request
+name: "[Instructor] Instructors cannot place TAs"
+description: |-
+  Environment: Prompt Patrol Dev - Instructor
+
+  Linking is root_admin only.
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/supervisors"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "instructor_id": "{{INSTRUCTOR_USER_ID}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("Insufficient role"));
+    language: text/javascript
+order: 7000

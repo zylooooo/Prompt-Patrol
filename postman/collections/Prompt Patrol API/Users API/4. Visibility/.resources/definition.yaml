@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Who can list and open whom. Out-of-scope reads are 404, never 403.
+order: 4000

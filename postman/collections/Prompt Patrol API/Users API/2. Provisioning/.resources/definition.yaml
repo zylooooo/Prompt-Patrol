@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  POST /api/users is root_admin only. Creates a second instructor and a throwaway TA (real Auth0 invites to +aliases) used by later folders.
+order: 2000

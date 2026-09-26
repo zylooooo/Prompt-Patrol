@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Admin] Reactivate the second instructor"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  Their links were kept, so the team comes back.
+url: "{{BASE_URL}}/api/users/{{NEW_INSTRUCTOR_USER_ID}}/reactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "reason": "Postman: restore"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("active again", () => pm.expect(body.status).to.eql("active"));
+    language: text/javascript
+order: 6000

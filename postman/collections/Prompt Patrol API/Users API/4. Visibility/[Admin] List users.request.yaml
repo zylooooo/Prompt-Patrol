@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Admin] List users"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  root_admin sees everyone; the default filter is active users only.
+url: "{{BASE_URL}}/api/users/"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      const ids = body.items.map(u => u.id);
+      pm.test("sees admins, instructors and TAs", () => pm.expect(ids).to.include.members([
+        pm.globals.get("ADMIN_USER_ID"), pm.globals.get("INSTRUCTOR_USER_ID"), pm.globals.get("TA_USER_ID")]));
+      pm.test("active only by default", () => body.items.forEach(u => pm.expect(u.status).to.eql("active")));
+    language: text/javascript
+order: 1000

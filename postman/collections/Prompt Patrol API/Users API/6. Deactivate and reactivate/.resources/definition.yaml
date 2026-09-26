@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  root_admin only. Deactivation keeps supervision links; a deactivated instructor stops counting until reactivated.
+order: 6000

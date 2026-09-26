@@ -1,0 +1,27 @@
+$kind: http-request
+name: "[Admin] Only a TA can be given a supervisor"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  A supervisor_id on an instructor account is refused.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-refused-{{$timestamp}}@gmail.com",
+      "role": "instructor",
+      "supervisor_id": "{{INSTRUCTOR_USER_ID}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("400", () => pm.response.to.have.status(400));
+      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("That supervisor is not an active instructor."));
+    language: text/javascript
+order: 4000

@@ -1,0 +1,20 @@
+$kind: http-request
+name: "[TA] Open one of their supervisors"
+description: |-
+  Environment: Prompt Patrol Dev - TA
+
+  A TA may view their own active supervisors.
+url: "{{BASE_URL}}/api/users/{{INSTRUCTOR_USER_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - TA environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("is the instructor", () => pm.expect(body.role).to.eql("instructor"));
+    language: text/javascript
+order: 8000

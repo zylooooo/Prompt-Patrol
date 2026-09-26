@@ -1,8 +1,20 @@
 name: Globals
 values:
+  - key: ADMIN_USER_ID
+    value: ''
+    enabled: true
   - key: INSTRUCTOR_USER_ID
     value: ''
     enabled: true
   - key: TA_USER_ID
+    value: ''
+    enabled: true
+  - key: NEW_INSTRUCTOR_USER_ID
+    value: ''
+    enabled: true
+  - key: NEW_INSTRUCTOR_EMAIL
+    value: ''
+    enabled: true
+  - key: NEW_TA_USER_ID
     value: ''
     enabled: true
