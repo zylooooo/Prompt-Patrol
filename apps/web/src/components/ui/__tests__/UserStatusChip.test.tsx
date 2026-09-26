@@ -15,7 +15,7 @@ const user = (over: Partial<AppUser>): AppUser => ({
   name: null,
   role: "teaching_assistant",
   status: "active",
-  provisionedBy: null,
+  supervisorIds: [],
   createdAt: "2026-07-01T00:00:00.000Z",
   firstLoginAt: "2026-07-02T00:00:00.000Z",
   ...over,

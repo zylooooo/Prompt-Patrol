@@ -411,7 +411,7 @@ const SEED_USERS: AppUser[] = [
     email: "admin@example.com",
     name: "Demo Admin",
     role: "root_admin",
-    provisionedBy: null,
+    supervisorIds: [],
     status: "active",
     createdAt: T0,
     firstLoginAt: T0,
@@ -421,7 +421,7 @@ const SEED_USERS: AppUser[] = [
     email: "instructor.a@example.com",
     name: "Demo Instructor A",
     role: "instructor",
-    provisionedBy: ID_ADMIN,
+    supervisorIds: [],
     status: "active",
     createdAt: T0,
     firstLoginAt: T0,
@@ -431,7 +431,7 @@ const SEED_USERS: AppUser[] = [
     email: "instructor.b@example.com",
     name: "Demo Instructor B",
     role: "instructor",
-    provisionedBy: ID_ADMIN,
+    supervisorIds: [],
     status: "active",
     createdAt: T1,
     firstLoginAt: T1,
@@ -441,7 +441,7 @@ const SEED_USERS: AppUser[] = [
     email: "ta.a@example.com",
     name: "Demo TA A",
     role: "teaching_assistant",
-    provisionedBy: ID_INSTRUCTOR_A,
+    supervisorIds: [ID_INSTRUCTOR_A],
     status: "active",
     createdAt: T1,
     firstLoginAt: T1,
@@ -451,7 +451,7 @@ const SEED_USERS: AppUser[] = [
     email: "ta.b@example.com",
     name: "Demo TA B",
     role: "teaching_assistant",
-    provisionedBy: ID_INSTRUCTOR_A,
+    supervisorIds: [ID_INSTRUCTOR_A],
     status: "active",
     createdAt: T1,
     firstLoginAt: T1,
@@ -461,7 +461,7 @@ const SEED_USERS: AppUser[] = [
     email: "ta.c@example.com",
     name: "Demo TA C",
     role: "teaching_assistant",
-    provisionedBy: ID_INSTRUCTOR_B,
+    supervisorIds: [ID_INSTRUCTOR_B],
     status: "active",
     createdAt: T2,
     firstLoginAt: T2,
@@ -473,7 +473,7 @@ const SEED_USERS: AppUser[] = [
     role: "teaching_assistant",
     // Deliberately nobody: the demo needs one assistant who shows up under the
     // Unassigned filter and cannot screen.
-    provisionedBy: null,
+    supervisorIds: [],
     status: "active",
     createdAt: T2,
     firstLoginAt: T2,
@@ -494,23 +494,26 @@ function assertSeedsConsistent() {
     problems.push("duplicate user emails");
   }
 
-  // provisionedBy is the supervision edge now, so the seeds have to satisfy the
-  // same rule the server enforces: an assistant's supervisor is an instructor.
+  // supervisorIds is the supervision edge, so the seeds have to satisfy the
+  // same rule the server enforces: an assistant's supervisors are instructors.
   for (const user of SEED_USERS) {
-    if (user.provisionedBy === null) continue;
-    const supervisor = byId.get(user.provisionedBy);
-    if (!supervisor) {
-      problems.push(`${user.email}: provisionedBy references an unknown user`);
-      continue;
-    }
-    if (
-      user.role === "teaching_assistant" &&
-      supervisor.role !== "instructor"
-    ) {
-      problems.push(`${user.email}: supervised by a ${supervisor.role}`);
-    }
-    if (user.createdAt < supervisor.createdAt) {
-      problems.push(`${user.email}: predates ${supervisor.email}`);
+    for (const supervisorId of user.supervisorIds) {
+      const supervisor = byId.get(supervisorId);
+      if (!supervisor) {
+        problems.push(
+          `${user.email}: supervisorIds references an unknown user`,
+        );
+        continue;
+      }
+      if (
+        user.role === "teaching_assistant" &&
+        supervisor.role !== "instructor"
+      ) {
+        problems.push(`${user.email}: supervised by a ${supervisor.role}`);
+      }
+      if (user.createdAt < supervisor.createdAt) {
+        problems.push(`${user.email}: predates ${supervisor.email}`);
+      }
     }
   }
 
@@ -595,7 +598,7 @@ function requireActor(actor: User): AppUser {
     email: actor.email,
     name: null,
     role: actor.role,
-    provisionedBy: null,
+    supervisorIds: [],
     status: "active",
     createdAt: new Date().toISOString(),
     firstLoginAt: new Date().toISOString(),
@@ -817,9 +820,9 @@ export async function createAccount(
   const user: AppUser = {
     id: newId(),
     email,
-    name: input.name?.trim() || null,
+    name: null,
     role: input.role,
-    provisionedBy: resolved.id,
+    supervisorIds: resolved.role === "instructor" ? [resolved.id] : [],
     status: "active",
     createdAt: new Date().toISOString(),
     firstLoginAt: null,

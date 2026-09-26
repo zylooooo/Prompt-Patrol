@@ -227,4 +227,34 @@ describe("getSession — asking without keeping the session alive", () => {
     await getSession();
     expect(fetchMock.mock.calls[1][0]).toBe("/api/auth/me");
   });
+
+  it("maps the session's id, name and supervisors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith(
+        200,
+        {
+          id: "u-1",
+          email: "ta@smu.edu.sg",
+          display_name: null,
+          role: "teaching_assistant",
+          supervisor_ids: ["i-1"],
+          session: {
+            expires_in_seconds: 60,
+            capped: false,
+            idle_timeout_seconds: 1800,
+          },
+        },
+        true,
+      ),
+    );
+
+    const { getSession } = await import("../auth");
+    const state = await getSession();
+
+    expect(state).toMatchObject({
+      status: "authenticated",
+      user: { id: "u-1", name: null, supervisorIds: ["i-1"] },
+    });
+  });
 });

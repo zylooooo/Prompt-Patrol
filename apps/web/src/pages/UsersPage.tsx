@@ -40,7 +40,6 @@ import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
-import SupervisorDialog from "../components/SupervisorDialog";
 import { SECTION_LABEL } from "../components/ui/section-label";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
@@ -70,7 +69,7 @@ const FILTER_MATCHERS: Record<Filter, (u: AppUser) => boolean> = {
   instructors: live((u) => u.role === "instructor"),
   assistants: live((u) => u.role === "teaching_assistant"),
   unassigned: live(
-    (u) => u.role === "teaching_assistant" && u.provisionedBy === null,
+    (u) => u.role === "teaching_assistant" && u.supervisorIds.length === 0,
   ),
   pending: live(isPendingInvite),
   deleted: (u) => u.status === "deleted",
@@ -104,7 +103,6 @@ export default function UsersPage() {
   const resendInvite = useResendInvite();
   const isRootAdmin = actor?.role === "root_admin";
 
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole | "">("");
   const [supervisorId, setSupervisorId] = useState<string | null>(null);
@@ -114,7 +112,6 @@ export default function UsersPage() {
   const [deleting, setDeleting] = useState<AppUser | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const [assigning, setAssigning] = useState<AppUser | null>(null);
   const [deactivating, setDeactivating] = useState<AppUser | null>(null);
   const [reasoning, setReasoning] = useState<AppUser | null>(null);
   const [changingRole, setChangingRole] = useState<AppUser | null>(null);
@@ -124,11 +121,18 @@ export default function UsersPage() {
     [users],
   );
 
+  function supervisorNames(u: AppUser): string[] {
+    return u.supervisorIds.map((id) => {
+      const supervisor = (users ?? []).find((who) => who.id === id);
+      return supervisor ? displayName(supervisor) : "Unknown account";
+    });
+  }
+
   function supervisorText(u: AppUser): string {
     if (u.role !== "teaching_assistant") return "·";
-    if (u.provisionedBy === null) return "Unassigned";
-    const supervisor = (users ?? []).find((who) => who.id === u.provisionedBy);
-    return supervisor ? displayName(supervisor) : "Unknown account";
+    const names = supervisorNames(u);
+    if (names.length === 0) return "Unassigned";
+    return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
   }
 
   const filterOptions = useMemo<SegmentedToggleOption<Filter>[]>(
@@ -163,12 +167,10 @@ export default function UsersPage() {
     setEmailError(null);
     try {
       const created = await createAccount.mutateAsync({
-        name: name.trim() || undefined,
         email: email.trim(),
         role: role as UserRole,
         supervisorId: role === "teaching_assistant" ? supervisorId : null,
       });
-      setName("");
       setEmail("");
       setRole("");
       setSupervisorId(null);
@@ -294,6 +296,7 @@ export default function UsersPage() {
       hideWhenCompact: true,
       cell: (u) => (
         <span
+          title={supervisorNames(u).join(", ") || undefined}
           className={`min-w-0 max-w-[11rem] truncate text-[13px] ${
             supervisorText(u) === "Unassigned"
               ? "font-medium text-disabled-foreground"
@@ -331,12 +334,6 @@ export default function UsersPage() {
         // A pending row's next step is re-sending the invite, so that is the
         // inline action and Deactivate moves into the menu.
         const invitePending = isPendingInvite(u);
-        if (u.role === "teaching_assistant") {
-          menuItems.push({
-            label: "Change supervisor",
-            onClick: () => setAssigning(u),
-          });
-        }
         if (isRootAdmin && u.role !== "root_admin") {
           menuItems.push({
             label: "Change role",
@@ -402,17 +399,6 @@ export default function UsersPage() {
           }}
           className="mt-4 flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">
-              Name (optional)
-            </span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Full name"
-              className={`w-48 ${FIELD}`}
-            />
-          </label>
           <label className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">SMU email</span>
             <input
@@ -561,14 +547,6 @@ export default function UsersPage() {
             />
           </PageFill>
         </>
-      )}
-
-      {assigning && (
-        <SupervisorDialog
-          assistant={assigning}
-          allUsers={users ?? []}
-          onClose={() => setAssigning(null)}
-        />
       )}
 
       {deactivating && (

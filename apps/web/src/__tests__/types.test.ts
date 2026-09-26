@@ -34,7 +34,7 @@ const user = (over: Partial<AppUser> = {}): AppUser => ({
   email: "ada.lovelace@smu.edu.sg",
   name: "Ada Lovelace",
   role: "instructor",
-  provisionedBy: null,
+  supervisorIds: [],
   status: "active",
   createdAt: "2026-01-01T00:00:00Z",
   firstLoginAt: "2026-01-02T00:00:00Z",

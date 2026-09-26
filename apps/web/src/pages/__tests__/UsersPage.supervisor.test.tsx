@@ -42,7 +42,6 @@ vi.mock("../../hooks/useUsers", () => {
     useCreateAccount: () => createMock() as unknown,
     useSetUserActive: idle,
     useDeleteUser: idle,
-    useSetSupervisor: idle,
     useDeactivateInstructor: idle,
   };
 });
@@ -52,7 +51,7 @@ const user = (over: Partial<AppUser> & Pick<AppUser, "id">): AppUser => ({
   name: null,
   role: "teaching_assistant",
   status: "active",
-  provisionedBy: null,
+  supervisorIds: [],
   createdAt: "2026-07-01T00:00:00.000Z",
   firstLoginAt: "2026-07-02T00:00:00.000Z",
   ...over,
@@ -66,7 +65,7 @@ const INSTRUCTOR = user({
 const ASSIGNED = user({
   id: "ta-assigned",
   name: "Assigned Assistant",
-  provisionedBy: "inst-1",
+  supervisorIds: ["inst-1"],
 });
 const UNASSIGNED = user({ id: "ta-floating", name: "Floating Assistant" });
 
@@ -89,9 +88,11 @@ beforeEach(() => {
   localStorage.clear();
   useAuthMock.mockReturnValue({
     user: {
+      id: "admin-1",
       email: "admin@smu.edu.sg",
+      name: "Admin",
       role: "root_admin",
-      provisionedBy: null,
+      supervisorIds: [],
     },
     isPending: false,
     isError: false,
@@ -186,6 +187,50 @@ describe("UsersPage — the supervisor column", () => {
 
     expect(row.textContent).toContain("·");
     expect(row.textContent).not.toContain("Unassigned");
+  });
+
+  it("names the first supervisor and counts the rest", async () => {
+    usersMock.mockReturnValue({
+      data: [
+        INSTRUCTOR,
+        user({ id: "inst-2", name: "Teach Two", role: "instructor" }),
+        user({
+          id: "ta-shared",
+          name: "Shared Assistant",
+          supervisorIds: ["inst-1", "inst-2"],
+        }),
+      ],
+      isPending: false,
+    });
+    renderPage();
+
+    const row = await rowFor("Shared Assistant");
+
+    expect(row.textContent).toContain("Teach One +1");
+  });
+});
+
+describe("UsersPage - add account form", () => {
+  it("asks for no name", () => {
+    renderPage();
+
+    expect(screen.queryByPlaceholderText("Full name")).toBeNull();
+  });
+
+  it("offers no Change supervisor until the many-supervisor dialog lands", async () => {
+    renderPage();
+
+    const row = await rowFor("Assigned Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for Assigned Assistant",
+      }),
+    );
+
+    await screen.findByRole("menu");
+    expect(
+      screen.queryByRole("menuitem", { name: "Change supervisor" }),
+    ).toBeNull();
   });
 });
 

@@ -4,15 +4,14 @@ import DataTable, {
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
-  useCreateAccount,
+  useAddTeachingAssistant,
   useMyAssistants,
   useResendInvite,
-  useSetSupervisor,
-  useSetUserActive,
+  useUnlinkSupervisor,
 } from "../hooks/useUsers";
+import { useAuth } from "../hooks/useAuth";
 import { useState } from "react";
 import { ApiError } from "../api/client";
-import DeactivateReasonDialog from "../components/DeactivateReasonDialog";
 import Modal from "../components/ui/Modal";
 import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
@@ -27,7 +26,6 @@ import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
 import {
   displayName,
-  canReactivate,
   isPending as isPendingInvite,
   type AppUser,
 } from "../types";
@@ -42,18 +40,16 @@ export default function TeachingAssistantsPage() {
   usePageTitle("Manage My Assistants");
   const { showToast } = useToast();
   const { data: assistants, isPending, isError, refetch } = useMyAssistants();
-  const createAccount = useCreateAccount();
-  const release = useSetSupervisor();
+  const { user: actor } = useAuth();
+  const addAssistant = useAddTeachingAssistant();
+  const removeFromTeam = useUnlinkSupervisor();
   const resendInvite = useResendInvite();
-  const setActive = useSetUserActive();
 
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
-  const [reasoning, setReasoning] = useState<AppUser | null>(null);
 
   const typo = useEmailTypoGuard(email, setEmail);
 
@@ -61,22 +57,18 @@ export default function TeachingAssistantsPage() {
     if (!typo.check()) return;
     setError(null);
     setEmailError(null);
+    const typed = email.trim();
     try {
-      const created = await createAccount.mutateAsync({
-        name: name.trim() || undefined,
-        email: email.trim(),
-        role: "teaching_assistant",
-      });
-      setName("");
+      await addAssistant.mutateAsync(typed);
       setEmail("");
+      // One message for created, linked and already-there: the server does not
+      // say which, so neither can we ([0.21.0]).
       showToast(
-        `${created.email} added. They will get an email with a link to set their password.`,
+        `${typed} is on your team. New accounts get an email to set a password.`,
       );
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setEmailError(
-          "That email already has an account. If they should be on your team, ask an administrator.",
-        );
+        setEmailError(err.message);
         return;
       }
       setError(
@@ -96,43 +88,15 @@ export default function TeachingAssistantsPage() {
     }
   }
 
-  async function applyActive(
-    target: AppUser,
-    active: boolean,
-    reason?: string,
-  ) {
-    setPending(target.id);
-    try {
-      await setActive.mutateAsync({ id: target.id, active, reason });
-      const name = displayName(target);
-      showToast(
-        active ? `${name} reactivated` : `${name} deactivated`,
-        active
-          ? undefined
-          : {
-              action: {
-                label: "Undo",
-                onClick: () => void applyActive(target, true),
-              },
-            },
-      );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : "Try again.";
-      showToast(
-        `Couldn't ${active ? "reactivate" : "deactivate"} ${displayName(target)}. ${reason}`,
-        { tone: "error" },
-      );
-    } finally {
-      setPending(null);
-    }
-  }
-
   async function onConfirmRemove() {
     if (!confirmRemove) return;
     const target = confirmRemove;
     setPending(target.id);
     try {
-      await release.mutateAsync({ id: target.id, supervisorId: null });
+      await removeFromTeam.mutateAsync({
+        taId: target.id,
+        instructorId: actor!.id,
+      });
       showToast(`${displayName(target)} removed from your team.`);
       setConfirmRemove(null);
     } catch (err) {
@@ -196,42 +160,31 @@ export default function TeachingAssistantsPage() {
       header: "Actions",
       width: TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
       align: "right",
-      cell: (ta) => {
-        // One inline primary action; everything else lives in the menu, so
-        // the column never has to grow (same layout as the admin roster).
-        const items = isPendingInvite(ta)
-          ? [
-              {
-                label: "Resend invite",
-                onClick: () => void onResendInvite(ta),
-                disabled: resendInvite.isPending,
-              },
-              { label: "Deactivate", onClick: () => setReasoning(ta) },
-            ]
-          : [
-              canReactivate(ta)
-                ? {
-                    label: "Reactivate",
-                    onClick: () => void applyActive(ta, true),
-                  }
-                : { label: "Deactivate", onClick: () => setReasoning(ta) },
-            ];
-        return (
-          <span className="flex items-center justify-end gap-1">
-            <RowAction
-              onClick={() => setConfirmRemove(ta)}
-              disabled={pending === ta.id}
-            >
-              Remove from team
-            </RowAction>
+      cell: (ta) => (
+        <span className="flex items-center justify-end gap-1">
+          <RowAction
+            onClick={() => setConfirmRemove(ta)}
+            disabled={pending === ta.id}
+          >
+            Remove from team
+          </RowAction>
+          {/* Deactivation is root_admin's now ([0.21.0]), so the menu only
+              exists for a pending invite. */}
+          {isPendingInvite(ta) && (
             <RowActionMenu
-              items={items}
+              items={[
+                {
+                  label: "Resend invite",
+                  onClick: () => void onResendInvite(ta),
+                  disabled: resendInvite.isPending,
+                },
+              ]}
               ariaLabel={`More actions for ${displayName(ta)}`}
               disabled={pending === ta.id}
             />
-          </span>
-        );
-      },
+          )}
+        </span>
+      ),
     },
   ];
 
@@ -251,17 +204,6 @@ export default function TeachingAssistantsPage() {
           }}
           className="mt-4 flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">
-              Name (optional)
-            </span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Full name"
-              className={`w-56 ${FIELD}`}
-            />
-          </label>
           <label className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">SMU email</span>
             <input
@@ -285,9 +227,9 @@ export default function TeachingAssistantsPage() {
           </label>
           <Button
             type="submit"
-            disabled={!email.trim() || createAccount.isPending}
+            disabled={!email.trim() || addAssistant.isPending}
           >
-            {createAccount.isPending ? "Adding…" : "Add teaching assistant"}
+            {addAssistant.isPending ? "Adding…" : "Add teaching assistant"}
           </Button>
           {(typo.suggestion || emailError) && (
             <div className="flex basis-full flex-col gap-1.5">
@@ -337,8 +279,8 @@ export default function TeachingAssistantsPage() {
                   No teaching assistants yet
                 </p>
                 <p className="mx-auto mt-2 max-w-sm text-muted-foreground">
-                  Add one above. They will be able to screen answers for your
-                  courses.
+                  Add one above by email. They will be able to screen answers
+                  for your courses.
                 </p>
               </div>
             }
@@ -346,47 +288,33 @@ export default function TeachingAssistantsPage() {
         </PageFill>
       )}
 
-      {reasoning && (
-        <DeactivateReasonDialog
-          user={reasoning}
-          busy={pending === reasoning.id}
-          onClose={() => setReasoning(null)}
-          onConfirm={(reason) => {
-            const target = reasoning;
-            void applyActive(target, false, reason).then(() =>
-              setReasoning(null),
-            );
-          }}
-        />
-      )}
-
       {confirmRemove && (
         <Modal
           title={`Remove ${displayName(confirmRemove)} from your team?`}
-          busy={release.isPending}
+          busy={removeFromTeam.isPending}
           onClose={() => setConfirmRemove(null)}
           footer={
             <>
               <Button
                 variant="secondary"
                 onClick={() => setConfirmRemove(null)}
-                disabled={release.isPending}
+                disabled={removeFromTeam.isPending}
               >
                 Cancel
               </Button>
               <Button
                 onClick={() => void onConfirmRemove()}
-                disabled={release.isPending}
+                disabled={removeFromTeam.isPending}
               >
-                {release.isPending ? "Removing…" : "Remove from team"}
+                {removeFromTeam.isPending ? "Removing…" : "Remove from team"}
               </Button>
             </>
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Their account stays active, but they can't screen answers until an
-            administrator assigns them to an instructor again. You can't undo
-            this yourself.
+            They leave your team. Their account stays active, and anyone else
+            who supervises them keeps them. If you were their only instructor,
+            they can't screen answers until someone adds them again.
           </p>
         </Modal>
       )}

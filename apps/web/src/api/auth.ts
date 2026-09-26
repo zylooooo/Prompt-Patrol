@@ -3,9 +3,12 @@ import { clearStoredData } from "./stub";
 import { ApiError, apiRequest } from "./client";
 
 export interface User {
+  id: string;
   email: string;
+  /** Null until the person chooses one after first sign-in. */
+  name: string | null;
   role: UserRole;
-  provisionedBy: string | null;
+  supervisorIds: string[];
 }
 
 export interface SessionInfo {
@@ -77,9 +80,11 @@ const SIGNED_OUT_REASONS = new Set<string>([
 ]);
 
 interface MeResponse {
+  id: string;
   email: string;
+  display_name: string | null;
   role: UserRole;
-  provisioned_by: string | null;
+  supervisor_ids: string[];
   session: {
     expires_in_seconds: number;
     capped: boolean;
@@ -113,9 +118,11 @@ export async function getSession(
     return {
       status: "authenticated",
       user: {
+        id: body.id,
         email: body.email,
+        name: body.display_name,
         role: body.role,
-        provisionedBy: body.provisioned_by ?? null,
+        supervisorIds: body.supervisor_ids,
       },
       session: {
         expiresAt: Date.now() + body.session.expires_in_seconds * 1000,

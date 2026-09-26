@@ -21,10 +21,7 @@ export const STRICTNESS_HINT: Record<Strictness, string> = {
 };
 
 export type AbstainReason =
-  | "answer_too_short"
-  | "low_signal"
-  | "score_in_abstention_band"
-  | null;
+  "answer_too_short" | "low_signal" | "score_in_abstention_band" | null;
 
 export const ABSTAIN_TEXT: Record<NonNullable<AbstainReason>, string> = {
   answer_too_short: "The answer is too short to judge.",
@@ -195,7 +192,8 @@ export interface AppUser {
   name: string | null;
   role: UserRole;
   status: UserStatus;
-  provisionedBy: string | null;
+  /** Instructors currently supervising this user; [] for anyone not a TA. */
+  supervisorIds: string[];
   createdAt: string;
   firstLoginAt: string | null;
 }
@@ -240,7 +238,7 @@ export interface CheckInput {
 export interface CreateAccountInput {
   email: string;
   role: UserRole;
-  name?: string;
+  /** Admin form only: the server links it in the same commit as the account. */
   supervisorId?: string | null;
 }
 

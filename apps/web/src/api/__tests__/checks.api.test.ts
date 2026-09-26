@@ -44,9 +44,11 @@ function route(
 }
 
 const INSTRUCTOR: User = {
+  id: "instructor-1",
   email: "teach@smu.edu.sg",
+  name: null,
   role: "instructor",
-  provisionedBy: null,
+  supervisorIds: [],
 };
 
 const ANSWER =
@@ -321,27 +323,31 @@ describe("hasScreeningAccess", () => {
   // The gate used to answer from a localStorage table of fabricated accounts, so
   // a real teaching assistant matched nothing and every screening screen told
   // them they had no instructor. It reads the session payload now.
-  const ta = (provisionedBy: string | null): User => ({
+  const ta = (supervisorIds: string[]): User => ({
+    id: "ta-1",
     email: "ta@smu.edu.sg",
+    name: null,
     role: "teaching_assistant",
-    provisionedBy,
+    supervisorIds,
   });
 
-  it("lets a teaching assistant with a provisioner screen", () => {
-    expect(hasScreeningAccess(ta("instructor-1"))).toBe(true);
+  it("lets a teaching assistant with a supervisor screen", () => {
+    expect(hasScreeningAccess(ta(["instructor-1"]))).toBe(true);
   });
 
-  it("holds back a teaching assistant nobody provisioned", () => {
-    expect(hasScreeningAccess(ta(null))).toBe(false);
+  it("holds back a teaching assistant nobody supervises", () => {
+    expect(hasScreeningAccess(ta([]))).toBe(false);
   });
 
   it("never holds back an instructor or an admin", () => {
     expect(hasScreeningAccess(INSTRUCTOR)).toBe(true);
     expect(
       hasScreeningAccess({
+        id: "admin-1",
         email: "admin@smu.edu.sg",
+        name: null,
         role: "root_admin",
-        provisionedBy: null,
+        supervisorIds: [],
       }),
     ).toBe(true);
   });
@@ -349,16 +355,15 @@ describe("hasScreeningAccess", () => {
   it("answers from the session, not from anything this browser stored", () => {
     localStorage.clear();
 
-    expect(hasScreeningAccess(ta("instructor-1"))).toBe(true);
+    expect(hasScreeningAccess(ta(["instructor-1"]))).toBe(true);
   });
 
   it("refuses a single check without reaching the server", async () => {
     const mock = route(() => CHECK, 201);
 
     await expect(
-      checkAnswer(ta(null), { answerText: ANSWER }),
+      checkAnswer(ta([]), { answerText: ANSWER }),
     ).rejects.toBeInstanceOf(ApiError);
     expect(mock).not.toHaveBeenCalled();
   });
-
 });

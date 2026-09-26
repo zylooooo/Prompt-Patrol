@@ -20,25 +20,33 @@ vi.mock("../../hooks/useToast", () => ({
 
 const assistantsMock = vi.fn();
 const resendMock = vi.fn();
-const createMock = vi.fn();
-const setActiveMock = vi.fn();
-vi.mock("../../hooks/useUsers", () => {
-  const idle = () => ({ mutateAsync: vi.fn(), isPending: false });
-  return {
-    useMyAssistants: () => assistantsMock() as unknown,
-    useCreateAccount: () => createMock() as unknown,
-    useSetSupervisor: idle,
-    useSetUserActive: () => setActiveMock() as unknown,
-    useResendInvite: () => resendMock() as unknown,
-  };
-});
+const addMock = vi.fn();
+const unlinkMock = vi.fn();
+vi.mock("../../hooks/useUsers", () => ({
+  useMyAssistants: () => assistantsMock() as unknown,
+  useAddTeachingAssistant: () => addMock() as unknown,
+  useUnlinkSupervisor: () => unlinkMock() as unknown,
+  useResendInvite: () => resendMock() as unknown,
+}));
+
+vi.mock("../../hooks/useAuth", () => ({
+  useAuth: () => ({
+    user: {
+      id: "inst-1",
+      email: "inst-1@smu.edu.sg",
+      name: "Teach One",
+      role: "instructor",
+      supervisorIds: [],
+    },
+  }),
+}));
 
 const user = (over: Partial<AppUser> & Pick<AppUser, "id">): AppUser => ({
   email: `${over.id}@smu.edu.sg`,
   name: null,
   role: "teaching_assistant",
   status: "active",
-  provisionedBy: "inst-1",
+  supervisorIds: ["inst-1"],
   createdAt: "2026-07-01T00:00:00.000Z",
   firstLoginAt: "2026-07-02T00:00:00.000Z",
   ...over,
@@ -87,8 +95,8 @@ beforeEach(() => {
     isError: false,
   });
   resendMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  createMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  setActiveMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  addMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  unlinkMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 afterEach(cleanup);
 
@@ -111,105 +119,13 @@ describe("TeachingAssistantsPage - pending invites", () => {
     renderPage();
 
     const row = await rowFor("Signed In Assistant");
-    fireEvent.click(
-      within(row).getByRole("button", {
+    // No menu at all: with deactivation gone ([0.21.0]) a signed-in row's only
+    // action is Remove from team.
+    expect(
+      within(row).queryByRole("button", {
         name: "More actions for Signed In Assistant",
       }),
-    );
-    await screen.findByRole("menuitem", { name: "Deactivate" });
-    expect(
-      screen.queryByRole("menuitem", { name: "Resend invite" }),
     ).toBeNull();
-  });
-});
-
-describe("TeachingAssistantsPage - deactivate and reactivate", () => {
-  it("offers Deactivate in the menu for a pending assistant", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(PENDING);
-    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-
-    const row = await rowFor("New Assistant");
-    await openMenuItem(row, "New Assistant", "Deactivate");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Deactivate account" }),
-    );
-
-    await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith({
-        id: "ta-new",
-        active: false,
-        reason: undefined,
-      }),
-    );
-  });
-
-  it("sends the typed reason with markup stripped", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
-    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-
-    const row = await rowFor("Signed In Assistant");
-    await openMenuItem(row, "Signed In Assistant", "Deactivate");
-    fireEvent.change(await screen.findByLabelText(/Reason/), {
-      target: { value: "  <img src=x onerror=alert(1)> on leave  " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate account" }));
-
-    await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith({
-        id: "ta-old",
-        active: false,
-        reason: "img src=x onerror=alert(1) on leave",
-      }),
-    );
-  });
-
-  it("sends no reason when the box is left blank", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
-    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-
-    const row = await rowFor("Signed In Assistant");
-    await openMenuItem(row, "Signed In Assistant", "Deactivate");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Deactivate account" }),
-    );
-
-    await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith({
-        id: "ta-old",
-        active: false,
-        reason: undefined,
-      }),
-    );
-  });
-
-  it("reactivates a deactivated assistant from the menu without a dialog", async () => {
-    const off = user({
-      id: "ta-off",
-      name: "Paused Assistant",
-      status: "deactivated",
-    });
-    assistantsMock.mockReturnValue({
-      data: [off],
-      isPending: false,
-      isError: false,
-    });
-    const mutateAsync = vi.fn().mockResolvedValue(off);
-    setActiveMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-
-    const row = await rowFor("Paused Assistant");
-    await openMenuItem(row, "Paused Assistant", "Reactivate");
-
-    await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith({
-        id: "ta-off",
-        active: true,
-        reason: undefined,
-      }),
-    );
   });
 });
 
@@ -222,7 +138,7 @@ describe("TeachingAssistantsPage - email typo check", () => {
 
   it("pauses once on a near-miss domain and lets the instructor keep it", async () => {
     const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
-    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
     renderPage();
     fill("ann@gmial.com");
 
@@ -257,7 +173,7 @@ describe("TeachingAssistantsPage - email typo check", () => {
 
   it("pauses again if the address is edited and then restored", async () => {
     const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
-    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
     renderPage();
     fill("ann@gmial.com");
     const submit = () =>
@@ -279,5 +195,70 @@ describe("TeachingAssistantsPage - email typo check", () => {
 
     await screen.findByText(/Did you mean/);
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe("TeachingAssistantsPage - adding and removing", () => {
+  it("adds by email alone and says the same thing whatever happened", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("SMU email"), {
+      target: { value: "ta-old@smu.edu.sg" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith("ta-old@smu.edu.sg"),
+    );
+    expect(screen.queryByLabelText(/Name/)).toBeNull();
+    expect(showToastMock).toHaveBeenCalledWith(
+      "ta-old@smu.edu.sg is on your team. New accounts get an email to set a password.",
+    );
+  });
+
+  it("shows the server's refusal under the email field", async () => {
+    const refusal =
+      "This email can't be added. Contact the root administrator.";
+    const { ApiError } = await import("../../api/client");
+    const mutateAsync = vi.fn().mockRejectedValue(new ApiError(409, refusal));
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("SMU email"), {
+      target: { value: "someone@smu.edu.sg" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+
+    // No jest-dom in this repo: assert on textContent.
+    expect((await screen.findByRole("alert")).textContent).toContain(refusal);
+  });
+
+  it("removes the assistant from my team only", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    unlinkMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const row = await rowFor("Signed In Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Remove from team" }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Remove from team",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        taId: "ta-old",
+        instructorId: "inst-1",
+      }),
+    );
   });
 });

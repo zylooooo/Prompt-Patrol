@@ -15,9 +15,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  */
 
 const asUser = (role: User["role"]): User => ({
+  id: "u-1",
   email: "ada@smu.edu.sg",
+  name: null,
   role,
-  provisionedBy: null,
+  supervisorIds: [],
 });
 
 beforeEach(() => installDomStubs({ matches: true }));

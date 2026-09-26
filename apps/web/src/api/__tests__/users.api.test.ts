@@ -1,13 +1,16 @@
 import {
+  addTeachingAssistant,
   changeUserRole,
   createAccount,
   deactivateInstructor,
   deleteUser,
   listMyAssistants,
   listUsers,
+  linkSupervisor,
   resendInvite,
-  setSupervisor,
   setUserActive,
+  unlinkSupervisor,
+  updateDisplayName,
 } from "../users";
 import type { User } from "../auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,9 +23,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const ADMIN: User = {
+  id: "id-admin",
   email: "admin@smu.edu.sg",
+  name: "Demo Admin",
   role: "root_admin",
-  provisionedBy: null,
+  supervisorIds: [],
 };
 
 const ME = {
@@ -31,7 +36,7 @@ const ME = {
   display_name: "Demo Admin",
   role: "root_admin",
   status: "active",
-  provisioned_by: null,
+  supervisor_ids: [],
   created_at: "2026-07-01T00:00:00.000Z",
   first_login_at: "2026-07-02T00:00:00.000Z",
 };
@@ -121,7 +126,7 @@ describe("listUsers", () => {
             items: [
               row("ta-1", {
                 display_name: "Ada",
-                provisioned_by: "id-admin",
+                supervisor_ids: ["id-admin"],
                 status: "deactivated",
               }),
             ],
@@ -137,7 +142,7 @@ describe("listUsers", () => {
       name: "Ada",
       role: "teaching_assistant",
       status: "deactivated",
-      provisionedBy: "id-admin",
+      supervisorIds: ["id-admin"],
       createdAt: "2026-07-01T00:00:00.000Z",
       firstLoginAt: "2026-07-02T00:00:00.000Z",
     });
@@ -200,28 +205,24 @@ describe("deleteUser", () => {
 });
 
 describe("createAccount", () => {
-  it("sends the display name under the name the API gives it", async () => {
-    const mock = route(() => row("ta-1", { display_name: "Ada" }));
+  it("sends no display name", async () => {
+    // [0.21.0]: the person names themselves; the server rejects extra fields.
+    const mock = route(() => row("ta-1"));
 
     await createAccount(ADMIN, {
-      email: "ada@smu.edu.sg",
-      role: "teaching_assistant",
-      name: "  Ada  ",
+      email: " ada@smu.edu.sg ",
+      role: "instructor",
     });
 
     expect(JSON.parse(mock.mock.calls[0][1]?.body as string)).toEqual({
       email: "ada@smu.edu.sg",
-      role: "teaching_assistant",
-      display_name: "Ada",
+      role: "instructor",
       supervisor_id: null,
     });
   });
 
-  it("sends the chosen supervisor to the server", async () => {
-    // This is the whole point: the picked instructor used to be written to
-    // localStorage and never left the browser, so the database recorded whoever
-    // pressed the button as the supervisor.
-    const mock = route(() => row("ta-1", { provisioned_by: "id-teach" }));
+  it("sends the chosen supervisor in the same request, so it's all or nothing", async () => {
+    const mock = route(() => row("ta-1", { supervisor_ids: ["id-teach"] }));
 
     const created = await createAccount(ADMIN, {
       email: "ada@smu.edu.sg",
@@ -229,10 +230,11 @@ describe("createAccount", () => {
       supervisorId: "id-teach",
     });
 
+    expect(mock).toHaveBeenCalledOnce();
     expect(JSON.parse(mock.mock.calls[0][1]?.body as string)).toMatchObject({
       supervisor_id: "id-teach",
     });
-    expect(created.provisionedBy).toBe("id-teach");
+    expect(created.supervisorIds).toEqual(["id-teach"]);
   });
 
   it("lets any domain through to the server", async () => {
@@ -251,31 +253,54 @@ describe("createAccount", () => {
   });
 });
 
-describe("setSupervisor", () => {
-  it("posts the new supervisor to the assistant's own route", async () => {
-    const mock = route(() => row("ta-1", { provisioned_by: "id-teach" }));
+describe("addTeachingAssistant", () => {
+  it("posts just the trimmed email to the instructor's add route", async () => {
+    const mock = route(() => row("ta-1", { supervisor_ids: ["id-me"] }));
 
-    const user = await setSupervisor(ADMIN, "ta-1", "id-teach");
+    const added = await addTeachingAssistant(ADMIN, "  ta@smu.edu.sg ");
 
-    expect(mock.mock.calls[0][0]).toBe("/api/users/ta-1/supervisor");
+    expect(mock.mock.calls[0][0]).toBe("/api/users/teaching-assistants");
     expect(mock.mock.calls[0][1]).toMatchObject({ method: "POST" });
     expect(JSON.parse(mock.mock.calls[0][1]?.body as string)).toEqual({
-      supervisor_id: "id-teach",
+      email: "ta@smu.edu.sg",
     });
-    expect(user.provisionedBy).toBe("id-teach");
+    expect(added.supervisorIds).toEqual(["id-me"]);
+  });
+});
+
+describe("supervision links", () => {
+  it("links with a POST naming the instructor", async () => {
+    const mock = route(() => row("ta-1", { supervisor_ids: ["id-teach"] }));
+
+    await linkSupervisor(ADMIN, "ta-1", "id-teach");
+
+    expect(mock.mock.calls[0][0]).toBe("/api/users/ta-1/supervisors");
+    expect(mock.mock.calls[0][1]).toMatchObject({ method: "POST" });
   });
 
-  it("sends null to unassign rather than omitting the field", async () => {
-    // Omitted and null mean the same thing to the schema, but only null says it
-    // on purpose - and the caller is asking for a change, not a default.
-    const mock = route(() => row("ta-1", { provisioned_by: null }));
+  it("unlinks with a DELETE on the pair", async () => {
+    const mock = route(() => row("ta-1", { supervisor_ids: [] }));
 
-    const user = await setSupervisor(ADMIN, "ta-1", null);
+    const user = await unlinkSupervisor(ADMIN, "ta-1", "id-teach");
 
+    expect(mock.mock.calls[0][0]).toBe("/api/users/ta-1/supervisors/id-teach");
+    expect(mock.mock.calls[0][1]).toMatchObject({ method: "DELETE" });
+    expect(user.supervisorIds).toEqual([]);
+  });
+});
+
+describe("updateDisplayName", () => {
+  it("patches the user with the trimmed name", async () => {
+    const mock = route(() => row("u-1", { display_name: "Wei Lin" }));
+
+    const user = await updateDisplayName(ADMIN, "u-1", "  Wei Lin ");
+
+    expect(mock.mock.calls[0][0]).toBe("/api/users/u-1");
+    expect(mock.mock.calls[0][1]).toMatchObject({ method: "PATCH" });
     expect(JSON.parse(mock.mock.calls[0][1]?.body as string)).toEqual({
-      supervisor_id: null,
+      display_name: "Wei Lin",
     });
-    expect(user.provisionedBy).toBeNull();
+    expect(user.name).toBe("Wei Lin");
   });
 });
 
@@ -337,14 +362,17 @@ describe("listMyAssistants", () => {
 });
 
 describe("deactivateInstructor", () => {
-  const assistantsThenTransitions = (provisionedBy: string) =>
+  // Only assistants this instructor supervises alone are affected: anyone with
+  // another supervisor keeps screening when this one is switched off.
+  const roster = () =>
     route((url) => {
       if (url.includes("/me")) return ME;
       if (url.startsWith("/api/users/?")) {
         return {
           items: [
-            row("ta-1", { provisioned_by: provisionedBy }),
-            row("ta-2", { provisioned_by: "id-other-teacher" }),
+            row("ta-1", { supervisor_ids: ["id-teach"] }),
+            row("ta-2", { supervisor_ids: ["id-teach", "id-other"] }),
+            row("ta-3", { supervisor_ids: ["id-other"] }),
           ],
           next_cursor: null,
         };
@@ -352,8 +380,8 @@ describe("deactivateInstructor", () => {
       return row("id-teach", { status: "deactivated" });
     });
 
-  it("moves only the assistants this instructor supervises", async () => {
-    const mock = assistantsThenTransitions("id-teach");
+  it("links only the assistants who would be left with nobody", async () => {
+    const mock = roster();
 
     const outcome = await deactivateInstructor(ADMIN, "id-teach", {
       mode: "reassign",
@@ -361,14 +389,12 @@ describe("deactivateInstructor", () => {
     });
 
     expect(outcome.reassigned).toBe(1);
-    expect(requested(mock)).toContain("/api/users/ta-1/supervisor");
-    expect(requested(mock)).not.toContain("/api/users/ta-2/supervisor");
+    expect(requested(mock)).toContain("/api/users/ta-1/supervisors");
+    expect(requested(mock)).not.toContain("/api/users/ta-2/supervisors");
   });
 
   it("settles the assistants before switching the instructor off", async () => {
-    // If a reassignment fails the instructor is still active, so the admin can
-    // retry from a state they recognise instead of a half-applied one.
-    const mock = assistantsThenTransitions("id-teach");
+    const mock = roster();
 
     await deactivateInstructor(ADMIN, "id-teach", {
       mode: "reassign",
@@ -376,29 +402,29 @@ describe("deactivateInstructor", () => {
     });
 
     const calls = requested(mock);
-    expect(calls.indexOf("/api/users/ta-1/supervisor")).toBeLessThan(
+    expect(calls.indexOf("/api/users/ta-1/supervisors")).toBeLessThan(
       calls.indexOf("/api/users/id-teach/deactivate"),
     );
   });
 
-  it("unassigns them when that is the chosen plan", async () => {
-    const mock = assistantsThenTransitions("id-teach");
+  it("leaves their links alone when that is the chosen plan", async () => {
+    // The link survives and stops counting; reactivating the instructor
+    // brings the team back ([0.21.0]).
+    const mock = roster();
 
     const outcome = await deactivateInstructor(ADMIN, "id-teach", {
       mode: "leave",
     });
 
     expect(outcome.leftUnassigned).toBe(1);
-    const body = mock.mock.calls.find((call) =>
-      call[0].includes("/ta-1/supervisor"),
-    )?.[1]?.body as string;
-    expect(JSON.parse(body)).toEqual({ supervisor_id: null });
+    expect(requested(mock)).toEqual([
+      expect.stringContaining("/api/users/?"),
+      "/api/users/id-teach/deactivate",
+    ]);
   });
 
-  it("deactivates them without touching their supervisor", async () => {
-    // The edge is kept deliberately: reactivating the instructor brings the team
-    // back rather than leaving an admin to rebuild it.
-    const mock = assistantsThenTransitions("id-teach");
+  it("deactivates the assistants who would be left with nobody", async () => {
+    const mock = roster();
 
     const outcome = await deactivateInstructor(ADMIN, "id-teach", {
       mode: "deactivate",
@@ -406,6 +432,6 @@ describe("deactivateInstructor", () => {
 
     expect(outcome.deactivated).toBe(1);
     expect(requested(mock)).toContain("/api/users/ta-1/deactivate");
-    expect(requested(mock)).not.toContain("/api/users/ta-1/supervisor");
+    expect(requested(mock)).not.toContain("/api/users/ta-2/deactivate");
   });
 });

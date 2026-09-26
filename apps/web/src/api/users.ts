@@ -30,7 +30,7 @@ interface UserResponse {
   display_name: string | null;
   role: UserRole;
   status: UserStatus;
-  provisioned_by: string | null;
+  supervisor_ids: string[];
   created_at: string;
   first_login_at: string | null;
 }
@@ -47,7 +47,7 @@ function toAppUser(row: UserResponse): AppUser {
     name: row.display_name,
     role: row.role,
     status: row.status,
-    provisionedBy: row.provisioned_by,
+    supervisorIds: row.supervisor_ids,
     createdAt: row.created_at,
     firstLoginAt: row.first_login_at,
   };
@@ -108,27 +108,72 @@ export async function createAccount(
   _actor: User,
   input: CreateAccountInput,
 ): Promise<AppUser> {
-  const row = await apiRequest<UserResponse>(USERS_PATH, {
-    method: "POST",
-    body: {
-      email: input.email.trim(),
-      role: input.role,
-      display_name: input.name?.trim() || null,
-      supervisor_id: input.supervisorId ?? null,
-    },
-  });
-  return toAppUser(row);
+  // One request: the server commits the account, the invite and the
+  // supervisor link together, or none of them ([0.21.0]).
+  return toAppUser(
+    await apiRequest<UserResponse>(USERS_PATH, {
+      method: "POST",
+      body: {
+        email: input.email.trim(),
+        role: input.role,
+        supervisor_id:
+          input.role === "teaching_assistant"
+            ? (input.supervisorId ?? null)
+            : null,
+      },
+    }),
+  );
 }
 
-export async function setSupervisor(
+/** Instructor's add-by-email. Created, linked or already there - the server
+ * answers the same for all three, on purpose. */
+export async function addTeachingAssistant(
   _actor: User,
-  id: string,
-  supervisorId: string | null,
+  email: string,
 ): Promise<AppUser> {
   return toAppUser(
-    await apiRequest<UserResponse>(`${USERS_PATH}${id}/supervisor`, {
+    await apiRequest<UserResponse>(`${USERS_PATH}teaching-assistants`, {
       method: "POST",
-      body: { supervisor_id: supervisorId },
+      body: { email: email.trim() },
+    }),
+  );
+}
+
+export async function linkSupervisor(
+  _actor: User,
+  taId: string,
+  instructorId: string,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${taId}/supervisors`, {
+      method: "POST",
+      body: { instructor_id: instructorId },
+    }),
+  );
+}
+
+export async function unlinkSupervisor(
+  _actor: User,
+  taId: string,
+  instructorId: string,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(
+      `${USERS_PATH}${taId}/supervisors/${instructorId}`,
+      { method: "DELETE" },
+    ),
+  );
+}
+
+export async function updateDisplayName(
+  _actor: User,
+  id: string,
+  name: string,
+): Promise<AppUser> {
+  return toAppUser(
+    await apiRequest<UserResponse>(`${USERS_PATH}${id}`, {
+      method: "PATCH",
+      body: { display_name: name.trim() },
     }),
   );
 }
@@ -160,7 +205,9 @@ export async function setUserActive(
   );
 }
 
-export async function listAssistantsOf(
+/** Assistants whose only supervisor is `instructorId`: the ones who can't
+ * screen once that instructor is switched off. */
+export async function listOnlySupervisedBy(
   instructorId: string,
   signal?: AbortSignal,
 ): Promise<AppUser[]> {
@@ -168,7 +215,10 @@ export async function listAssistantsOf(
     { role: "teaching_assistant", statuses: ASSISTANT_STATUSES },
     signal,
   );
-  return assistants.filter((ta) => ta.provisionedBy === instructorId);
+  return assistants.filter(
+    (ta) =>
+      ta.supervisorIds.length === 1 && ta.supervisorIds[0] === instructorId,
+  );
 }
 
 export async function deactivateInstructor(
@@ -176,7 +226,7 @@ export async function deactivateInstructor(
   id: string,
   plan: DeactivationPlan,
 ): Promise<DeactivationOutcome> {
-  const affected = await listAssistantsOf(id);
+  const affected = await listOnlySupervisedBy(id);
 
   const outcome: DeactivationOutcome = {
     reassigned: 0,
@@ -184,9 +234,14 @@ export async function deactivateInstructor(
     leftUnassigned: 0,
   };
 
+  // Settle the assistants first: if one fails the instructor is still active
+  // and the admin can retry from a state they recognise.
   if (plan.mode === "reassign") {
-    for (const ta of affected) await setSupervisor(actor, ta.id, plan.toId);
-    outcome.reassigned = affected.length;
+    for (const ta of affected) {
+      if (!isActive(ta)) continue; // the server only places active TAs
+      await linkSupervisor(actor, ta.id, plan.toId);
+      outcome.reassigned++;
+    }
   } else if (plan.mode === "deactivate") {
     for (const ta of affected) {
       if (!isActive(ta)) continue;
@@ -194,7 +249,7 @@ export async function deactivateInstructor(
       outcome.deactivated++;
     }
   } else {
-    for (const ta of affected) await setSupervisor(actor, ta.id, null);
+    // Links are kept and stop counting; reactivating restores the team.
     outcome.leftUnassigned = affected.length;
   }
 

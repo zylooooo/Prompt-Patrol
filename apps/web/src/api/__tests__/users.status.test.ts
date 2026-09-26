@@ -6,9 +6,11 @@ const USERS_V2 = "pp.users.v2";
 const USERS_V3 = "pp.users.v3";
 
 const ADMIN: User = {
+  id: "00000000-0000-4000-8000-000000000001",
   email: "admin@example.com",
+  name: null,
   role: "root_admin",
-  provisionedBy: null,
+  supervisorIds: [],
 };
 
 // The shape this stub persisted before accounts gained a lifecycle status.
@@ -17,7 +19,7 @@ const LEGACY_ROW = {
   email: "admin@example.com",
   name: "Demo Admin",
   role: "root_admin",
-  provisionedBy: null,
+  supervisorIds: [],
   deletedAt: null,
   createdAt: "2026-07-01T09:00:00.000Z",
 };
