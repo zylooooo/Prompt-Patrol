@@ -16,8 +16,11 @@ class SessionResponse(BaseModel):
 
 
 class MeResponse(BaseModel):
+    id: uuid.UUID
     email: str
+    # Null until the person picks one; the SPA prompts for it.
+    display_name: str | None
     role: UserRoleEnum
-    # Who provisioned this account - for a teaching assistant, that is their supervisor.
-    provisioned_by: uuid.UUID | None
+    # Instructors currently supervising this user - the SPA's screening gate.
+    supervisor_ids: list[uuid.UUID]
     session: SessionResponse

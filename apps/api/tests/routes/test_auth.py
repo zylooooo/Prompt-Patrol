@@ -10,7 +10,7 @@ from sqlalchemy import select
 from auth import SessionFailure
 from config import AUTH0_CLIENT_ID, AUTH0_DOMAIN, FRONTEND_URL
 from main import app
-from models import User, UserRoleEnum, UserSession, UserStatusEnum
+from models import Supervision, User, UserRoleEnum, UserSession, UserStatusEnum
 from services import authenticate_session, create_session
 from services.sessions import SESSION_IDLE_TTL
 
@@ -356,36 +356,31 @@ async def test_no_password_less_dev_login_exists(client):
 
 
 # --- who the session belongs to ---------------------------------------------
-# `provisioned_by` is the only supervision edge the system has, and the SPA gates
-# a teaching assistant's screening screens on it. It has to ride on this payload:
-# reading it from /api/users/me instead costs a second round trip on every page,
-# and a TA cannot list users to get it another way.
+# The SPA gates a teaching assistant's screening screens on `supervisor_ids`,
+# prompts for a name while `display_name` is null, and needs `id` to set it.
+# All three ride on this payload so no page pays a second round trip.
 
 
 @pytest.mark.asyncio
-async def test_me_reports_who_provisioned_the_account(client, db_session):
+async def test_me_reports_the_active_supervisors(client, db_session):
     instructor = User(id=uuid.uuid4(), email="teach@smu.edu.sg", role=UserRoleEnum.instructor)
-    db_session.add(instructor)
+    assistant = User(id=uuid.uuid4(), email="ta@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
+    db_session.add_all([instructor, assistant])
     await db_session.commit()
-    assistant = User(
-        id=uuid.uuid4(),
-        email="ta@smu.edu.sg",
-        role=UserRoleEnum.teaching_assistant,
-        provisioned_by=instructor.id,
-    )
-    db_session.add(assistant)
+    db_session.add(Supervision(ta_id=assistant.id, instructor_id=instructor.id))
     await db_session.commit()
     client.cookies.set("__Host-session", await create_session(db_session, assistant.id))
 
     body = (await client.get("/api/auth/me")).json()
 
-    assert body["provisioned_by"] == str(instructor.id)
+    assert body["id"] == str(assistant.id)
+    assert body["supervisor_ids"] == [str(instructor.id)]
+    assert body["display_name"] is None
+    assert "provisioned_by" not in body
 
 
 @pytest.mark.asyncio
-async def test_me_reports_a_null_provisioner_for_a_seeded_account(client, db_session):
-    # Accounts seeded by scripts/provision_user carry no provisioner, so this is
-    # null rather than absent - the SPA reads "no supervisor" from it.
+async def test_me_reports_no_supervisors_for_an_unassigned_account(client, db_session):
     seeded = User(id=uuid.uuid4(), email="seeded@smu.edu.sg", role=UserRoleEnum.teaching_assistant)
     db_session.add(seeded)
     await db_session.commit()
@@ -393,7 +388,7 @@ async def test_me_reports_a_null_provisioner_for_a_seeded_account(client, db_ses
 
     body = (await client.get("/api/auth/me")).json()
 
-    assert body["provisioned_by"] is None
+    assert body["supervisor_ids"] == []
 
 
 # --- sign-out ---------------------------------------------------------------

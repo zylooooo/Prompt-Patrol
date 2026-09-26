@@ -12,15 +12,10 @@ GOOD_CSV = (
     "stu-2,Another answer that is also long enough to pass validation.\n"
 )
 
-MAPPED_CSV = (
-    "Student ID,Response\n"
-    "stu-1,This is a perfectly reasonable answer with enough words.\n"
-)
+MAPPED_CSV = "Student ID,Response\nstu-1,This is a perfectly reasonable answer with enough words.\n"
 
 BAD_ROW_CSV = (
-    "external_ref,answer_text\n"
-    "stu-1,too short\n"
-    "stu-2,This one is long enough to pass every validation rule we have.\n"
+    "external_ref,answer_text\nstu-1,too short\nstu-2,This one is long enough to pass every validation rule we have.\n"
 )
 
 

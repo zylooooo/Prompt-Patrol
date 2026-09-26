@@ -36,9 +36,7 @@ AWS_ENDPOINT_URL: str | None = os.getenv("AWS_ENDPOINT_URL") or None
 # can't resolve LocalStack's in-network hostname ("localstack"), only the
 # host-mapped one. Real AWS never sets AWS_ENDPOINT_URL at all, so this
 # falls back to it and stays a no-op there.
-AWS_ENDPOINT_URL_PUBLIC: str | None = (
-    os.getenv("AWS_ENDPOINT_URL_PUBLIC") or AWS_ENDPOINT_URL
-)
+AWS_ENDPOINT_URL_PUBLIC: str | None = os.getenv("AWS_ENDPOINT_URL_PUBLIC") or AWS_ENDPOINT_URL
 S3_BATCHES_BUCKET: str = os.getenv("S3_BATCHES_BUCKET", "prompt-patrol-batches")
 SQS_BATCHES_QUEUE_URL: str = os.getenv("SQS_BATCHES_QUEUE_URL", "")
 SQS_BATCHES_DLQ_URL: str = os.getenv("SQS_BATCHES_DLQ_URL", "")

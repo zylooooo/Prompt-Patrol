@@ -30,9 +30,7 @@ def _s3_presign_client():
     against a host the browser can reach - LocalStack's in-network hostname
     isn't. Real AWS never sets either endpoint var, so this is the same
     client as _s3_client() there."""
-    return boto3.client(
-        "s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL_PUBLIC
-    )
+    return boto3.client("s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL_PUBLIC)
 
 
 def _sqs_client():
@@ -73,14 +71,12 @@ def purge_batch_messages(batch_id: str) -> int:
     A non-matching message is left completely alone, not deleted, not
     reset visible. A message with unparsable JSON is skipped the same way - one poison
     message anywhere in the shared queue shouldn't be able to fail every
-    instructor's cancel request. The Worker's own per-message cancelled_at check 
+    instructor's cancel request. The Worker's own per-message cancelled_at check
     is the correctness backstop for whatever this misses."""
     client = _sqs_client()
     removed = 0
     for _ in range(MAX_CANCEL_DRAIN_ITERATIONS):
-        response = client.receive_message(
-            QueueUrl=SQS_BATCHES_QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0
-        )
+        response = client.receive_message(QueueUrl=SQS_BATCHES_QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
         messages = response.get("Messages", [])
         if not messages:
             break
@@ -91,8 +87,6 @@ def purge_batch_messages(batch_id: str) -> int:
                 logger.exception("Skipping unparsable message during batch purge.")
                 continue
             if payload.get("batch_id") == batch_id:
-                client.delete_message(
-                    QueueUrl=SQS_BATCHES_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"]
-                )
+                client.delete_message(QueueUrl=SQS_BATCHES_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"])
                 removed += 1
     return removed

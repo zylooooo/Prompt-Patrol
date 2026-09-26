@@ -43,9 +43,7 @@ checks = sa.table(
 
 def upgrade() -> None:
     op.add_column("checks", sa.Column("answer_char_len", sa.Integer(), nullable=True))
-    op.add_column(
-        "checks", sa.Column("retain_answer", sa.Boolean(), nullable=True, server_default=sa.true())
-    )
+    op.add_column("checks", sa.Column("retain_answer", sa.Boolean(), nullable=True, server_default=sa.true()))
 
     op.execute(
         checks.update().values(
