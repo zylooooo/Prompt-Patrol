@@ -8,6 +8,7 @@ from auth import require_role
 from db import get_db
 from exceptions import (
     Auth0ProvisioningError,
+    CannotAddTeachingAssistantError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
@@ -17,12 +18,15 @@ from models import User, UserRoleEnum, UserStatusEnum
 from schemas import (
     StatusChangeRequest,
     SupervisorLinkRequest,
+    TeachingAssistantAddRequest,
     UserCreateRequest,
     UserListResponse,
+    UserPatchRequest,
     UserResponse,
     UserRolePatchRequest,
 )
 from services import (
+    add_teaching_assistant,
     change_user_role,
     create_user,
     deactivate_user,
@@ -33,7 +37,11 @@ from services import (
     list_users,
     reactivate_user,
     resend_invite,
+    update_display_name,
 )
+
+# One sentence for every refusal, whatever the reason (DECISION LOG [0.21.0]).
+_ADD_TA_REFUSED = "This email can't be added. Contact the root administrator."
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -84,6 +92,34 @@ async def list_all_users(
     return UserListResponse(items=[UserResponse.model_validate(u) for u in items], next_cursor=next_cursor)
 
 
+@router.post("/teaching-assistants", response_model=UserResponse)
+async def add_teaching_assistant_route(
+    body: TeachingAssistantAddRequest,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Adds a teaching assistant to the caller's team by email: creates and invites
+    a new account, or links an existing active TA. The response never says
+    which - 200 with the row either way, and every refusal is the same 409.
+    Exactly `instructor`: root_admin places TAs with POST /{id}/supervisors.
+    """
+    try:
+        return await add_teaching_assistant(db, actor, body.email)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only instructors add teaching assistants to a team.",
+        )
+    except CannotAddTeachingAssistantError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ADD_TA_REFUSED)
+    except Auth0ProvisioningError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not create an Auth0 credential for this user. Nothing was saved - try again.",
+        )
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: uuid.UUID,
@@ -100,6 +136,24 @@ async def get_user(
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return target
+
+
+@router.patch("/{user_id}", response_model=UserResponse)
+async def update_user_route(
+    user_id: uuid.UUID,
+    body: UserPatchRequest,
+    actor: User = Depends(require_role(UserRoleEnum.teaching_assistant)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sets a display name: your own, or anyone's as root_admin.
+    """
+    try:
+        return await update_display_name(db, actor, user_id, body.display_name)
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

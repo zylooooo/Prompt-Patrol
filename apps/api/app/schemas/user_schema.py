@@ -9,6 +9,8 @@ from models import UserRoleEnum, UserStatusEnum
 
 # C0/C1 controls except tab and newline, plus angle brackets.
 _UNSAFE_REASON_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f<>]")
+# A name is one line: every control character (tab and newline too) plus angle brackets.
+_UNSAFE_NAME_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f<>]")
 
 
 class UserResponse(BaseModel):
@@ -28,7 +30,7 @@ class UserResponse(BaseModel):
 
 class UserCreateRequest(BaseModel):
     """root_admin provisioning. No display name - the person chooses it after
-    first sign-in 
+    first sign-in
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -36,6 +38,15 @@ class UserCreateRequest(BaseModel):
     email: str
     role: UserRoleEnum
     supervisor_id: uuid.UUID | None = None
+
+
+class TeachingAssistantAddRequest(BaseModel):
+    """An instructor adds a TA by email; the server decides create vs link.
+    Only the email, the username is chosen by the user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
 
 
 class SupervisorLinkRequest(BaseModel):
@@ -72,6 +83,24 @@ class StatusChangeRequest(BaseModel):
         if value is None:
             return None
         return _UNSAFE_REASON_CHARS.sub("", value).strip() or None
+
+
+class UserPatchRequest(BaseModel):
+    """Sets a display name - the only field PATCH changes.
+    Other people see it, so it is cleaned like `reason`; blank after cleaning is
+    rejected, because a name, once set, cannot be cleared."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("display_name")
+    @classmethod
+    def _clean_display_name(cls, value: str) -> str:
+        cleaned = _UNSAFE_NAME_CHARS.sub("", value).strip()
+        if not cleaned:
+            raise ValueError("display_name cannot be blank")
+        return cleaned
 
 
 class UserListResponse(BaseModel):

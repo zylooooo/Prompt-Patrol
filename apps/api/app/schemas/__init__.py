@@ -4,8 +4,10 @@ from .check_schema import CheckListResponse, CheckResponse, CheckSummary, Detect
 from .user_schema import (
     StatusChangeRequest,
     SupervisorLinkRequest,
+    TeachingAssistantAddRequest,
     UserCreateRequest,
     UserListResponse,
+    UserPatchRequest,
     UserResponse,
     UserRolePatchRequest,
 )
@@ -15,6 +17,8 @@ __all__ = [
     "SessionResponse",
     "UserResponse",
     "UserCreateRequest",
+    "UserPatchRequest",
+    "TeachingAssistantAddRequest",
     "UserListResponse",
     "UserRolePatchRequest",
     "StatusChangeRequest",

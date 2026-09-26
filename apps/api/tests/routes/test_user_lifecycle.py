@@ -508,3 +508,86 @@ async def test_an_assistant_cannot_remove_links(client, db_session):
     response = await client.delete(f"/api/users/{me.id}/supervisors/{instructor.id}")
 
     assert response.status_code == 403
+
+
+REFUSED = "This email can't be added. Contact the root administrator."
+
+
+@pytest.mark.asyncio
+async def test_add_ta_answers_the_same_for_new_linked_and_already_there(client, db_session):
+    # The generalised response is the enumeration defence (DECISION LOG [0.21.0]):
+    # same status, same shape, whichever row of the outcome table applied.
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    colleague = await _target(db_session, role=UserRoleEnum.instructor)
+    shared = await _target(db_session, supervised_by=colleague)
+    mine = await _target(db_session, supervised_by=instructor)
+
+    responses = [
+        await client.post("/api/users/teaching-assistants", json={"email": email})
+        for email in ("brand.new@smu.edu.sg", shared.email, mine.email)
+    ]
+
+    assert [r.status_code for r in responses] == [200, 200, 200]
+    assert all(str(instructor.id) in r.json()["supervisor_ids"] for r in responses)
+
+
+@pytest.mark.asyncio
+async def test_add_ta_refusals_are_indistinguishable(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+    off = await _target(db_session, status=UserStatusEnum.deactivated)
+    gone = await _target(db_session, status=UserStatusEnum.deleted)
+    peer = await _target(db_session, role=UserRoleEnum.instructor)
+
+    responses = [
+        await client.post("/api/users/teaching-assistants", json={"email": u.email}) for u in (off, gone, peer)
+    ]
+
+    assert {(r.status_code, r.json()["detail"]) for r in responses} == {(409, REFUSED)}
+
+
+@pytest.mark.asyncio
+async def test_add_ta_is_for_instructors_only(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+
+    response = await client.post("/api/users/teaching-assistants", json={"email": "x@smu.edu.sg"})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_add_ta_takes_only_an_email(client, db_session):
+    await _signed_in(client, db_session, UserRoleEnum.instructor)
+
+    response = await client.post("/api/users/teaching-assistants", json={"email": "x@smu.edu.sg", "display_name": "X"})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_user_names_themselves_and_the_name_is_cleaned(client, db_session):
+    me = await _signed_in(client, db_session, UserRoleEnum.teaching_assistant)
+
+    response = await client.patch(f"/api/users/{me.id}", json={"display_name": "  <b>Wei</b>\tLin\n "})
+
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "bWei/bLin"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"display_name": "   "}, {"display_name": "x" * 201}, {}, {"role": "root_admin"}])
+async def test_a_bad_name_is_rejected(client, db_session, body):
+    me = await _signed_in(client, db_session, UserRoleEnum.teaching_assistant)
+
+    response = await client.patch(f"/api/users/{me.id}", json=body)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_renaming_someone_else_is_404_unless_root_admin(client, db_session):
+    instructor = await _signed_in(client, db_session, UserRoleEnum.instructor)
+    mine = await _target(db_session, supervised_by=instructor)
+
+    response = await client.patch(f"/api/users/{mine.id}", json={"display_name": "Nickname"})
+
+    assert response.status_code == 404

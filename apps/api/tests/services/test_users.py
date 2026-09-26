@@ -27,6 +27,7 @@ from services.users_service import (
     reactivate_user,
     resend_invite,
     resolve_user,
+    update_display_name,
 )
 
 
@@ -1346,3 +1347,39 @@ async def test_an_instructor_lists_every_assistant_they_share(db_session):
     for instructor in (first, second):
         rows, _ = await list_users(db_session, instructor)
         assert [row.id for row in rows] == [shared.id]
+
+
+# --- display names (DECISION LOG [0.21.0]) -------------------------------------
+# The person chooses it; root_admin may correct it. Nobody else - an instructor
+# cannot rename their TAs. Refusals are 404-shaped, like GET.
+
+
+@pytest.mark.asyncio
+async def test_anyone_may_name_themselves(db_session):
+    ta = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, ta)
+
+    named = await update_display_name(db_session, ta, ta.id, "Wei Lin")
+
+    assert named.display_name == "Wei Lin"
+
+
+@pytest.mark.asyncio
+async def test_root_admin_may_rename_anyone_but_an_instructor_may_not(db_session):
+    admin, instructor = _user(UserRoleEnum.root_admin), _user(UserRoleEnum.instructor)
+    ta = _user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, instructor, ta)
+    await _supervise(db_session, ta, instructor)
+
+    assert (await update_display_name(db_session, admin, ta.id, "Corrected")).display_name == "Corrected"
+    with pytest.raises(UserNotFoundError):
+        await update_display_name(db_session, instructor, ta.id, "Nickname")
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_account_cannot_be_renamed(db_session):
+    admin, gone = _user(UserRoleEnum.root_admin), _deleted_user(UserRoleEnum.teaching_assistant)
+    await _seed(db_session, admin, gone)
+
+    with pytest.raises(InvalidStatusTransitionError):
+        await update_display_name(db_session, admin, gone.id, "Ghost")

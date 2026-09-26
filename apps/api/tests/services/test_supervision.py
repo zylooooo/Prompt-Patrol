@@ -5,11 +5,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from exceptions import InvalidStatusTransitionError, InvalidSupervisorError, UserNotFoundError
+from exceptions import (
+    Auth0ProvisioningError,
+    CannotAddTeachingAssistantError,
+    InvalidStatusTransitionError,
+    InvalidSupervisorError,
+    UserNotFoundError,
+)
 from models import Supervision, User, UserRoleEnum, UserSession, UserStatusEnum
 from schemas import UserResponse
 from services import create_session
 from services.users_service import (
+    add_teaching_assistant,
     change_user_role,
     deactivate_user,
     delete_user,
@@ -310,3 +317,116 @@ async def test_only_root_admin_deactivates_or_reactivates(db_session):
         await deactivate_user(db_session, instructor, ta.id)
     with pytest.raises(PermissionError):
         await reactivate_user(db_session, instructor, off.id)
+
+
+# --- instructors add a TA by email (DECISION LOG [0.21.0]) --------------------
+# Every success looks the same and every refusal looks the same; these pin the
+# outcome table, not the wording (that is the route's job).
+
+
+@pytest.fixture
+def invites(monkeypatch):
+    """Records invite_user calls. A link must never reach Auth0."""
+    sent = []
+
+    async def fake_invite_user(email):
+        sent.append(email)
+        return f"auth0|{email}"
+
+    async def fake_find(email):
+        return None
+
+    monkeypatch.setattr("services.users_service.invite_user", fake_invite_user)
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_a_new_email_is_invited_and_joins_the_callers_team(db_session, invites):
+    (instructor,) = await _people(db_session, _person(UserRoleEnum.instructor))
+
+    added = await add_teaching_assistant(db_session, instructor, "  New.TA@SMU.edu.sg ")
+
+    assert invites == ["new.ta@smu.edu.sg"]
+    assert added.role == UserRoleEnum.teaching_assistant
+    assert added.provisioned_by == instructor.id
+    assert added.display_name is None
+    assert added.supervisor_ids == [instructor.id]
+
+
+@pytest.mark.asyncio
+async def test_an_active_ta_is_linked_without_touching_their_account(db_session, invites):
+    first, second = await _people(db_session, _person(UserRoleEnum.instructor), _person(UserRoleEnum.instructor))
+    ta = _person(UserRoleEnum.teaching_assistant)
+    ta.display_name, ta.provisioned_by, ta.auth0_sub = "Wei Lin", first.id, "auth0|wei"
+    await _people(db_session, ta)
+    await _supervise(db_session, ta, first)
+
+    added = await add_teaching_assistant(db_session, second, ta.email)
+
+    assert invites == []
+    assert sorted(added.supervisor_ids) == sorted([first.id, second.id])
+    assert (added.display_name, added.provisioned_by, added.auth0_sub) == ("Wei Lin", first.id, "auth0|wei")
+
+
+@pytest.mark.asyncio
+async def test_adding_a_ta_already_on_the_team_changes_nothing(db_session, invites):
+    instructor, ta = await _people(
+        db_session, _person(UserRoleEnum.instructor), _person(UserRoleEnum.teaching_assistant)
+    )
+    await _supervise(db_session, ta, instructor)
+
+    again = await add_teaching_assistant(db_session, instructor, ta.email)
+
+    assert again.supervisor_ids == [instructor.id]
+    rows = await db_session.execute(select(Supervision).where(Supervision.ta_id == ta.id))
+    assert len(rows.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "status"),
+    [
+        (UserRoleEnum.teaching_assistant, UserStatusEnum.deactivated),
+        (UserRoleEnum.teaching_assistant, UserStatusEnum.deleted),
+        (UserRoleEnum.instructor, UserStatusEnum.active),
+        (UserRoleEnum.instructor, UserStatusEnum.deactivated),
+        (UserRoleEnum.root_admin, UserStatusEnum.active),
+    ],
+)
+async def test_anything_but_a_new_email_or_an_active_ta_is_refused(db_session, invites, role, status):
+    (instructor,) = await _people(db_session, _person(UserRoleEnum.instructor))
+    (existing,) = await _people(db_session, _person(role, status))
+
+    with pytest.raises(CannotAddTeachingAssistantError):
+        await add_teaching_assistant(db_session, instructor, existing.email)
+
+    assert invites == []  # a deleted email is not re-provisioned here - root_admin's call
+
+
+@pytest.mark.asyncio
+async def test_only_an_instructor_adds_teaching_assistants(db_session, invites):
+    admin, ta = await _people(db_session, _person(UserRoleEnum.root_admin), _person(UserRoleEnum.teaching_assistant))
+
+    for actor in (admin, ta):
+        with pytest.raises(PermissionError):
+            await add_teaching_assistant(db_session, actor, "someone@smu.edu.sg")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_invite_saves_nothing(db_session, monkeypatch):
+    (instructor,) = await _people(db_session, _person(UserRoleEnum.instructor))
+
+    async def refuse(email):
+        raise Auth0ProvisioningError("down")
+
+    async def fake_find(email):
+        return None
+
+    monkeypatch.setattr("services.users_service.invite_user", refuse)
+    monkeypatch.setattr("services.users_service.find_auth0_user_id_by_email", fake_find)
+
+    with pytest.raises(Auth0ProvisioningError):
+        await add_teaching_assistant(db_session, instructor, "nobody@smu.edu.sg")
+
+    assert (await db_session.execute(select(User).where(User.email == "nobody@smu.edu.sg"))).first() is None

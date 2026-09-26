@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import delete_auth0_user, find_auth0_user_id_by_email, invite_user, resend_invite_email
 from exceptions import (
     Auth0ProvisioningError,
+    CannotAddTeachingAssistantError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
@@ -307,6 +308,23 @@ async def change_user_role(db: AsyncSession, actor: User, user_id: uuid.UUID, ne
     return target
 
 
+async def update_display_name(db: AsyncSession, actor: User, user_id: uuid.UUID, display_name: str) -> User:
+    """Can only be used by yourself or root_admin. Anyone else gets
+    UserNotFoundError."""
+    if actor.role != UserRoleEnum.root_admin and actor.id != user_id:
+        raise UserNotFoundError(str(user_id))
+
+    target = await _load_manageable(db, user_id)
+    if target.status == UserStatusEnum.deleted:
+        raise InvalidStatusTransitionError("a deleted account cannot be renamed")
+
+    target.display_name = display_name
+    await db.commit()
+    await db.refresh(target)
+    logger.info("User %s renamed by %s.", target.id, actor.id)
+    return target
+
+
 async def _load_manageable(db: AsyncSession, user_id: uuid.UUID) -> User:
     """Loads any user regardless of status - a deactivated one must stay
     reachable so it can be reactivated."""
@@ -563,6 +581,46 @@ async def create_user(
         raise EmailAlreadyExistsError(email)
 
     return await _provision(db, actor, email, role, rows[0] if rows else None, supervisor_id)
+
+
+async def add_teaching_assistant(db: AsyncSession, actor: User, email: str) -> User:
+    """
+    Used by instructors to add a TA to their own team.
+    
+    The whole process is atomic: provision email, invitiation and linking to the instructor.
+
+    TODO(notifications): linking a TA who already has supervisors should notify
+    them and root_admin. Deferred until a notification system exists.
+    """
+    # Gated only for instructors.
+    if actor.role != UserRoleEnum.instructor:
+        logger.warning("Actor %s with role %s may not add teaching assistants.", actor.id, actor.role)
+        raise PermissionError(f"role {actor.role} may not add teaching assistants")
+
+    email = normalize_email(email)
+    rows = await _rows_for_email(db, email)
+    live = next((row for row in rows if row.status != UserStatusEnum.deleted), None)
+
+    # If the email does not exist, provision a new TA and link them to the instructor.
+    if not rows:
+        return await _provision(db, actor, email, UserRoleEnum.teaching_assistant, None, supervisor_id=actor.id)
+
+    if live is None:
+        # Deleted accounts cannot be re-used by instructors.
+        reason = "only deleted accounts use it"
+    elif live.role != UserRoleEnum.teaching_assistant:
+        # Only can assign TAs to instructors.
+        reason = f"it belongs to a {live.role.value}"
+    elif live.status != UserStatusEnum.active:
+        # Deactivated account must be reactivated by root_admin first
+        reason = f"the account is {live.status.value}"
+    else:
+        await _link(db, actor, live, actor.id)
+        logger.info("Instructor %s added assistant %s to their team.", actor.id, live.id)
+        return live
+
+    logger.info("Refused to add %s to instructor %s's team: %s.", email, actor.id, reason)
+    raise CannotAddTeachingAssistantError(reason)
 
 
 # Encodes a user ID as a URL-safe pagination cursor.

@@ -14,6 +14,7 @@ from .detector_client import health as detector_health
 from .sessions import SESSION_IDLE_TTL, authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
 from .users_service import (
     LoginRejection,
+    add_teaching_assistant,
     change_user_role,
     create_user,
     deactivate_user,
@@ -27,6 +28,7 @@ from .users_service import (
     reactivate_user,
     resend_invite,
     resolve_user,
+    update_display_name,
 )
 
 __all__ = [
@@ -56,6 +58,8 @@ __all__ = [
     "change_user_role",
     "SESSION_IDLE_TTL",
     "LoginRejection",
+    "add_teaching_assistant",
+    "update_display_name",
     "DETECTOR_CAPABILITIES",
     "THRESHOLDS",
     "DetectorTimeoutError",
