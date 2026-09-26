@@ -10,7 +10,8 @@ import {
   useUnlinkSupervisor,
 } from "../hooks/useUsers";
 import { useAuth } from "../hooks/useAuth";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import ConfirmAddAssistantDialog from "../components/ConfirmAddAssistantDialog";
 import { ApiError } from "../api/client";
 import Modal from "../components/ui/Modal";
 import { fmtDateOnly } from "../lib/format";
@@ -50,14 +51,21 @@ export default function TeachingAssistantsPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const emailField = useRef<HTMLInputElement>(null);
 
   const typo = useEmailTypoGuard(email, setEmail);
 
-  async function onAdd() {
+  function onSubmit() {
     if (!typo.check()) return;
     setError(null);
     setEmailError(null);
-    const typed = email.trim();
+    setConfirming(email.trim());
+  }
+
+  async function onConfirmAdd() {
+    if (confirming === null) return;
+    const typed = confirming;
     try {
       await addAssistant.mutateAsync(typed);
       setEmail("");
@@ -69,12 +77,19 @@ export default function TeachingAssistantsPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setEmailError(err.message);
-        return;
+      } else {
+        setError(
+          err instanceof Error ? err.message : "Could not add the account.",
+        );
       }
-      setError(
-        err instanceof Error ? err.message : "Could not add the account.",
-      );
+    } finally {
+      setConfirming(null);
     }
+  }
+
+  function onEditEmail() {
+    setConfirming(null);
+    emailField.current?.focus();
   }
 
   async function onResendInvite(target: AppUser) {
@@ -200,13 +215,14 @@ export default function TeachingAssistantsPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void onAdd();
+            onSubmit();
           }}
           className="mt-4 flex flex-wrap items-end gap-3"
         >
           <label className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">SMU email</span>
             <input
+              ref={emailField}
               type="email"
               value={email}
               onChange={(e) => {
@@ -286,6 +302,15 @@ export default function TeachingAssistantsPage() {
             }
           />
         </PageFill>
+      )}
+
+      {confirming !== null && (
+        <ConfirmAddAssistantDialog
+          email={confirming}
+          busy={addAssistant.isPending}
+          onEdit={onEditEmail}
+          onConfirm={() => void onConfirmAdd()}
+        />
       )}
 
       {confirmRemove && (

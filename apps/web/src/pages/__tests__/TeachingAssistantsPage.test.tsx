@@ -153,6 +153,11 @@ describe("TeachingAssistantsPage - email typo check", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Add to my team",
+      }),
+    );
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   });
 
@@ -210,6 +215,13 @@ describe("TeachingAssistantsPage - adding and removing", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
+    // Nothing is sent until the instructor confirms the exact address.
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Add to my team",
+      }),
+    );
 
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith("ta-old@smu.edu.sg"),
@@ -234,9 +246,37 @@ describe("TeachingAssistantsPage - adding and removing", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
+    // Nothing is sent until the instructor confirms the exact address.
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Add to my team",
+      }),
+    );
 
     // No jest-dom in this repo: assert on textContent.
     expect((await screen.findByRole("alert")).textContent).toContain(refusal);
+  });
+
+  it("returns to the field untouched when the instructor wants to edit", async () => {
+    const mutateAsync = vi.fn();
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    const field = screen.getByLabelText("SMU email");
+    fireEvent.change(field, { target: { value: "wei.lin@smu.edu.sg" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Edit email",
+      }),
+    );
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect((field as HTMLInputElement).value).toBe("wei.lin@smu.edu.sg");
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it("removes the assistant from my team only", async () => {
