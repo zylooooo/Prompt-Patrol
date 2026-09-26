@@ -1,0 +1,24 @@
+$kind: http-request
+name: "[Admin] A deleted account cannot be renamed"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  The throwaway TA was deleted in 8.
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "Ghost"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("409", () => pm.response.to.have.status(409));
+    language: text/javascript
+order: 7000

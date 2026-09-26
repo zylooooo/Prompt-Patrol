@@ -3,7 +3,7 @@ name: "[Instructor] Instructors cannot use POST /api/users"
 description: |-
   Environment: Prompt Patrol Dev - Instructor
 
-  root_admin only since 0.21.0. Instructors add TAs through POST /api/users/teaching-assistants (Plan 2).
+  root_admin only since 0.21.0. Instructors add TAs through POST /api/users/teaching-assistants (folder 10).
 url: "{{BASE_URL}}/api/users/"
 method: POST
 headers:

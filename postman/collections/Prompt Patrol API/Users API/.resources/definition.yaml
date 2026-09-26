@@ -15,11 +15,12 @@ description: |-
 
   Ids come from "1. Setup" (/api/auth/me), so they always match the sessions.
   "2. Provisioning" sends real Auth0 invites to +aliases of ashloozhiyi5@gmail.com.
-  Only the accounts it creates are deactivated, re-roled or deleted; "8. Role
-  change and delete" and "10. Cleanup" remove them, leaving the TA supervised
-  by the instructor.
+  "10. Adding TAs by email" sends one more. Only the accounts these folders
+  create are deactivated, re-roled or deleted; "8. Role change and delete"
+  and "12. Cleanup" remove them, leaving the TA supervised by the instructor.
+  "11. Display names" renames the TA and then restores the name.
 
-  "11. Optional" checks that removing a TA's last supervisor signs the TA out,
+  "13. Optional" checks that removing a TA's last supervisor signs the TA out,
   so afterwards you must sign in as the TA again and update the cookie.
 scripts:
   - type: http:afterResponse
