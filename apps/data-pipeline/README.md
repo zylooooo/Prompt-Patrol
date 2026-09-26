@@ -119,6 +119,43 @@ Notes:
   Splits and folds key on question_id and generator. Cost reporting sums
   usage.
 
+## Paraphrase pass
+
+`app/paraphrase/` rewrites raw AI answers from the harness at two
+strengths, light (synonym swaps, small reorderings) and heavy (fully
+restructured sentences), so the detector is tested on reworded AI text.
+`app/paraphrase/config.yaml` sets the share of answers to cover, the
+strengths, the paraphraser model and the two filter thresholds.
+
+It runs in two steps, from inside `app/`:
+
+```
+python -m paraphrase.generate --answers ../data/generated/<run_id>/answers.jsonl            # dry run
+python -m paraphrase.generate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot --go
+python -m paraphrase.filter --run ../data/paraphrased/<run_id> --spot-check 30
+```
+
+`generate` writes `data/paraphrased/<run_id>/candidates.jsonl` and
+`run_report.json`. Every record links to its source through
+`source_answer_id`, keeps the source's `generator` and `tier`, and stores
+`strength`, `paraphraser`, `paraphraser_model_version`,
+`paraphraser_settings` and `prompt_template`. A rerun with `--out` pointing
+at an existing run folder skips rewrites already written.
+
+`filter` scores every candidate and writes `paraphrased.jsonl` (kept,
+labelled `paraphrased`), `excluded.jsonl` (with `exclusion_reason`) and
+`filter_report.json` with counts and score ranges per strength. Two scores:
+
+- `similarity`: cosine similarity of source and paraphrase embeddings.
+  Below `similarity_floor` the candidate is excluded as `meaning_lost`.
+- `surface_change`: share of the word sequence that changed, 0 to 1.
+  Below `min_surface_change` it is excluded as `trivial_rewrite`.
+
+The thresholds in the config come from a hand spot-check of the pilot.
+To redo that, set both to null so `filter` keeps and scores everything,
+fill in the two blank columns of `spot_check.csv`, pick new values, and
+rerun `filter`. No new rewrites are paid for.
+
 ## Splicer
 
 Builds the mixed-authorship documents for the partial-AI class. Each
