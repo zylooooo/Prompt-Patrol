@@ -1,0 +1,29 @@
+# Paraphrase pass config (PP-94). API keys live in .env
+# fraction of raw AI answers to paraphrase, sampled per generator and
+# tier so every generator and quality tier is covered
+share: 1.0
+seed: 42
+strengths: [light, heavy]
+# PP-95 is still open: which model paraphrases, and whether one model
+# serves all generators' answers. deepseek is the placeholder, it is the
+# cheapest of the API generators and was reliable in the harness pilot
+paraphraser:
+  name: deepseek-v4-pro
+  provider: deepseek
+  model: deepseek-v4-pro
+  extra_body:
+    thinking: {type: disabled}
+decoding:
+  temperature: 0.7
+  max_tokens: 500
+filters:
+  # meaning check: cosine similarity of source and paraphrase embeddings
+  embedding_model: text-embedding-3-small
+  # set from the PP-99 spot-check of the v1 pilot. 0.70 drops rewrites that
+  # changed the answer ("main function" to "primary purpose" scored 0.64)
+  # while keeping good heavy rewrites, the lowest of which scored 0.72.
+  # set both to null to score and keep everything for a new spot-check
+  similarity_floor: 0.70
+  # a number, or one value per strength. drops one-word swaps passed off as
+  # light rewrites, and heavy rewrites that barely restructure anything
+  min_surface_change: {light: 0.05, heavy: 0.30}
