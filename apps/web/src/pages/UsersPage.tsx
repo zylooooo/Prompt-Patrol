@@ -46,6 +46,8 @@ import Dropdown, { type DropdownOption } from "../components/ui/Dropdown";
 import DeactivateReasonDialog from "../components/DeactivateReasonDialog";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 import ChangeRoleDialog from "../components/ChangeRoleDialog";
+import SupervisorsDialog from "../components/SupervisorsDialog";
+import RenameDialog from "../components/RenameDialog";
 
 type Filter =
   "all" | "instructors" | "assistants" | "unassigned" | "pending" | "deleted";
@@ -115,6 +117,8 @@ export default function UsersPage() {
   const [deactivating, setDeactivating] = useState<AppUser | null>(null);
   const [reasoning, setReasoning] = useState<AppUser | null>(null);
   const [changingRole, setChangingRole] = useState<AppUser | null>(null);
+  const [supervising, setSupervising] = useState<AppUser | null>(null);
+  const [renaming, setRenaming] = useState<AppUser | null>(null);
 
   const instructors = useMemo(
     () => (users ?? []).filter((u) => u.role === "instructor"),
@@ -334,6 +338,13 @@ export default function UsersPage() {
         // A pending row's next step is re-sending the invite, so that is the
         // inline action and Deactivate moves into the menu.
         const invitePending = isPendingInvite(u);
+        if (u.role === "teaching_assistant") {
+          menuItems.push({
+            label: "Supervisors…",
+            onClick: () => setSupervising(u),
+          });
+        }
+        menuItems.push({ label: "Rename…", onClick: () => setRenaming(u) });
         if (isRootAdmin && u.role !== "root_admin") {
           menuItems.push({
             label: "Change role",
@@ -568,6 +579,24 @@ export default function UsersPage() {
               setReasoning(null),
             );
           }}
+        />
+      )}
+
+      {supervising && (
+        <SupervisorsDialog
+          assistant={supervising}
+          allUsers={users ?? []}
+          onClose={() => setSupervising(null)}
+        />
+      )}
+
+      {renaming && (
+        <RenameDialog
+          id={renaming.id}
+          email={renaming.email}
+          currentName={renaming.name}
+          self={false}
+          onClose={() => setRenaming(null)}
         />
       )}
 

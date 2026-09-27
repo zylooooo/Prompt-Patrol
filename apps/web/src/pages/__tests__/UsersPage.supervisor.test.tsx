@@ -43,6 +43,9 @@ vi.mock("../../hooks/useUsers", () => {
     useSetUserActive: idle,
     useDeleteUser: idle,
     useDeactivateInstructor: idle,
+    useLinkSupervisor: idle,
+    useUnlinkSupervisor: idle,
+    useUpdateDisplayName: idle,
   };
 });
 
@@ -216,8 +219,10 @@ describe("UsersPage - add account form", () => {
 
     expect(screen.queryByPlaceholderText("Full name")).toBeNull();
   });
+});
 
-  it("offers no Change supervisor until the many-supervisor dialog lands", async () => {
+describe("UsersPage - row menu", () => {
+  it("opens the supervisors of an assistant from the row menu", async () => {
     renderPage();
 
     const row = await rowFor("Assigned Assistant");
@@ -226,11 +231,35 @@ describe("UsersPage - add account form", () => {
         name: "More actions for Assigned Assistant",
       }),
     );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Supervisors…" }),
+    );
 
-    await screen.findByRole("menu");
     expect(
-      screen.queryByRole("menuitem", { name: "Change supervisor" }),
-    ).toBeNull();
+      await screen.findByRole("dialog", {
+        name: "Supervisors for Assigned Assistant",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("offers Rename on every live row but mine", async () => {
+    renderPage();
+
+    // "Teach One" also appears in the supervisor column, so use a unique row.
+    const row = await rowFor("Floating Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for Floating Assistant",
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+
+    // The menu hands focus back to its trigger as it closes; the dialog it
+    // opened must still end up owning focus.
+    const field = await screen.findByLabelText("Name");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.activeElement).toBe(field);
   });
 });
 

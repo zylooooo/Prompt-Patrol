@@ -85,8 +85,8 @@ export default function ChangeRoleDialog({
       </div>
 
       <p className="mt-4 text-xs leading-relaxed text-disabled-foreground">
-        This is recorded as its own audited action, separately from anything
-        else changed on this account.
+        This is recorded as its own audited action. Changing the role also ends
+        every supervision link this account is part of.
       </p>
 
       {error && (
