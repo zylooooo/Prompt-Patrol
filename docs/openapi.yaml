@@ -18,6 +18,11 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.22.0 A teaching assistant left with no active supervisor is signed
+#          out: deleting, deactivating or changing the role of their last
+#          active instructor now revokes the TA's live sessions in the same
+#          commit, as ending their last link already did. No wire-format
+#          change. See DECISION LOG [0.22.0].
 #   0.21.0 BREAKING — teaching-assistant supervision is many-to-many. A new
 #          `supervisions` table replaces `provisioned_by` as the supervision
 #          edge; `provisioned_by` is now provenance only (who invited) and
@@ -1331,6 +1336,9 @@ paths:
         direction (a deleted TA has no supervisors; a deleted instructor
         supervises no one), in the same commit — [0.21.0].
 
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
+
         **Immediately revokes every active session belonging to this user.**
         This is why the gateway authorizer's `result_ttl_seconds = 0`
         matters (see `x-gateway-configuration`): a cached "session valid"
@@ -1391,6 +1399,8 @@ paths:
         — [0.21.0]. `supervisions` links are kept, so reactivating restores
         the same teams. A deactivated instructor's links stop counting
         toward a TA's `supervisor_ids` until they are reactivated.
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
         Revokes every live session in the same commit. Optional `{reason}`
         body, stored on the `UserStatusEvent` and never shown to the user.
       parameters:
@@ -1544,6 +1554,9 @@ paths:
         Ends every active `supervisions` link the user is on, in the same
         commit ([0.21.0]): a link is only meaningful between an instructor
         and a teaching assistant, and neither end survives a role swap.
+
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
       parameters:
         - name: id
           in: path
@@ -3009,6 +3022,44 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.22.0] No active supervisor, no session.
+#
+#   PROBLEM. [0.21.0] revoked a TA's sessions only when their last link was
+#   ended directly (`DELETE .../supervisors/{instructor_id}`). Three other
+#   writes leave a TA with no active supervisor and revoked nothing:
+#   deleting their instructor and changing their instructor's role (both
+#   end the links), and deactivating their instructor (links kept, but a
+#   deactivated instructor stops counting). The TA kept a live session that
+#   `require_screening_access` refused on every screening call.
+#
+#   DECISION. One rule: whenever a write can remove a TA's last active
+#   supervisor (an active link to an `active` instructor), that TA's live
+#   sessions are revoked in the same commit. Applies to all four writes,
+#   including deactivation — reactivating the instructor restores the links
+#   but not the sessions; the TA signs in again. Not a security fix: the
+#   screening gate already reads the database per request. It keeps one
+#   rule instead of four, and sends the SPA through the existing
+#   `session_revoked` sign-in path instead of leaving it on screening
+#   screens that 403. Signing in is unchanged: a TA with no supervisor may
+#   sign in and sees the unassigned notice.
+#
+#   OPTION REJECTED. Keep the session and have the SPA refetch
+#   `/api/auth/me` on the "not assigned" 403 — frontend work, a special
+#   case for one error message, and a second rule next to [0.21.0]'s.
+#
+#   ACCEPTED EDGES. A link committed concurrently with the revoking write
+#   can leave a now-supervised TA signed out (one extra sign-in).
+#   The reverse race is accepted too: two removals committed concurrently
+#   (e.g. one instructor deleted while the TA's other instructor is
+#   deactivated) each still see the other supervisor, so neither signs the
+#   TA out. The per-request screening gate still returns 403, so this
+#   leaves a stale session, not access. Batches already submitted still
+#   finish; they were authorised when submitted.
+#   The SPA treats a 401 as signed out only on its session query, so a TA
+#   mid-screen sees one inline error until that query refetches (30 s
+#   stale time, window focus, or the expiry timer) — the same delay as an
+#   admin deactivating them. A global 401 handler is a separate change.
 #
 # [0.21.0] Supervision is a many-to-many table; instructors add TAs by email.
 #

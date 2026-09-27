@@ -302,6 +302,109 @@ async def test_deactivation_keeps_links_so_reactivation_restores_the_team(db_ses
     assert ta.supervisor_ids == [instructor.id]
 
 
+# --- no active supervisor, no session ------------------------------------------
+# DECISION LOG [0.22.0]: every write that can remove a TA's last active
+# supervisor signs the TA out in the same commit.
+
+
+async def _lose(db, action, admin, instructor):
+    if action == "delete":
+        await delete_user(db, admin, instructor.id)
+    elif action == "role":
+        await change_user_role(db, admin, instructor.id, UserRoleEnum.teaching_assistant)
+    else:
+        await deactivate_user(db, admin, instructor.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["delete", "role", "deactivate"])
+async def test_losing_the_last_instructor_signs_the_assistant_out(db_session, action):
+    admin, instructor, ta = await _people(
+        db_session,
+        _person(UserRoleEnum.root_admin),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.teaching_assistant),
+    )
+    await _supervise(db_session, ta, instructor)
+    await create_session(db_session, ta.id)
+
+    await _lose(db_session, action, admin, instructor)
+
+    assert await _live_sessions(db_session, ta.id) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["delete", "role", "deactivate"])
+async def test_an_assistant_with_another_instructor_stays_signed_in(db_session, action):
+    admin, leaving, staying, ta = await _people(
+        db_session,
+        _person(UserRoleEnum.root_admin),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.teaching_assistant),
+    )
+    await _supervise(db_session, ta, leaving, staying)
+    await create_session(db_session, ta.id)
+
+    await _lose(db_session, action, admin, leaving)
+
+    assert len(await _live_sessions(db_session, ta.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_deactivated_co_instructor_does_not_keep_the_assistant_signed_in(db_session):
+    admin, leaving, on_leave, ta = await _people(
+        db_session,
+        _person(UserRoleEnum.root_admin),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.teaching_assistant),
+    )
+    await _supervise(db_session, ta, leaving, on_leave)
+    await create_session(db_session, ta.id)
+
+    await deactivate_user(db_session, admin, on_leave.id)
+    assert len(await _live_sessions(db_session, ta.id)) == 1  # `leaving` still counts
+
+    await delete_user(db_session, admin, leaving.id)
+    assert await _live_sessions(db_session, ta.id) == []
+
+
+@pytest.mark.asyncio
+async def test_reactivating_the_instructor_restores_the_team_but_not_the_session(db_session):
+    admin, instructor, ta = await _people(
+        db_session,
+        _person(UserRoleEnum.root_admin),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.teaching_assistant),
+    )
+    await _supervise(db_session, ta, instructor)
+    await create_session(db_session, ta.id)
+
+    await deactivate_user(db_session, admin, instructor.id)
+    await reactivate_user(db_session, admin, instructor.id)
+
+    await db_session.refresh(ta)
+    assert ta.supervisor_ids == [instructor.id]
+    assert await _live_sessions(db_session, ta.id) == []
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_an_instructors_role_signs_no_one_out(db_session):
+    admin, instructor, ta = await _people(
+        db_session,
+        _person(UserRoleEnum.root_admin),
+        _person(UserRoleEnum.instructor),
+        _person(UserRoleEnum.teaching_assistant),
+    )
+    await _supervise(db_session, ta, instructor)
+    await create_session(db_session, ta.id)
+
+    await change_user_role(db_session, admin, instructor.id, UserRoleEnum.instructor)
+
+    assert len(await _live_sessions(db_session, ta.id)) == 1
+
+
 @pytest.mark.asyncio
 async def test_only_root_admin_deactivates_or_reactivates(db_session):
     instructor, ta, off = await _people(

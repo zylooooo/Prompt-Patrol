@@ -3,6 +3,7 @@ import binascii
 import enum
 import logging
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 
 from sqlalchemy import or_, select, update
@@ -123,6 +124,40 @@ async def _end_links(db: AsyncSession, user_id: uuid.UUID, actor_id: uuid.UUID) 
     )
 
 
+async def _supervised_ta_ids(db: AsyncSession, instructor_id: uuid.UUID) -> list[uuid.UUID]:
+    """TAs with an active link to this user: the only ones a change to this
+    user can leave unsupervised. Empty for anyone who is not an instructor."""
+    result = await db.execute(
+        select(Supervision.ta_id).where(Supervision.instructor_id == instructor_id, Supervision.ended_at.is_(None))
+    )
+    return list(result.scalars())
+
+
+async def _sign_out_unsupervised(db: AsyncSession, ta_ids: Collection[uuid.UUID]) -> None:
+    """Revokes the live sessions of any of these TAs left with no active
+    supervisor (DECISION LOG [0.22.0]). "Active supervisor" matches
+    User.supervisors: an active link to an active instructor. No commit - it
+    rides with the change that removed the supervisor."""
+    if not ta_ids:
+        return
+    # The subquery must see this transaction's own link ends and status changes.
+    await db.flush()
+    still_supervised = (
+        select(Supervision.ta_id)
+        .join(User, User.id == Supervision.instructor_id)
+        .where(Supervision.ended_at.is_(None), User.status == UserStatusEnum.active)
+    )
+    await db.execute(
+        update(UserSession)
+        .where(
+            UserSession.user_id.in_(ta_ids),
+            UserSession.user_id.not_in(still_supervised),
+            UserSession.deleted_at.is_(None),
+        )
+        .values(deleted_at=datetime.now(UTC))
+    )
+
+
 def _supervises(actor: User, target: User) -> bool:
     """An instructor holds a TA through an active supervision link, whoever
     provisioned them (DECISION LOG [0.21.0])."""
@@ -184,6 +219,9 @@ async def _transition(
     if to_status not in _ALLOWED_TRANSITIONS[from_status]:
         raise InvalidStatusTransitionError(f"cannot move a {from_status.value} user to {to_status.value}")
 
+    # Read before the change: deleting ends these links.
+    leaving_tas = await _supervised_ta_ids(db, current.id) if to_status != UserStatusEnum.active else []
+
     current.status = to_status
 
     # Any exit from active must invalidate credentials immediately - a session
@@ -196,6 +234,9 @@ async def _transition(
     # reactivating restores the same teams.
     if to_status == UserStatusEnum.deleted:
         await _end_links(db, current.id, actor.id)
+
+    # Either way the instructor stops counting, so their TAs may now have no one.
+    await _sign_out_unsupervised(db, leaving_tas)
 
     db.add(
         UserStatusEvent(
@@ -300,7 +341,9 @@ async def change_user_role(db: AsyncSession, actor: User, user_id: uuid.UUID, ne
     target.role = new_role
     # A link means instructor-supervises-TA; neither end survives a role swap.
     if from_role != new_role:
+        leaving_tas = await _supervised_ta_ids(db, target.id)
         await _end_links(db, target.id, actor.id)
+        await _sign_out_unsupervised(db, leaving_tas)
     db.add(UserRoleEvent(user_id=target.id, actor_id=actor.id, from_role=from_role, to_role=new_role))
     await db.commit()
     await db.refresh(target)
@@ -445,7 +488,7 @@ async def end_supervision(db: AsyncSession, actor: User, ta_id: uuid.UUID, instr
 
     root_admin may end any link but an instructor can only end their own.
     Every refusal is a UserNotFoundError to prevent enumeration of team structure.
-    Ending the TA's last link will atomically revoke their session.
+    Ending the TA's last active link signs them out in the same commit (DECISION LOG [0.22.0]).
     """
     if actor.role != UserRoleEnum.root_admin and actor.id != instructor_id:
         raise UserNotFoundError(str(ta_id))
@@ -463,12 +506,10 @@ async def end_supervision(db: AsyncSession, actor: User, ta_id: uuid.UUID, instr
 
     link.ended_at = datetime.now(UTC)
     link.ended_by = actor.id
-    await db.flush()
+    await _sign_out_unsupervised(db, [ta_id])
 
     target = await _load_manageable(db, ta_id)
     await db.refresh(target)
-    if not target.supervisor_ids:
-        await _revoke_sessions(db, target.id)
     await db.commit()
     logger.info("Supervision of %s by %s ended by %s.", target.id, instructor_id, actor.id)
     return target
@@ -586,7 +627,7 @@ async def create_user(
 async def add_teaching_assistant(db: AsyncSession, actor: User, email: str) -> User:
     """
     Used by instructors to add a TA to their own team.
-    
+
     The whole process is atomic: provision email, invitiation and linking to the instructor.
 
     TODO(notifications): linking a TA who already has supervisors should notify
