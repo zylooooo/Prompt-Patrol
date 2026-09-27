@@ -192,7 +192,7 @@ describe("UsersPage — the supervisor column", () => {
     expect(row.textContent).not.toContain("Unassigned");
   });
 
-  it("names the first supervisor and counts the rest", async () => {
+  it("names the first supervisor, counts the rest, and opens the full list", async () => {
     usersMock.mockReturnValue({
       data: [
         INSTRUCTOR,
@@ -209,7 +209,20 @@ describe("UsersPage — the supervisor column", () => {
 
     const row = await rowFor("Shared Assistant");
 
-    expect(row.textContent).toContain("Teach One +1");
+    expect(row.textContent).toContain("Teach One+1");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "Supervised by Teach One and Teach Two",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit supervisors…" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Supervisors for Shared Assistant",
+      }),
+    ).toBeTruthy();
   });
 });
 

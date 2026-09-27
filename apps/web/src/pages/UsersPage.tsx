@@ -47,6 +47,7 @@ import DeactivateReasonDialog from "../components/DeactivateReasonDialog";
 import DeactivateInstructorDialog from "../components/DeactivateInstructorDialog";
 import ChangeRoleDialog from "../components/ChangeRoleDialog";
 import SupervisorsDialog from "../components/SupervisorsDialog";
+import SupervisorList from "../components/SupervisorList";
 import RenameDialog from "../components/RenameDialog";
 
 type Filter =
@@ -130,13 +131,6 @@ export default function UsersPage() {
       const supervisor = (users ?? []).find((who) => who.id === id);
       return supervisor ? displayName(supervisor) : "Unknown account";
     });
-  }
-
-  function supervisorText(u: AppUser): string {
-    if (u.role !== "teaching_assistant") return "·";
-    const names = supervisorNames(u);
-    if (names.length === 0) return "Unassigned";
-    return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
   }
 
   const filterOptions = useMemo<SegmentedToggleOption<Filter>[]>(
@@ -298,18 +292,22 @@ export default function UsersPage() {
       header: "Supervisor",
       width: "minmax(0,1.2fr)",
       hideWhenCompact: true,
-      cell: (u) => (
-        <span
-          title={supervisorNames(u).join(", ") || undefined}
-          className={`min-w-0 max-w-[11rem] truncate text-[13px] ${
-            supervisorText(u) === "Unassigned"
-              ? "font-medium text-disabled-foreground"
-              : "text-muted-foreground"
-          }`}
-        >
-          {supervisorText(u)}
-        </span>
-      ),
+      cell: (u) => {
+        if (u.role !== "teaching_assistant") {
+          return <span className="text-[13px] text-muted-foreground">·</span>;
+        }
+        const names = supervisorNames(u);
+        if (names.length === 0) {
+          return (
+            <span className="text-[13px] font-medium text-disabled-foreground">
+              Unassigned
+            </span>
+          );
+        }
+        return (
+          <SupervisorList names={names} onEdit={() => setSupervising(u)} />
+        );
+      },
     },
     {
       id: "status",
