@@ -156,6 +156,49 @@ To redo that, set both to null so `filter` keeps and scores everything,
 fill in the two blank columns of `spot_check.csv`, pick new values, and
 rerun `filter`. No new rewrites are paid for.
 
+## Human-edited set
+
+`app/human_edit/` builds the human_edited style: AI answers a student
+touched up before submitting. Editing rules are in
+`docs/human_edit_protocol.md`, settings in `app/human_edit/config.yaml`.
+Two subsets:
+
+- **genuine**: team members edit answers by hand, following the protocol.
+- **simulated**: an LLM applies the same kind of edits at scale. Its prompt
+  is derived from the genuine edits, so it copies real behaviour.
+
+Steps, from inside `app/`:
+
+```
+python -m human_edit.assign --answers ../data/generated/<run_id>/answers.jsonl
+python -m human_edit.collect --returned <folder with the edited sheets>
+python -m human_edit.simulate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot       # dry run
+python -m human_edit.simulate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot --go
+python -m human_edit.compare --run ../data/human_edit/simulated/<run_id>
+python -m human_edit.build --run ../data/human_edit/simulated/<run_id> --push <path_in_repo>
+```
+
+1. `assign` writes one CSV per editor plus `manifest.jsonl` into
+   `data/human_edit/sheets/`. Each answer goes to one editor, and each
+   editor gets a mix of generators and tiers. `edited_answer` starts as a
+   copy of the original and editors change it in place.
+2. `collect` reads the returned sheets into `data/human_edit/genuine.jsonl`.
+   Unchanged rows are dropped and counted. Unknown edit types, unknown ids
+   and rows in the wrong sheet stop the run with a list of rows to fix.
+3. `simulate` derives the prompt from the genuine edits (how often each
+   edit type was used, how many types per answer, and a fixed set of
+   genuine edits as examples) and saves it as `prompt_spec.json`. Answers
+   already hand-edited are skipped. Dry run by default, resumes like the
+   harness.
+4. `compare` measures word-level edit distance for both subsets and writes
+   `comparison.json` plus `comparison.md`, the section for the dataset card.
+5. `build` writes `human_edited.jsonl`: every record labelled
+   `human_edited`, linked to its source through `source_answer_id`, and
+   carrying `edit_source` of `genuine` or `simulated`. The edit_source is
+   set from the file a record came from, so a simulated edit can never be
+   passed off as genuine. `--push` sends the file to the shared artifact
+   repo and records the version id in `build_report.json`.
+
 ## Splicer
 
 Builds the mixed-authorship documents for the partial-AI class. Each

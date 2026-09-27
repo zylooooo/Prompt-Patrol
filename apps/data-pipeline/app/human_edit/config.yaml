@@ -1,0 +1,28 @@
+# Human-edited AI answer set (PP-101). API keys live in .env
+# see docs/human_edit_protocol.md for the editing rules
+questions_file: data/cleaned/mohler_cleaned.parquet
+dataset: mohler
+seed: 42
+# the only edit types editors may use, spelled as in the protocol
+edit_types: [reorder, delete, reword, fact_tweak]
+genuine:
+  # open question on PP-101: size of the genuine subset and the split
+  # across members, proposed default ten each, fifty total
+  editors: [faheem, sean, loo, malcolm, tori]
+  per_editor: 10
+simulated:
+  # fraction of the remaining raw AI answers the LLM edits, sampled per
+  # generator and tier. answers used in the genuine subset are skipped
+  share: 1.0
+  # genuine edits shown to the LLM as examples in every prompt
+  examples: 6
+  # same placeholder model as the paraphrase pass, pending team agreement
+  editor:
+    name: deepseek-v4-pro
+    provider: deepseek
+    model: deepseek-v4-pro
+    extra_body:
+      thinking: {type: disabled}
+  decoding:
+    temperature: 0.8
+    max_tokens: 500
