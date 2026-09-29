@@ -4,7 +4,14 @@ import { MemoryRouter } from "react-router-dom";
 import { installDomStubs } from "../../test/dom-stubs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 /**
  * The defect this covers: the roster's supervisor column was resolved through a
@@ -19,20 +26,26 @@ vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => useAuthMock() as unknown,
 }));
 
+const showToastMock = vi.fn();
 vi.mock("../../hooks/useToast", () => ({
-  useToast: () => ({ showToast: vi.fn() }),
+  useToast: () => ({ showToast: showToastMock }),
 }));
 
 const usersMock = vi.fn();
+const resendMock = vi.fn();
+const createMock = vi.fn();
 vi.mock("../../hooks/useUsers", () => {
   const idle = () => ({ mutateAsync: vi.fn(), isPending: false });
   return {
+    useResendInvite: () => resendMock() as unknown,
     useUsers: () => usersMock() as unknown,
-    useCreateAccount: idle,
+    useCreateAccount: () => createMock() as unknown,
     useSetUserActive: idle,
     useDeleteUser: idle,
-    useSetSupervisor: idle,
     useDeactivateInstructor: idle,
+    useLinkSupervisor: idle,
+    useUnlinkSupervisor: idle,
+    useUpdateDisplayName: idle,
   };
 });
 
@@ -41,8 +54,9 @@ const user = (over: Partial<AppUser> & Pick<AppUser, "id">): AppUser => ({
   name: null,
   role: "teaching_assistant",
   status: "active",
-  provisionedBy: null,
+  supervisorIds: [],
   createdAt: "2026-07-01T00:00:00.000Z",
+  firstLoginAt: "2026-07-02T00:00:00.000Z",
   ...over,
 });
 
@@ -54,7 +68,7 @@ const INSTRUCTOR = user({
 const ASSIGNED = user({
   id: "ta-assigned",
   name: "Assigned Assistant",
-  provisionedBy: "inst-1",
+  supervisorIds: ["inst-1"],
 });
 const UNASSIGNED = user({ id: "ta-floating", name: "Floating Assistant" });
 
@@ -77,9 +91,11 @@ beforeEach(() => {
   localStorage.clear();
   useAuthMock.mockReturnValue({
     user: {
+      id: "admin-1",
       email: "admin@smu.edu.sg",
+      name: "Admin",
       role: "root_admin",
-      provisionedBy: null,
+      supervisorIds: [],
     },
     isPending: false,
     isError: false,
@@ -89,6 +105,8 @@ beforeEach(() => {
     data: [INSTRUCTOR, ASSIGNED, UNASSIGNED],
     isPending: false,
   });
+  resendMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  createMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 afterEach(() => {
   cleanup();
@@ -102,6 +120,36 @@ async function rowFor(name: string): Promise<HTMLElement> {
   if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`);
   return row;
 }
+
+describe("UsersPage — when the roster fails to load", () => {
+  it("says so instead of claiming no accounts match", async () => {
+    usersMock.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    await waitFor(() => screen.getByText("Could not load accounts"));
+    expect(screen.queryByText("No accounts match this filter.")).toBeNull();
+  });
+
+  it("keeps the roster on screen when only a refetch failed", async () => {
+    usersMock.mockReturnValue({
+      data: [INSTRUCTOR],
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    await rowFor("Teach One");
+    expect(screen.queryByText("Could not load accounts")).toBeNull();
+  });
+});
 
 describe("UsersPage — the supervisor column", () => {
   it("names the instructor the server recorded", async () => {
@@ -142,5 +190,272 @@ describe("UsersPage — the supervisor column", () => {
 
     expect(row.textContent).toContain("·");
     expect(row.textContent).not.toContain("Unassigned");
+  });
+
+  it("names the first supervisor, counts the rest, and opens the full list", async () => {
+    usersMock.mockReturnValue({
+      data: [
+        INSTRUCTOR,
+        user({ id: "inst-2", name: "Teach Two", role: "instructor" }),
+        user({
+          id: "ta-shared",
+          name: "Shared Assistant",
+          supervisorIds: ["inst-1", "inst-2"],
+        }),
+      ],
+      isPending: false,
+    });
+    renderPage();
+
+    const row = await rowFor("Shared Assistant");
+
+    expect(row.textContent).toContain("Teach One+1");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "Supervised by Teach One and Teach Two",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit supervisors…" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Supervisors for Shared Assistant",
+      }),
+    ).toBeTruthy();
+  });
+});
+
+describe("UsersPage - add account form", () => {
+  it("asks for no name", () => {
+    renderPage();
+
+    expect(screen.queryByPlaceholderText("Full name")).toBeNull();
+  });
+});
+
+describe("UsersPage - row menu", () => {
+  it("opens the supervisors of an assistant from the row menu", async () => {
+    renderPage();
+
+    const row = await rowFor("Assigned Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for Assigned Assistant",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Supervisors…" }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Supervisors for Assigned Assistant",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("offers Rename on every live row but mine", async () => {
+    renderPage();
+
+    // "Teach One" also appears in the supervisor column, so use a unique row.
+    const row = await rowFor("Floating Assistant");
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for Floating Assistant",
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+
+    // The menu hands focus back to its trigger as it closes; the dialog it
+    // opened must still end up owning focus.
+    const field = await screen.findByLabelText("Name");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe("UsersPage - finding accounts", () => {
+  it("counts each filter and searches by name or email", async () => {
+    renderPage();
+
+    await rowFor("Assigned Assistant");
+    expect(screen.getByRole("radio", { name: "All 3" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Unassigned 1" })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search accounts"), {
+      target: { value: "floating" },
+    });
+    await rowFor("Floating Assistant");
+    expect(screen.queryByText("Assigned Assistant")).toBeNull();
+  });
+
+  it("offers a way out of an empty search", async () => {
+    renderPage();
+    await rowFor("Assigned Assistant");
+
+    fireEvent.change(screen.getByLabelText("Search accounts"), {
+      target: { value: "zzz" },
+    });
+    await waitFor(() => screen.getByText('No accounts match "zzz".'));
+    fireEvent.click(screen.getByRole("button", { name: "Show all accounts" }));
+    await rowFor("Assigned Assistant");
+  });
+});
+
+describe("UsersPage - pending invites", () => {
+  const PENDING = user({
+    id: "ta-new",
+    name: "New Assistant",
+    firstLoginAt: null,
+  });
+
+  it("counts and filters pending accounts", async () => {
+    usersMock.mockReturnValue({
+      data: [INSTRUCTOR, ASSIGNED, PENDING],
+      isPending: false,
+    });
+    renderPage();
+
+    await rowFor("New Assistant");
+    fireEvent.click(screen.getByRole("radio", { name: "Pending 1" }));
+
+    await rowFor("New Assistant");
+    expect(screen.queryByText("Assigned Assistant")).toBeNull();
+  });
+
+  it("offers Resend invite inline, only on a pending row, and reports success", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(PENDING);
+    resendMock.mockReturnValue({ mutateAsync, isPending: false });
+    usersMock.mockReturnValue({
+      data: [INSTRUCTOR, ASSIGNED, PENDING],
+      isPending: false,
+    });
+    renderPage();
+
+    const row = await rowFor("New Assistant");
+    fireEvent.click(within(row).getByRole("button", { name: "Resend invite" }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith("ta-new"));
+    expect(showToastMock).toHaveBeenCalledWith(
+      "Invite resent to ta-new@smu.edu.sg.",
+    );
+
+    const signedIn = await rowFor("Assigned Assistant");
+    expect(
+      within(signedIn).queryByRole("button", { name: "Resend invite" }),
+    ).toBeNull();
+    expect(
+      within(signedIn).getByRole("button", { name: "Deactivate" }),
+    ).toBeTruthy();
+  });
+
+  it("moves Deactivate into the menu on a pending row", async () => {
+    usersMock.mockReturnValue({
+      data: [INSTRUCTOR, PENDING],
+      isPending: false,
+    });
+    renderPage();
+
+    const row = await rowFor("New Assistant");
+    expect(
+      within(row).queryByRole("button", { name: "Deactivate" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(row).getByRole("button", {
+        name: "More actions for New Assistant",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Deactivate" }),
+    ).toBeTruthy();
+  });
+
+  it("says the invite wasn't sent when the resend fails", async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error("boom"));
+    resendMock.mockReturnValue({ mutateAsync, isPending: false });
+    usersMock.mockReturnValue({
+      data: [INSTRUCTOR, PENDING],
+      isPending: false,
+    });
+    renderPage();
+
+    const row = await rowFor("New Assistant");
+    fireEvent.click(within(row).getByRole("button", { name: "Resend invite" }));
+
+    await waitFor(() =>
+      expect(showToastMock).toHaveBeenCalledWith(
+        "Couldn't resend the invite to ta-new@smu.edu.sg. Try again.",
+        { tone: "error" },
+      ),
+    );
+  });
+});
+
+describe("UsersPage - email typo check", () => {
+  async function fill(email: string) {
+    fireEvent.change(screen.getByLabelText(/SMU email/), {
+      target: { value: email },
+    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Teaching Assistant" }),
+    );
+  }
+
+  it("pauses once on a near-miss domain and lets the admin keep it", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await fill("ann@gmial.com");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    await screen.findByText(/Did you mean/);
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep as typed" }));
+    expect(screen.queryByText(/Did you mean/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+  });
+
+  it("swaps in the suggestion", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await fill("ann@gmial.com");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Use / }));
+
+    expect(screen.getByLabelText(/SMU email/)).toHaveProperty(
+      "value",
+      "ann@gmail.com",
+    );
+  });
+
+  it("pauses again if the address is edited and then restored", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await fill("ann@gmial.com");
+    const submit = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+
+    submit();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Keep as typed" }),
+    );
+    fireEvent.change(screen.getByLabelText(/SMU email/), {
+      target: { value: "ann@gmial.co" },
+    });
+    fireEvent.change(screen.getByLabelText(/SMU email/), {
+      target: { value: "ann@gmial.com" },
+    });
+    submit();
+
+    await screen.findByText(/Did you mean/);
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 });

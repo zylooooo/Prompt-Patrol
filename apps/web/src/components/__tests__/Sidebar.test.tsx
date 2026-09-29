@@ -5,7 +5,14 @@ import userEvent from "@testing-library/user-event";
 import { installDomStubs } from "../../test/dom-stubs";
 import { renderWithProviders } from "../../test/render";
 import { cleanup, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../hooks/useUsers", () => ({
+  useUpdateDisplayName: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 
 /**
  * Desktop behaviour. `installDomStubs({ matches: true })` makes the
@@ -14,10 +21,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  * behaviour lives in Sidebar.mobile.test.tsx for the same reason.
  */
 
-const asUser = (role: User["role"]): User => ({
+const asUser = (role: User["role"], name: string | null = null): User => ({
+  id: "u-ada",
   email: "ada@smu.edu.sg",
+  name,
   role,
-  provisionedBy: null,
+  supervisorIds: [],
 });
 
 beforeEach(() => installDomStubs({ matches: true }));
@@ -218,6 +227,27 @@ describe("Sidebar — desktop layout", () => {
     await userEvent.tab();
     expect(document.activeElement?.getAttribute("aria-label")).not.toBe(
       "Close navigation",
+    );
+  });
+});
+
+describe("Sidebar - who is signed in", () => {
+  it("shows my name above my email and lets me change it", async () => {
+    renderAt(asUser("instructor", "Ada Lovelace"));
+
+    expect(screen.getByText("Ada Lovelace")).toBeTruthy();
+    expect(screen.getByText("ada@smu.edu.sg").className).toContain("font-mono");
+    await userEvent.click(screen.getByRole("button", { name: "Change name" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Change your name" }),
+    ).toBeTruthy();
+  });
+
+  it("keeps the email as the headline until a name is chosen", () => {
+    renderAt(asUser("instructor"));
+
+    expect(screen.getByText("ada@smu.edu.sg").className).not.toContain(
+      "font-mono",
     );
   });
 });

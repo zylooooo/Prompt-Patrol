@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.13.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.21.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,55 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.22.0 A teaching assistant left with no active supervisor is signed
+#          out: deleting, deactivating or changing the role of their last
+#          active instructor now revokes the TA's live sessions in the same
+#          commit, as ending their last link already did. No wire-format
+#          change. See DECISION LOG [0.22.0].
+#   0.21.0 BREAKING — teaching-assistant supervision is many-to-many. A new
+#          `supervisions` table replaces `provisioned_by` as the supervision
+#          edge; `provisioned_by` is now provenance only (who invited) and
+#          grants nothing. `User` gains `supervisor_ids`. Added
+#          `POST /api/users/teaching-assistants` (instructor add-by-email:
+#          creates or links, one generalised response), `POST` and `DELETE
+#          /api/users/{id}/supervisors[/{instructor_id}]`, and
+#          `PATCH /api/users/{id}` (display name). REMOVED
+#          `POST /api/users/{id}/supervisor` and `SupervisorChangeRequest`.
+#          `POST /api/users` is now `root_admin` only and takes `{email,
+#          role, supervisor_id?}` — `display_name` is removed (people choose
+#          their own after first sign-in); `supervisor_id` now creates a
+#          `supervisions` link in the same commit as the account.
+#          `/deactivate` and `/reactivate` are now `root_admin` only.
+#          See DECISION LOG [0.21.0].
+#   0.20.0 `StatusChangeRequest.reason` is now normalised server-side
+#          (trimmed, control characters and `<`/`>` removed, blank -> null).
+#          Clarification, no behaviour change: a pending account (`status =
+#          active`, `first_login_at` null) may be deactivated by whoever may
+#          manage it (`instructor` for their own TAs, `root_admin` for
+#          anyone) and deleted by `root_admin`. No field or endpoint added
+#          or removed. See DECISION LOG [0.20.0].
+#   0.19.0 `User` gains nullable `first_login_at` (null until the person's
+#          first successful sign-in, i.e. "invite pending"), and
+#          `POST /api/users/{id}/resend-invite` re-sends the Auth0
+#          password-set email for an account that has never signed in.
+#          Purely additive: no field or endpoint removed. See DECISION LOG
+#          [0.19.0].
+#   0.18.0 Users module catch-up: the contract described a `deleted_at`
+#          soft-delete and `POST /api/users/{id}/restore`; the shipped API
+#          uses a three-state `status` (`active` / `deactivated` /
+#          `deleted`). `User` drops `deleted_at` and `first_login_at` and
+#          gains `status`; `GET /api/users` swaps `include_deleted` for a
+#          repeatable `status` filter (default `active`); added
+#          `POST /api/users/{id}/deactivate` and `.../reactivate`; removed
+#          `/restore`; `DELETE` is root_admin-only, returns `200 User`, and
+#          `409`s on an already-deleted target instead of `204`; login
+#          rejection gains a distinct `deleted` code. No behaviour change:
+#          this brings the document in line with the code. See DECISION LOG
+#          [0.18.0].
+#   0.17.0 POST /api/users now replaces an Auth0 Database credential that
+#          already exists for the email (deleting it, then inviting afresh)
+#          instead of failing `502`. No wire-format change. See DECISION LOG
+#          [0.17.0].
 #   0.16.0 BatchProgress gains `failures` (array of BatchRowFailure) — the
 #          schema was defined in [0.13.0] but never referenced by any
 #          endpoint, so instructors only ever saw a `failed` count with no
@@ -641,18 +690,19 @@ paths:
 
         | Case | Match | Action |
         |------|-------|--------|
-        | Returning user | `external_id` (Auth0 `sub`), `deleted_at IS NULL` | Return the row |
-        | First login | `email` (case-insensitive) where `external_id IS NULL` and `deleted_at IS NULL` | Bind `sub`, set `display_name`, stamp `first_login_at`, return |
-        | Deactivated | match found (by either rule above) but `deleted_at IS NOT NULL` | **Reject** — `deactivated`, not `not_provisioned` |
-        | Unprovisioned | no match at all | **Reject** — `not_provisioned` |
+        | Allowed | `auth0_sub` matches a row whose `status` is `active` (the `sub` is stored when the credential is created at provisioning) | Return the row |
+        | Deactivated | no active match, but the newest row for the token's `email` has `status = deactivated` | **Reject** — `deactivated` |
+        | Deleted | same, with `status = deleted` | **Reject** — `deleted` |
+        | Unprovisioned | no row for the email at all | **Reject** — `not_provisioned` |
 
         On rejection: **no user row is created/modified and no session is
-        issued.** Redirect to the SPA's `not_provisioned` or `deactivated`
-        route accordingly — these are deliberately distinguishable in the
-        response and in the audit log (never had access, vs. access was
-        revoked), even if you choose to show the end user the same generic
-        front-end copy for both. Repeated unprovisioned or deactivated login
-        attempts against this endpoint are a signal worth retaining.
+        issued.** Redirect to the SPA's `not_provisioned`, `deactivated` or
+        `deleted` route accordingly — these are deliberately distinguishable
+        in the response and in the audit log (never had access, vs. access
+        was paused, vs. the account was removed), even if you choose to show
+        the end user the same generic front-end copy for all. Repeated
+        rejected login attempts against this endpoint are a signal worth
+        retaining.
 
         Auth never names a role, never writes `users.role`, and never decides
         eligibility. It delegates and acts on the answer.
@@ -940,9 +990,7 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY # authentication only
-      x-authorization: |
-        users module — delegation-scoped, see table below. Not a single
-        require_role() call.
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
         Creates a `users` row keyed on `email`, with `auth0_sub` left NULL —
         first login binds it (see `/api/auth/callback`). No session is
@@ -958,43 +1006,25 @@ paths:
         saved, rather than leaving a `users` row for an email that can
         never log in.
 
-        `provisioned_by` carries the supervision edge for a
-        `teaching_assistant` — see DECISION LOG [0.5.6]. It is derived, never
-        taken at face value:
+        **`root_admin` only** (`403` for anyone else). Instructors add
+        teaching assistants through `POST /api/users/teaching-assistants`,
+        which can also link an existing account — see DECISION LOG [0.21.0].
+        `role` may be `instructor` or `teaching_assistant`; `root_admin` is
+        always `403` (there is exactly one, created by the seed migration).
 
-        | Caller       | `role`               | `supervisor_id` | `provisioned_by` |
-        |--------------|----------------------|-----------------|------------------|
-        | `root_admin` | `teaching_assistant` | an instructor   | that instructor  |
-        | `root_admin` | `teaching_assistant` | omitted/null    | `NULL`           |
-        | `root_admin` | `instructor`         | must be absent  | the admin        |
-        | `instructor` | `teaching_assistant` | absent or self  | the instructor   |
-        | `instructor` | `teaching_assistant` | a colleague     | `403`            |
+        `provisioned_by` is set to the caller and never changes afterwards.
+        It records who issued the invite and **grants nothing**: supervision
+        lives in the `supervisions` table.
 
-        An admin-created assistant with no named instructor is genuinely
-        unassigned — `NULL`, not the admin's id. The admin does not supervise,
-        and an assistant with no supervisor cannot screen, so recording the
-        admin there would grant access nobody granted.
+        Optional `supervisor_id` (`teaching_assistant` only, must be an
+        `active` `instructor`, otherwise `400`) links the new TA in the same
+        commit as the account and the Auth0 invite — all or nothing: if any
+        part fails, no row, no link and no credential are left behind.
+        Without it the TA starts unassigned (`supervisor_ids: []`) and cannot
+        screen until `POST /api/users/{id}/supervisors` links one.
 
-        ### Delegation-scoped authorization
-        Enforces the delegation chain from `info.description` §Provisioning:
-
-        | Caller role           | May provision role     |
-        |------------------------|-------------------------|
-        | `root_admin`           | `instructor`             |
-        | `instructor`           | `teaching_assistant`     |
-        | `teaching_assistant`   | — (`403`)                |
-
-        `root_admin` itself can never be a value of `role` in the request
-        body — there is exactly one, created only by the seed migration,
-        `provisioned_by = NULL`. Requesting it is `403` regardless of caller.
-
-        > **OPEN QUESTION — confirm before this ships.** `teaching_assistant`
-        > is scoped as an E5 extension in the proposal (not yet built in the
-        > web app). This table gives `instructor` real delegation authority
-        > to provision TA accounts *today*, matching the chain already
-        > committed to in v0.3.0's decision log. If that authority shouldn't
-        > be live until E5 actually exists, restrict the caller column to
-        > `root_admin` only for now and revisit this table when E5 starts.
+        No display name is taken: the new user chooses their own after first
+        sign-in (`PATCH /api/users/{id}`), so `display_name` starts null.
       requestBody:
         required: true
         content:
@@ -1003,10 +1033,11 @@ paths:
       responses:
         "201":
           description: |
-            User provisioned. `first_login_at` is null until they sign in.
+            User provisioned, `status: active`.
             Auth0 has already emailed the invitee a one-time link to set
-            their own password — there is nothing further for this response
-            to hand back.
+            their own password (replacing any stale credential for that
+            email — see DECISION LOG [0.17.0]) — there is nothing further
+            for this response to hand back.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
@@ -1016,18 +1047,17 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           description: |
-            Caller's role may not provision the requested role (see
-            delegation table), or the request named `root_admin`.
+            The caller is not `root_admin`, or the request named `root_admin`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: |
-            `email` already has a `users` row. If that row is soft-deleted,
-            use `POST /api/users/{id}/restore` instead — restoring an
-            existing account and provisioning a new one are different
-            audited actions, and collapsing them into upsert semantics here
-            would blur that distinction in the audit trail.
+            `email` already belongs to a row whose `status` is `active` or
+            `deactivated` (use `POST /api/users/{id}/reactivate` for the
+            latter). A `deleted` row does not block provisioning: the new
+            account reuses that row, with a fresh Auth0 credential and a
+            `deleted → active` entry in the status history.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1053,16 +1083,17 @@ paths:
         [0.4.0]'s original root_admin-only text:
           - `root_admin` sees every row, any role, including other
             `root_admin` rows.
-          - `instructor` sees only `teaching_assistant` rows they themselves
-            provisioned. Never other instructors, never `root_admin`, never
-            TAs provisioned by someone else.
+          - `instructor` sees only `teaching_assistant` rows they currently
+            supervise (an active `supervisions` link, [0.21.0]) — whoever
+            provisioned them. Never other instructors, never `root_admin`,
+            never TAs they do not supervise.
           - `teaching_assistant` gets `403` — this is a role-level floor
             gate for TAs, not an object-level scoping question.
 
         `role` is a *filter* on an already-scoped result set, not an
         authorization input — same filter-vs-create asymmetry as elsewhere
         in this contract. For an `instructor` caller, the effective scope is
-        always `role=teaching_assistant AND provisioned_by=<caller>`
+        always `role=teaching_assistant AND supervised by <caller>`
         regardless of what `role` value is passed; requesting a `role` value
         outside that scope silently returns an empty page rather than
         `403`, so there's nothing to enumerate about whether e.g. another
@@ -1073,10 +1104,19 @@ paths:
           schema:
             type: string
             enum: [root_admin, instructor, teaching_assistant]
-        - name: include_deleted
+        - name: status
           in: query
-          schema: { type: boolean, default: false }
-          description: Include soft-deleted rows. Excluded by default.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/UserStatus" }
+            default: [active]
+          description: |
+            Repeat to widen, e.g. `?status=active&status=deactivated`.
+            Defaults to `active` only, so `deleted` rows are returned only
+            when asked for by name and an ordinary screen cannot show them
+            by accident.
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
@@ -1106,7 +1146,135 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/users/teaching-assistants:
+    post:
+      tags: [users]
+      operationId: addTeachingAssistant
+      summary: Add a teaching assistant to the caller's team by email (creates or links)
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — require_role('instructor') exactly (not root_admin), see DECISION LOG [0.21.0]"
+      description: |
+        The instructor's single "add a teaching assistant" action. The caller
+        types an email; the server works out what that means:
+
+        | `email` belongs to                              | Effect                                                   |
+        |-------------------------------------------------|----------------------------------------------------------|
+        | no live account                                  | provision a `teaching_assistant` + Auth0 invite (as `POST /api/users`), link to caller |
+        | an `active` `teaching_assistant`, any supervisors | add an active link to the caller; **no** Auth0 call      |
+        | a TA the caller already supervises               | no-op                                                    |
+        | a `deactivated` or `deleted` account, any role   | refuse (`409`)                                           |
+        | an `active` `instructor` or `root_admin`         | refuse (`409`)                                           |
+
+        **The response does not say which row applied.** Every success is
+        the same `200` with the resulting `User`; every refusal is the same
+        `409` with a fixed message. The reason for a refusal is written to
+        the application log only, so the root administrator can look it up
+        when the instructor gets in touch. What still leaks — "this email is
+        an existing account that cannot be added" versus "addable", and a
+        pending vs. active row appearing on the caller's team — is accepted
+        and documented in DECISION LOG [0.21.0].
+
+        Unlike `POST /api/users`, a `deleted` email is **not** re-provisioned
+        here. Reusing a deleted account is a `root_admin` decision.
+
+        Linking never touches the existing account's `display_name`,
+        `provisioned_by`, credential or status. A new account's
+        `provisioned_by` is the caller; its `display_name` starts null.
+
+        Linking to a TA someone else already supervises SHOULD notify that
+        instructor and `root_admin`. There is no notification system yet;
+        until there is, nothing is sent and the link is visible only in the
+        TA's `supervisor_ids`. Recorded in DECISION LOG [0.21.0] as deferred.
+
+        No confirmation token — the SPA asks the caller to confirm the email
+        they typed before sending, which shows nothing the caller did not
+        already enter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeachingAssistantAddRequest" }
+      responses:
+        "200":
+          description: |
+            The TA is now on the caller's team (created, linked, or already
+            there — indistinguishable by design). If the account is new, Auth0
+            has emailed a password-set link.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            This email cannot be added. Always the same `detail`, whatever the
+            reason: "This email can't be added. Contact the root administrator."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: |
+            Auth0 could not create the credential for a new account. Nothing
+            was saved; retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/users/{id}:
+    patch:
+      tags: [users]
+      operationId: updateUserDisplayName
+      summary: Set a user's display name
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — self or root_admin, see DECISION LOG [0.21.0]"
+      description: |
+        The only field it changes is `display_name`. Anyone may set their
+        own, at any time; `root_admin` may set anyone's. Everyone else gets
+        `404` (object-level, same as `GET`) — an instructor cannot rename
+        their teaching assistants.
+
+        The SPA asks for a name on the first sign-in where `display_name`
+        is null, before showing anything else. That step is a courtesy: the
+        server does not gate other endpoints on a missing name, since an
+        unnamed account is shown by its email and nothing breaks.
+
+        Not audited beyond the application log: a name grants no access.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserPatchRequest" }
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The target is `deleted`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
     get:
       tags: [users]
       operationId: getUser
@@ -1120,12 +1288,11 @@ paths:
         this route, visibility of the *target* is what varies:
           - `root_admin` may view anyone, including other `root_admin` rows.
           - Anyone may view their own record.
-          - `instructor` may view other `instructor` and `teaching_assistant`
-            rows, but not `root_admin` rows.
-          - `teaching_assistant` may view any `instructor` row, and any
-            `teaching_assistant` row sharing the same `provisioned_by`
-            (i.e. created by the same instructor), but not `root_admin` rows
-            and not TAs provisioned by a different instructor.
+          - `instructor` may view the `teaching_assistant` rows they
+            currently supervise ([0.21.0]) — the same set `listUsers`
+            returns them. Not other instructors, not `root_admin`.
+          - `teaching_assistant` may view their own active supervisors
+            (`supervisor_ids`), nobody else.
         Out-of-scope targets return `404`, same as a nonexistent id — see
         the `NotFound` schema. There is no `403` path for this endpoint: it
         has no function-level role gate, so every denial is object-level.
@@ -1151,63 +1318,212 @@ paths:
     delete:
       tags: [users]
       operationId: deleteUser
-      summary: Soft-delete a user and revoke all of their sessions
+      summary: Delete a user (terminal) and revoke all of their sessions
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.18.0]"
       description: |
-        Sets `deleted_at = now()`. Never a hard delete — the audit trail's
-        referential integrity depends on the row surviving, same rationale
-        as soft-deleted sessions.
+        Moves the row to `status = deleted`. The row is never removed — the
+        audit trail's referential integrity depends on it surviving, same
+        rationale as soft-deleted sessions. Optional `{reason}` body (max 500
+        characters) is stored on the `UserStatusEvent`.
 
-        Delegation-scoped, same chain as `POST /api/users`: `root_admin` may
-        delete anyone; `instructor` may only delete `teaching_assistant`
-        rows they themselves provisioned; `teaching_assistant` may delete
-        no one. Unauthorized attempts return `403`, not `404` — this is a
-        role-level gate, not an object-level visibility check, so there's
-        nothing to hide about the target's existence once the actor is
-        already known to be able to see users of that kind.
+        **`root_admin` only**, and never another `root_admin`. `403` for
+        anyone else. Nobody may delete their own account.
 
-        **Immediately revokes every active session belonging to this user**,
-        not just the profile flag. This is the users module calling back
-        into auth-owned state — the mirror image of auth calling
-        `users.resolve_or_reject` at callback time (see
-        `/api/auth/callback` step 6), just in the other direction:
+        Ends every active `supervisions` link the user is on, in either
+        direction (a deleted TA has no supervisors; a deleted instructor
+        supervises no one), in the same commit — [0.21.0].
 
-        ```python
-        await sessions.revoke_all_for_user(user_id)
-        # internal cross-module call, not a public endpoint.
-        ```
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
 
-        This is why the gateway authorizer's `result_ttl_seconds = 0` matters
-        (see `x-gateway-configuration`): without it, a cached "session valid"
-        decision could outlive this revocation by up to the cache TTL, and
-        "immediately" would be false.
+        **Immediately revokes every active session belonging to this user.**
+        This is why the gateway authorizer's `result_ttl_seconds = 0`
+        matters (see `x-gateway-configuration`): a cached "session valid"
+        decision would outlive this revocation.
+
+        Removes the Auth0 credential after the local change commits. If that
+        call fails the row is still `deleted` and the failure is logged;
+        re-provisioning the email replaces the stale credential (see
+        DECISION LOG [0.17.0]).
 
         A deleted user hitting `/api/auth/callback` afterward is rejected
-        with the distinct `deactivated` error code, not `not_provisioned` —
-        the audit trail should be able to tell "never had access" apart from
-        "access was revoked."
-
-        Distinct from `DELETE /api/admin/sessions/{session_id}`, which
-        revokes exactly one session and does not touch the user record.
+        with the distinct `deleted` code.
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
       responses:
-        "204":
+        "200":
           description: |
-            Deleted; all sessions for this user revoked. Idempotent — an
-            already-deleted user returns 204.
+            The row, now `deleted`. Returned rather than `204` so the caller
+            sees the resulting status without a second read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already deleted. Deletion is terminal, not idempotent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/deactivate:
+    post:
+      tags: [users]
+      operationId: deactivateUser
+      summary: Pause an account (reversible) and revoke its sessions
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
+      description: |
+        `active → deactivated`. **`root_admin` only**, on anyone but
+        themselves (a lone root admin would lock the system out); `403` for
+        everyone else. Instructors used to hold this over their own TAs; with
+        shared TAs one instructor could lock a TA out of every team, so they
+        now only end their own link (`DELETE .../supervisors/{instructor_id}`)
+        — [0.21.0]. `supervisions` links are kept, so reactivating restores
+        the same teams. A deactivated instructor's links stop counting
+        toward a TA's `supervisor_ids` until they are reactivated.
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
+        Revokes every live session in the same commit. Optional `{reason}`
+        body, stored on the `UserStatusEvent` and never shown to the user.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
+      responses:
+        "200":
+          description: The row, now `deactivated`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a legal transition (e.g. the target is already deactivated or deleted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/reactivate:
+    post:
+      tags: [users]
+      operationId: reactivateUser
+      summary: Return a deactivated account to active
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
+      description: |
+        `deactivated → active`, same `root_admin`-only scope and body as
+        `/deactivate`. Cannot revive a `deleted` account (`409`) — that takes
+        a fresh `POST /api/users`. Old sessions stay revoked: the person
+        signs in again.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChangeRequest" }
+      responses:
+        "200":
+          description: The row, now `active`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a legal transition (the target is not currently deactivated).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{id}/resend-invite:
+    post:
+      tags: [users]
+      operationId: resendUserInvite
+      summary: Re-send the password-set email to an invitee who has never signed in
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.19.0]"
+      description: |
+        Asks Auth0 to email the invitee the same password-set link again for
+        the credential created at provisioning. Creates nothing and changes
+        no local state. Only valid for an `active` account whose
+        `first_login_at` is null; anything else is `409`.
+
+        Delegation-scoped: `root_admin` may act on anyone but themselves;
+        `instructor` only on `teaching_assistant` rows they currently
+        supervise, whoever provisioned them ([0.21.0]); `teaching_assistant`
+        on no one (`403`).
+
+        Not audited beyond the application log — it changes no access. No
+        rate limit of its own: Auth0's per-tenant limits apply, and a
+        refused send surfaces as `502`. The link's lifetime is an Auth0
+        tenant setting and is deliberately not stated here.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The unchanged row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The account is not active, or has already signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Auth0 could not send the email. Nothing changed; retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/users/{id}/role:
     patch:
@@ -1234,6 +1550,13 @@ paths:
 
         Cannot target `root_admin`, in either direction — it is not
         reassigned via API in or out.
+
+        Ends every active `supervisions` link the user is on, in the same
+        commit ([0.21.0]): a link is only meaningful between an instructor
+        and a teaching assistant, and neither end survives a role swap.
+
+        Any teaching assistant left with no active supervisor is signed
+        out in the same commit ([0.22.0]).
       parameters:
         - name: id
           in: path
@@ -1259,39 +1582,26 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/users/{id}/supervisor:
+  /api/users/{id}/supervisors:
     post:
       tags: [users]
-      operationId: setUserSupervisor
-      summary: Assign, move or unassign a teaching assistant's supervisor
+      operationId: addUserSupervisor
+      summary: Link an instructor as a supervisor of a teaching assistant
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "users module — see DECISION LOG [0.5.6]"
+      x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
-        Sets `provisioned_by` on a `teaching_assistant`. Its own endpoint for
-        the same reason `/role` is: supervision decides who may manage the row
-        and whether the assistant can screen at all, so changing it is a
-        distinct action rather than a field on a general update.
+        Adds an active `supervisions` link between the teaching assistant
+        `{id}` and `instructor_id`. **`root_admin` only**: this is how the
+        admin places a TA it created, or re-places one. Instructors add
+        themselves by email through `POST /api/users/teaching-assistants`
+        instead, so they never need a TA's id.
 
-        Placing people is a `root_admin` act. An `instructor` may only
-        **release** their own assistant — `supervisor_id: null` on a row whose
-        `provisioned_by` is already theirs. Anything else from an instructor is
-        `403`, including claiming an unassigned account: `provisioned_by` is
-        what grants management of the row, so an instructor who could assign
-        could hand a colleague access, or help themselves to someone else's
-        assistant. A `teaching_assistant` reaches this endpoint never.
-
-        Unassigning **revokes the assistant's live sessions**, in the same
-        commit. The SPA answers "may this person screen?" from the session
-        payload it already holds, so an assistant who kept a session would keep
-        screening until they happened to reload.
-
-        A move does not revoke: they still have a supervisor, so nothing they
-        may do has changed.
-
-        Setting the supervisor to the value it already holds is a no-op that
-        returns `200` — no revocation, no audit noise.
+        Replaces v0.20.0's `POST /api/users/{id}/supervisor`, which set a
+        single value and so overwrote the previous supervisor. Links are
+        additive: a TA may have any number of active supervisors. Linking a
+        pair that is already active is a no-op `200`.
       parameters:
         - name: id
           in: path
@@ -1301,17 +1611,17 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/SupervisorChangeRequest" }
+            schema: { $ref: "#/components/schemas/SupervisorLinkRequest" }
       responses:
         "200":
-          description: Updated user, so the caller sees the resulting assignment.
+          description: The TA, with the updated `supervisor_ids`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
         "400":
           description: |
-            The target is not a `teaching_assistant`, or the proposed
-            supervisor is missing, not an `instructor`, or not `active`.
+            The target is not a `teaching_assistant`, or `instructor_id` is
+            not an `active` `instructor`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1322,55 +1632,46 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: |
-            The target is deleted. Deletion is terminal, so there is nothing to
-            assign them to.
+          description: The target is not `active` (deactivated or deleted).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/users/{id}/restore:
-    post:
+  /api/users/{id}/supervisors/{instructor_id}:
+    delete:
       tags: [users]
-      operationId: restoreUser
-      summary: Reactivate a soft-deleted user
+      operationId: removeUserSupervisor
+      summary: End one instructor's supervision of a teaching assistant ("Remove from team")
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.4]"
+      x-authorization: "users module — root_admin, or the instructor named in the path, see DECISION LOG [0.21.0]"
       description: |
-        Clears `deleted_at`. Kept as its own endpoint rather than folded into
-        `POST /api/users` as upsert-on-conflict — see the 409 note there.
-        Provisioning a new account and restoring an existing one are
-        different audited actions even though the end state looks similar.
+        Ends the active link (sets `ended_at`/`ended_by`; the row is kept as
+        history). `root_admin` may end any link. An `instructor` may end only
+        their own — `instructor_id` must be the caller; naming anyone else,
+        or a link the caller does not hold, is `404`. This is the
+        instructor's "Remove from team": it affects only their team, never
+        the TA's account or other supervisors.
 
-        Delegation-scoped, mirroring `DELETE /api/users/{id}`: `root_admin`
-        may restore anyone except another `root_admin` row; `instructor` may
-        only restore `teaching_assistant` rows they themselves provisioned;
-        `teaching_assistant` may restore no one. A `root_admin` target is
-        always rejected with `403` regardless of actor — there is exactly
-        one `root_admin`, and it is never soft-deleted through this API in
-        the first place, so this is a defensive rejection rather than a
-        reachable path today.
-
-        `409` if the target exists and is visible to the actor's delegation
-        scope but is not currently deleted — restoring an already-active
-        user is a no-op the caller should notice, not silently accept.
-
-        Does **not** restore old sessions — all of the user's sessions were
-        revoked at deletion time and stay revoked. The user must complete
-        `/api/auth/login` again. `external_id`/`tenant_id` bound before
-        deletion are preserved, so the next login resolves as the
-        **returning-user** case in `/api/auth/callback`, not a second
-        first-login/provisioning event.
+        If this was the TA's **last** active link, the TA's live sessions are
+        revoked in the same commit, for the reason v0.5.6 gave for
+        unassigning: the SPA decides "may this person screen?" from the
+        session payload it already holds. The TA can sign in again and sees
+        the unassigned notice until someone links them; any instructor can
+        do that by email (`POST /api/users/teaching-assistants`).
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: instructor_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Restored user.
+          description: The TA, with the updated `supervisor_ids`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
@@ -1380,11 +1681,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          description: User is not currently deleted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------------------------------------------------------------------
   # CHECKS — single-answer detection
@@ -1901,7 +2197,7 @@ components:
 
     User:
       type: object
-      required: [id, email, role, created_at]
+      required: [id, email, role, status, created_at, supervisor_ids]
       description: |
         Profile and authorization state. Owned entirely by the users module —
         the auth module never reads or writes `role` or `provisioned_by`; see
@@ -1920,7 +2216,11 @@ components:
         display_name:
           type: string
           nullable: true
-          description: NULL until first login; set from the Auth0 `name` claim thereafter.
+          description: |
+            Chosen by the user after first sign-in (`PATCH /api/users/{id}`);
+            null until then — render the email instead. Never taken from the
+            Auth0 `name` claim and never typed by whoever provisioned the
+            account ([0.21.0]). Plain text: render as text, never HTML.
         role:
           type: string
           enum: [root_admin, instructor, teaching_assistant]
@@ -1928,24 +2228,71 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: The provisioning caller's `user_id`. NULL only for the seeded `root_admin`.
+          description: |
+            Who issued the invite. Provenance only: set once, never changed,
+            and grants nothing ([0.21.0]). NULL for the seeded `root_admin`
+            and CLI-provisioned rows. Do not read it as "supervisor" — use
+            `supervisor_ids`.
+        supervisor_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: |
+            Instructors currently supervising this user: active
+            `supervisions` links whose instructor is `active`. Always present;
+            `[]` for anyone who is not a `teaching_assistant`. A
+            `teaching_assistant` with `[]` is unassigned and cannot screen.
+            Ids only — resolving them to names is an instructor/admin concern
+            and goes through `GET /api/users/{id}`.
+        status:
+          $ref: "#/components/schemas/UserStatus"
         first_login_at:
           type: string
           format: date-time
           nullable: true
-          description: NULL means invite pending — this row has never completed a login.
+          description: |
+            Stamped once, on the first successful sign-in, and never changed
+            after. Null means the invite is still pending: the account was
+            provisioned but the person has never signed in. Derive "pending"
+            as `status == active && first_login_at == null`; `deactivated`
+            and `deleted` take display precedence. Reset to null when a
+            deleted email is re-provisioned (a fresh credential). Tier 2
+            (nullable) — do not make it required.
         created_at:
           type: string
           format: date-time
-        deleted_at:
+
+    UserStatus:
+      type: string
+      enum: [active, deactivated, deleted]
+      description: |
+        `active` may sign in. `deactivated` is a reversible pause: sessions
+        are revoked and sign-in is refused until `.../reactivate`.
+        `deleted` is terminal: sessions revoked, Auth0 credential removed,
+        and the only way back is re-provisioning the email. Allowed
+        transitions: `active ⇄ deactivated`, and either → `deleted`.
+        Each transition is recorded in `UserStatusEvent`.
+
+    StatusChangeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
           type: string
-          format: date-time
+          maxLength: 500
           nullable: true
-          description: Soft-delete marker. NULL means active.
+          description: |
+            Free-text note stored on the audit event, never shown to the
+            affected user. Plain text: the server trims it, drops control
+            characters (other than newline/tab) and `<` `>`, and stores a blank
+            result as null. Clients must still render it as text, never HTML.
 
     UserCreateRequest:
       type: object
+      additionalProperties: false
       required: [email, role]
+      description: |
+        `root_admin` only. No `display_name` (the user chooses it; removed
+        in [0.21.0], sending it is `400`).
       properties:
         email:
           type: string
@@ -1953,38 +2300,48 @@ components:
         role:
           type: string
           enum: [instructor, teaching_assistant]
+          description: "`root_admin` is rejected (`403`)."
+        supervisor_id:
+          type: string
+          format: uuid
+          nullable: true
           description: |
-            `root_admin` is rejected here — see the delegation table on
-            `POST /api/users`.
+            `teaching_assistant` only: an `active` `instructor` to link in the
+            same commit as the account ([0.21.0]). `400` on any other role or
+            an unusable instructor. Omit or null for an unassigned TA.
+
+    TeachingAssistantAddRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    SupervisorLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [instructor_id]
+      properties:
+        instructor_id:
+          type: string
+          format: uuid
+          description: An `active` `instructor`.
+
+    UserPatchRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
         display_name:
           type: string
+          minLength: 1
+          maxLength: 200
           description: |
-            Optional admin-UI placeholder shown before first login.
-            Overwritten by the Auth0 `name` claim on first login — never
-            treat this value as authoritative.
-        supervisor_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: |
-            The instructor who will supervise a new `teaching_assistant`.
-            `root_admin` only; an `instructor` may omit it or name themselves,
-            and naming anyone else is `403`. Must be absent for any other
-            `role`. Omitted or null from an admin means unassigned — see the
-            derivation table on `POST /api/users`.
-
-    SupervisorChangeRequest:
-      type: object
-      required: [supervisor_id]
-      properties:
-        supervisor_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: |
-            The instructor who will supervise this assistant, or null to
-            unassign them. Null is spelled out rather than omitted: the caller
-            is asking for a change, not accepting a default.
+            Normalised server-side the same way as `StatusChangeRequest.reason`
+            (trimmed; control characters and `<` `>` removed). Blank after
+            normalising is `400` — a name, once set, cannot be cleared.
 
     UserRolePatchRequest:
       type: object
@@ -2593,11 +2950,13 @@ components:
             - session_expired # 401 — session existed, clock fired (auth)
             - not_provisioned # authenticated at Auth0, no user record (users)
             - deactivated # authenticated at Auth0, user record exists
-              # but soft-deleted (users)
+              # but `status = deactivated` (users)
+            - deleted # authenticated at Auth0, user record exists
+              # but `status = deleted` (users)
             - forbidden # 403 — valid session, insufficient role (users)
             - not_found
-            - conflict # 409 — duplicate email, or invalid state
-              # transition e.g. restoring a non-deleted user (users)
+            - conflict # 409 — duplicate email, or an illegal status
+              # transition e.g. reactivating a deleted user (users)
             - state_mismatch
             - upstream_idp_error
             - payload_too_large # 413 — answer_text over 10,000 chars (checks)
@@ -2663,6 +3022,242 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.22.0] No active supervisor, no session.
+#
+#   PROBLEM. [0.21.0] revoked a TA's sessions only when their last link was
+#   ended directly (`DELETE .../supervisors/{instructor_id}`). Three other
+#   writes leave a TA with no active supervisor and revoked nothing:
+#   deleting their instructor and changing their instructor's role (both
+#   end the links), and deactivating their instructor (links kept, but a
+#   deactivated instructor stops counting). The TA kept a live session that
+#   `require_screening_access` refused on every screening call.
+#
+#   DECISION. One rule: whenever a write can remove a TA's last active
+#   supervisor (an active link to an `active` instructor), that TA's live
+#   sessions are revoked in the same commit. Applies to all four writes,
+#   including deactivation — reactivating the instructor restores the links
+#   but not the sessions; the TA signs in again. Not a security fix: the
+#   screening gate already reads the database per request. It keeps one
+#   rule instead of four, and sends the SPA through the existing
+#   `session_revoked` sign-in path instead of leaving it on screening
+#   screens that 403. Signing in is unchanged: a TA with no supervisor may
+#   sign in and sees the unassigned notice.
+#
+#   OPTION REJECTED. Keep the session and have the SPA refetch
+#   `/api/auth/me` on the "not assigned" 403 — frontend work, a special
+#   case for one error message, and a second rule next to [0.21.0]'s.
+#
+#   ACCEPTED EDGES. A link committed concurrently with the revoking write
+#   can leave a now-supervised TA signed out (one extra sign-in).
+#   The reverse race is accepted too: two removals committed concurrently
+#   (e.g. one instructor deleted while the TA's other instructor is
+#   deactivated) each still see the other supervisor, so neither signs the
+#   TA out. The per-request screening gate still returns 403, so this
+#   leaves a stale session, not access. Batches already submitted still
+#   finish; they were authorised when submitted.
+#   The SPA treats a 401 as signed out only on its session query, so a TA
+#   mid-screen sees one inline error until that query refetches (30 s
+#   stale time, window focus, or the expiry timer) — the same delay as an
+#   admin deactivating them. A global 401 handler is a separate change.
+#
+# [0.21.0] Supervision is a many-to-many table; instructors add TAs by email.
+#
+#   PROBLEM. [0.5.6] made `provisioned_by` the only supervision edge, doing
+#   two jobs: provenance (who invited) and management right (who
+#   supervises). Consequences found while planning the TA workflow: a TA can
+#   have exactly one supervisor, so two instructors cannot share one; moving
+#   a TA overwrote who invited them; and a TA released by their instructor
+#   (`provisioned_by = NULL`) could sign in but not screen, and only the
+#   single `root_admin` could ever place them again — no instructor could
+#   pick them up. [0.5.6] itself said to revisit "if an assistant genuinely
+#   needs to be shared". Not a sponsor requirement; changed to match how
+#   instructors, TAs and the course admin actually work.
+#
+#   OPTIONS CONSIDERED. (a) Keep the column, add an unassigned-pool screen
+#   instructors can claim from. Rejected: still one supervisor, and a second
+#   surface to build. (b) A `courses` (and term) entity that TAs and
+#   instructors join. Rejected for now as too much new surface for one
+#   backend engineer; it is the natural next step if end-of-term cleanup
+#   becomes a pain. (c) A `supervisions` join table (chosen).
+#
+#   DECISION.
+#     - `supervisions(ta_id, instructor_id, created_at, created_by,
+#       ended_at, ended_by)`, unique on the pair while `ended_at IS NULL`.
+#       Rows are ended, never deleted, so the table is its own history (same
+#       per-domain approach as [0.11.0]). Migration backfills one active link
+#       per TA with a non-null `provisioned_by`.
+#     - `provisioned_by` becomes provenance only: set once, never changed,
+#       grants nothing. Every authorization and list scope that read it now
+#       reads "has an active link to an active instructor". This REVERSES
+#       [0.5.6]'s "for an assistant the column means supervisor".
+#     - `User.supervisor_ids` exposes the active links, so the SPA's
+#       screening gate reads `supervisor_ids` instead of `provisioned_by`.
+#     - `root_admin` is the course admin. No new role.
+#     - `POST /api/users` keeps an optional `supervisor_id`: account,
+#       invite and first link commit together, so the admin's one-step
+#       "create a TA under X" never leaves an unassigned TA behind a failed
+#       second call.
+#
+#   ADD BY EMAIL (create-or-link). Instructors get one action,
+#   `POST /api/users/teaching-assistants {email}`: a new email is
+#   provisioned and invited; an active TA is linked (whoever else supervises
+#   them); anything else is refused. This replaces instructors' use of
+#   `POST /api/users`, which becomes `root_admin` only, and removes the need
+#   for an unassigned-pool screen: a released TA is picked up by typing
+#   their email. A deleted email is not re-provisioned here — reusing a
+#   deleted account stays a `root_admin` decision ([0.18.0]).
+#
+#   ENUMERATION. The response is generalised: every success is the same
+#   `200`, every refusal the same `409` with a fixed message ("contact the
+#   root administrator"); the real reason is logged server-side. Residual
+#   leaks, accepted: a fresh email always succeeds and an existing
+#   non-addable one always fails (one bit: "some account I cannot add"), and
+#   the resulting row's pending/active state is visible on the caller's
+#   team. Hiding the first needs refusals to become admin-approval requests,
+#   which needs the notification system below. Probing is also self-limiting
+#   — each fresh email creates a real account and sends a real invite, under
+#   the prober's name. The caller is authenticated staff. No server-side
+#   confirmation step: showing "this is Sarah Tan, confirm?" would itself be
+#   the oracle. The SPA instead asks the caller to re-confirm the email they
+#   typed, which catches typos and reveals nothing.
+#
+#   DEACTIVATION. With shared TAs, an instructor's deactivate would lock a
+#   TA out of every team, and anyone can now add themselves to any active
+#   TA. So `/deactivate` and `/reactivate` are `root_admin` only;
+#   instructors end their own link (`DELETE .../supervisors/{me}`, "Remove
+#   from team"). Ending a TA's last link revokes their sessions, as
+#   unassigning did in [0.5.6]. Delete and role change end all links;
+#   deactivation keeps them (reactivating restores the same teams), and a
+#   deactivated instructor's links stop counting until reactivation.
+#
+#   DISPLAY NAME. Whoever provisions an account no longer types a name; the
+#   person chooses it at first sign-in and may change it later
+#   (`PATCH /api/users/{id}`, self or `root_admin`). This also removes the
+#   risk of a linking instructor overwriting a shared TA's name. The first-
+#   sign-in prompt is SPA-only; nothing server-side gates on a null name.
+#   Self-rename UI is low priority; the endpoint allows it from day one.
+#   The name is shown to other users, so it is normalised like
+#   `StatusChangeRequest.reason` ([0.20.0]).
+#
+#   DEFERRED — NOTIFICATIONS. Linking a TA someone else supervises should
+#   notify that instructor and `root_admin`. There is no notification
+#   infrastructure; nothing is sent until there is. Wire it in when that
+#   system exists (it is also wanted for scan/batch-completion alerts).
+#
+#   CHECKS UNCHANGED. A TA's checks are still attributed to the TA
+#   (`actor_id`) and readable only by the TA (and `root_admin`). Supervisors
+#   do not see their TAs' history; that is a separate decision.
+#
+#   CONTRACT DRIFT NOTED, NOT FIXED HERE. The shipped API serves
+#   `GET /api/auth/me`; the auth section still documents
+#   `GET /api/auth/session` + `GET /api/users/me`. As of 0.21.0 its body is
+#   `{id, email, display_name, role, supervisor_ids, session}` — `id` so the
+#   SPA can `PATCH /api/users/{id}` its own name, `display_name` for the
+#   first-sign-in prompt, `supervisor_ids` (replacing `provisioned_by`) for
+#   the screening gate. The auth-section rewrite is its own entry.
+#
+# [0.20.0] Status-change reasons are normalised; pending accounts are not special-cased.
+#
+#   REASON. `reason` is free text that reaches an audit table with no
+#   server-side hygiene, relying on every future renderer to escape it. It
+#   is now trimmed, stripped of control characters and `<`/`>`, and stored
+#   as null if nothing is left. Output encoding at render time remains the
+#   actual XSS defence; this only keeps markup out of the audit record.
+#   Stripping (rather than rejecting) so a paste never blocks a
+#   deactivation.
+#
+#   PENDING. A guard refusing an instructor's deactivate of a pending TA
+#   (409) was added and then removed in the same revision. Deactivation is
+#   reversible and leaves the Auth0 credential and invite untouched, so a
+#   pending row is no riskier to pause than any other, and an instructor
+#   needs it to cancel a mistyped invite. Resend-invite stays alongside it.
+#   Pending is display-only ([0.19.0]) and gates only `resend-invite`.
+#
+# [0.19.0] "Pending" is a stored fact (`first_login_at`), and invites can be re-sent.
+#
+#   PROBLEM. [0.18.0] recorded that "invite sent, never signed in" was not
+#   modelled. An admin could not tell a new invitee from a long-time user,
+#   and an invitee who lost the email had to be deleted and re-provisioned.
+#
+#   OPTIONS CONSIDERED. (a) Derive "never signed in" from the `sessions`
+#   table (no session row ever). Rejected: it silently breaks the day a
+#   session-purge job exists (see the append-only note in the sessions
+#   design) and adds a join to every list query. (b) A `pending` value on
+#   `UserStatus`. Rejected: pending is orthogonal to active/deactivated
+#   (a deactivated invitee is still one who never signed in) and would add
+#   states to a machine whose transitions are already audited. (c) A
+#   nullable `first_login_at` column (chosen).
+#
+#   DECISION. `users.first_login_at`, null until the first successful
+#   callback stamps it; never updated again. A migration backfills it from
+#   each existing user's earliest session so no current user shows as
+#   pending. Re-provisioning a deleted email resets it to null (a new
+#   credential is a new invite). "Pending" is display-only:
+#   `status == active && first_login_at == null`.
+#
+#   RESEND. `POST /api/users/{id}/resend-invite` re-triggers Auth0's
+#   password-set email for the existing credential. It is a command, not an
+#   edit, and changes no local state, so it writes no `UserStatusEvent`.
+#   Bulk resend and automatic reminders are out of scope.
+#
+# [0.18.0] Users lifecycle is a three-state `status`; the contract now says so.
+#
+#   PROBLEM. The contract still described [0.4.0]'s design — a `deleted_at`
+#   timestamp, `first_login_at`, and `POST .../restore` — while the shipped
+#   API (`explicit account lifecycle management`) uses `status` and separate
+#   deactivate / reactivate / delete transitions. Anyone building a client
+#   from the document would call an endpoint that does not exist and read
+#   fields that are not returned.
+#
+#   DECISION. Document what shipped. [0.4.0]'s "Deletion is a timestamp, not
+#   a status enum" is superseded: pausing an account (reversible) and
+#   deleting it (terminal) are different acts with different authority, and
+#   a nullable timestamp could not express both. Email uniqueness is a
+#   partial index over rows whose `status <> 'deleted'`, which is what lets
+#   a deleted address be provisioned again (the row is reused, with a
+#   `deleted → active` event). `UserStatusEvent` is the audit trail for
+#   every transition.
+#
+#   DELETE AUTHORITY. [0.5.4] extended delete to the instructor delegation
+#   chain. That is narrowed: delete is `root_admin` only. It is terminal and
+#   removes the Auth0 credential, so it needs more than the reversible
+#   deactivation an instructor already has over their own assistants (plus
+#   unassigning them, [0.5.6]). Backed by
+#   `test_delete_endpoint_is_refused_to_an_instructor`.
+#
+#   NOT MODELLED. "Invite sent, never signed in" is not stored: there is no
+#   `first_login_at`. Provisioning binds the Auth0 `sub` up front, so the
+#   callback matches on `sub` rather than on first-login email. A pending
+#   state needs its own column and is left for a later entry.
+#
+# [0.17.0] Provisioning replaces a stale Auth0 credential instead of failing.
+#
+#   PROBLEM. `POST /api/users` always asked Auth0 to create a credential.
+#   For an email that already had one in Auth0 but no live local row (a
+#   row deleted while the Auth0 delete failed, an account made by hand in
+#   the dashboard, or a developer's earlier seed), Auth0 answers `409`,
+#   which surfaced as `502 "Could not create an Auth0 credential"` — an
+#   admin could not provision that person at all, and had no Auth0 access
+#   to clear it.
+#
+#   OPTIONS CONSIDERED. (a) Return `409` and ask the admin to clean up
+#   Auth0 by hand. Rejected: admins have no Auth0 access by design. (b)
+#   Adopt the existing credential (bind its `sub`, reuse `scripts.
+#   provision_user`'s behaviour). Rejected: its password is known to
+#   whoever set it — a previous holder of a recycled address, or whoever
+#   the failed delete left it with — and that password would now open the
+#   new account. Emailing a reset link does not invalidate it. (c) Replace
+#   it (chosen).
+#
+#   DECISION. If Auth0's Database connection holds a credential for the
+#   email (and, checked earlier, no live local row does), delete it, then
+#   create and invite exactly as for a new email. The new credential has a
+#   new `sub` and a random password nobody knows. If the delete fails,
+#   nothing is created (`502`). If the local commit later fails, the
+#   credential just created is removed, as before. Response unchanged.
+#   `scripts.provision_user` still adopts, because the operator running it
+#   is the tenant owner seeding their own root admin.
 #
 # [0.16.0] BatchProgress now returns the actual failure reasons, not just a count.
 #

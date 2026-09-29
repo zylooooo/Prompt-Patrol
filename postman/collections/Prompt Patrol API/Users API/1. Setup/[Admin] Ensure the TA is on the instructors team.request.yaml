@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Admin] Ensure the TA is on the instructor's team"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  Setup. Links TA_USER_ID to INSTRUCTOR_USER_ID. Idempotent: an existing link is a no-op, so this is safe on every run.
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/supervisors"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "instructor_id": "{{INSTRUCTOR_USER_ID}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("instructor is a supervisor", () => pm.expect(body.supervisor_ids).to.include(pm.globals.get("INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 4000

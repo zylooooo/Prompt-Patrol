@@ -21,10 +21,7 @@ export const STRICTNESS_HINT: Record<Strictness, string> = {
 };
 
 export type AbstainReason =
-  | "answer_too_short"
-  | "low_signal"
-  | "score_in_abstention_band"
-  | null;
+  "answer_too_short" | "low_signal" | "score_in_abstention_band" | null;
 
 export const ABSTAIN_TEXT: Record<NonNullable<AbstainReason>, string> = {
   answer_too_short: "The answer is too short to judge.",
@@ -195,8 +192,10 @@ export interface AppUser {
   name: string | null;
   role: UserRole;
   status: UserStatus;
-  provisionedBy: string | null;
+  /** Instructors currently supervising this user; [] for anyone not a TA. */
+  supervisorIds: string[];
   createdAt: string;
+  firstLoginAt: string | null;
 }
 
 export function isActive(user: AppUser): boolean {
@@ -207,8 +206,17 @@ export function canReactivate(user: AppUser): boolean {
   return user.status === "deactivated";
 }
 
+/** Invited but never signed in. Display-only: deactivated and deleted accounts keep their own status. */
+export function isPending(user: AppUser): boolean {
+  return user.status === "active" && user.firstLoginAt === null;
+}
+
+export function userStatusLabel(user: AppUser): string {
+  return isPending(user) ? "Pending" : USER_STATUS_TEXT[user.status];
+}
+
 export function statusLabel(user: AppUser): string {
-  return USER_STATUS_TEXT[user.status];
+  return userStatusLabel(user);
 }
 
 export function displayName(user: AppUser): string {
@@ -230,7 +238,7 @@ export interface CheckInput {
 export interface CreateAccountInput {
   email: string;
   role: UserRole;
-  name?: string;
+  /** Admin form only: the server links it in the same commit as the account. */
   supervisorId?: string | null;
 }
 

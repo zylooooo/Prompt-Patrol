@@ -7,6 +7,7 @@ import NotFoundPage from "./pages/NotFoundPage";
 import { GuestRoute } from "./components/GuestRoute";
 import HistoryDetailPage from "./pages/HistoryDetailPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import ChooseNameGate from "./components/ChooseNameGate";
 import TeachingAssistantsPage from "./pages/TeachingAssistantsPage";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
@@ -25,7 +26,9 @@ export default function App() {
         <Route
           element={
             <ProtectedRoute>
-              <AppShell />
+              <ChooseNameGate>
+                <AppShell />
+              </ChooseNameGate>
             </ProtectedRoute>
           }
         >

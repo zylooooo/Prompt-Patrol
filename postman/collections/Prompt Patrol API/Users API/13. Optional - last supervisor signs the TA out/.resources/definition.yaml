@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Ending a TA's last supervision link revokes their sessions. Afterwards, sign in as the TA again and paste the new cookie into the TA environment.
+order: 13000

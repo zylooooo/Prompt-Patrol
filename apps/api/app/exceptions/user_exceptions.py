@@ -14,3 +14,7 @@ class InvalidStatusTransitionError(Exception):
 class InvalidSupervisorError(Exception):
     """The proposed supervisor cannot hold that role: missing, not an instructor,
     not active, or the assistant themselves."""
+
+
+class CannotAddTeachingAssistantError(Exception):
+    """An instructor typed an email that is not new and not an active TA."""

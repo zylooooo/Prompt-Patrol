@@ -1,17 +1,20 @@
 import {
+  addTeachingAssistant,
   changeUserRole,
   createAccount,
   deactivateInstructor,
   deleteUser,
+  linkSupervisor,
   listMyAssistants,
   listUsers,
   resendInvite,
-  setSupervisor,
   setUserActive,
+  unlinkSupervisor,
+  updateDisplayName,
   userKeys,
 } from "../api/users";
 import { useAuth } from "./useAuth";
-import type { User } from "../api/auth";
+import { authKeys, type User } from "../api/auth";
 import { ApiError } from "../api/client";
 import type { CreateAccountInput, DeactivationPlan, UserRole } from "../types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -60,12 +63,46 @@ export function useCreateAccount() {
   );
 }
 
-export function useSetSupervisor() {
+export function useAddTeachingAssistant() {
   const actor = useActor();
-  return useRosterMutation(
-    ({ id, supervisorId }: { id: string; supervisorId: string | null }) =>
-      setSupervisor(requireActor(actor), id, supervisorId),
+  return useRosterMutation((email: string) =>
+    addTeachingAssistant(requireActor(actor), email),
   );
+}
+
+interface LinkArgs {
+  taId: string;
+  instructorId: string;
+}
+
+export function useLinkSupervisor() {
+  const actor = useActor();
+  return useRosterMutation(({ taId, instructorId }: LinkArgs) =>
+    linkSupervisor(requireActor(actor), taId, instructorId),
+  );
+}
+
+export function useUnlinkSupervisor() {
+  const actor = useActor();
+  return useRosterMutation(({ taId, instructorId }: LinkArgs) =>
+    unlinkSupervisor(requireActor(actor), taId, instructorId),
+  );
+}
+
+/** Also refreshes the session: the shell and the first-sign-in gate read the
+ * signed-in person's name from it. */
+export function useUpdateDisplayName() {
+  const actor = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      updateDisplayName(requireActor(actor), id, name),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: userKeys.all }),
+        queryClient.invalidateQueries({ queryKey: authKeys.session() }),
+      ]),
+  });
 }
 
 export function useChangeUserRole() {
@@ -78,8 +115,16 @@ export function useChangeUserRole() {
 
 export function useSetUserActive() {
   const actor = useActor();
-  return useRosterMutation(({ id, active }: { id: string; active: boolean }) =>
-    setUserActive(requireActor(actor), id, active),
+  return useRosterMutation(
+    ({
+      id,
+      active,
+      reason,
+    }: {
+      id: string;
+      active: boolean;
+      reason?: string;
+    }) => setUserActive(requireActor(actor), id, active, reason),
   );
 }
 

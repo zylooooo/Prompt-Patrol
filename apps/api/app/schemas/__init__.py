@@ -3,9 +3,11 @@ from .batch_schema import BatchProgressResponse, BatchResponse
 from .check_schema import CheckListResponse, CheckResponse, CheckSummary, DetectorInfo
 from .user_schema import (
     StatusChangeRequest,
-    SupervisorChangeRequest,
+    SupervisorLinkRequest,
+    TeachingAssistantAddRequest,
     UserCreateRequest,
     UserListResponse,
+    UserPatchRequest,
     UserResponse,
     UserRolePatchRequest,
 )
@@ -15,10 +17,12 @@ __all__ = [
     "SessionResponse",
     "UserResponse",
     "UserCreateRequest",
+    "UserPatchRequest",
+    "TeachingAssistantAddRequest",
     "UserListResponse",
     "UserRolePatchRequest",
     "StatusChangeRequest",
-    "SupervisorChangeRequest",
+    "SupervisorLinkRequest",
     "CheckResponse",
     "CheckSummary",
     "CheckListResponse",

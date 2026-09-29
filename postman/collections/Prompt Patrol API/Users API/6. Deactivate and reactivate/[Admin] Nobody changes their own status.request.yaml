@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Admin] Nobody changes their own status"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  Self-deactivation would lock out the only root admin.
+url: "{{BASE_URL}}/api/users/{{ADMIN_USER_ID}}/deactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("You are not authorized to change this user's status."));
+    language: text/javascript
+order: 8000

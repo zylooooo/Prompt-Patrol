@@ -1,8 +1,31 @@
 $kind: collection
+description: |-
+  Users module walkthrough, contract 0.21.0 (many-to-many TA supervision).
+
+  Run the folders in their numbered order, and the requests inside each folder
+  top to bottom. Each request name starts with the environment to switch to
+  ([Admin], [Instructor], [TA]); its first test fails if the active environment
+  is wrong.
+
+  Before you start, sign in at http://localhost:5173 as each of the three users
+  (separate browser profiles) and paste each __Host-session cookie into
+  SESSION_COOKIE of the matching environment. BASE_URL = http://localhost:8000.
+  The Instructor-environment user must be an instructor, the TA-environment
+  user a teaching assistant who has signed in at least once.
+
+  Ids come from "1. Setup" (/api/auth/me), so they always match the sessions.
+  "2. Provisioning" sends real Auth0 invites to +aliases of ashloozhiyi5@gmail.com.
+  "10. Adding TAs by email" sends one more. Only the accounts these folders
+  create are deactivated, re-roled or deleted; "8. Role change and delete"
+  and "12. Cleanup" remove them, leaving the TA supervised by the instructor.
+  "11. Display names" renames the TA and then restores the name.
+
+  "13. Optional" checks that removing a TA's last supervisor signs the TA out,
+  so afterwards you must sign in as the TA again and update the cookie.
 scripts:
   - type: http:afterResponse
-    code: "pm.test(\"not a 5xx\", () => pm.expect(pm.response.code).to.be.below(500));\r
-
-      pm.test(\"json body\", ()=> pm.response.to.have.jsonBody());"
+    code: |-
+      pm.test("not a 5xx", () => pm.expect(pm.response.code).to.be.below(500));
+      pm.test("json body", () => pm.response.to.have.jsonBody());
     language: text/javascript
 order: 308419892346879

@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Instructor] Instructors cannot reactivate"
+description: |-
+  Environment: Prompt Patrol Dev - Instructor
+
+  root_admin only since 0.21.0.
+url: "{{BASE_URL}}/api/users/{{NEW_INSTRUCTOR_USER_ID}}/reactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("Insufficient role"));
+    language: text/javascript
+order: 5000

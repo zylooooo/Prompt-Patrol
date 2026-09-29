@@ -1,5 +1,6 @@
 import Wordmark from "./ui/Wordmark";
 import SignOutForm from "./SignOutForm";
+import RenameDialog from "./RenameDialog";
 import type { User } from "../api/auth";
 import { LogOut, Menu, X } from "lucide-react";
 import { canAccess, ROLE_TEXT } from "../types";
@@ -22,6 +23,7 @@ interface SidebarProps {
 
 export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const { pathname } = useLocation();
   const asideRef = useRef<HTMLElement>(null);
@@ -151,12 +153,39 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
         </nav>
 
         <div className="mx-6 mt-4 shrink-0 border-t border-primary-foreground/10 pt-4 pb-9">
-          <p className="text-sm font-semibold break-all text-primary-foreground">
+          {user?.name && (
+            <p className="truncate text-sm font-semibold text-primary-foreground">
+              {user.name}
+            </p>
+          )}
+          <p
+            className={`break-all ${
+              user?.name
+                ? "mt-0.5 font-mono text-xs text-primary-foreground/70"
+                : "text-sm font-semibold text-primary-foreground"
+            }`}
+          >
             {user?.email}
           </p>
           <p className="mt-1 text-[13px] text-primary-foreground/60">
             {user ? ROLE_TEXT[user.role] : ""}
           </p>
+          {user && (
+            <button
+              type="button"
+              onClick={() => {
+                // The dialog renders outside the drawer, whose focus trap
+                // would pull focus back; close it without refocusing the
+                // opener so the dialog keeps focus.
+                wasOpenRef.current = false;
+                setIsOpen(false);
+                setRenaming(true);
+              }}
+              className="-mx-1 mt-2 rounded-sm px-1 text-[13px] text-primary-foreground/70 underline-offset-2 hover:text-primary-foreground hover:underline focus-visible:bg-primary-foreground/10 focus-visible:text-primary-foreground"
+            >
+              Change name
+            </button>
+          )}
 
           <SignOutForm className="mt-3">
             <button
@@ -169,6 +198,16 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
           </SignOutForm>
         </div>
       </aside>
+
+      {renaming && user && (
+        <RenameDialog
+          id={user.id}
+          email={user.email}
+          currentName={user.name}
+          self
+          onClose={() => setRenaming(false)}
+        />
+      )}
     </>
   );
 }

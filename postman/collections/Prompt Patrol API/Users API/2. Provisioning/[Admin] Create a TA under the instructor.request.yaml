@@ -1,0 +1,32 @@
+$kind: http-request
+name: "[Admin] Create a TA under the instructor"
+description: |-
+  Environment: Prompt Patrol Dev - Root Admin
+
+  The account, the first supervision link and the Auth0 invite commit together (DECISION LOG [0.21.0]). A throwaway: Role change and delete changes its role and deletes it. Stores NEW_TA_USER_ID.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-ta-{{$timestamp}}@gmail.com",
+      "role": "teaching_assistant",
+      "supervisor_id": "{{INSTRUCTOR_USER_ID}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
+      pm.test("201", () => pm.response.to.have.status(201));
+      const body = pm.response.json();
+      pm.test("linked to the instructor in the same request", () =>
+        pm.expect(body.supervisor_ids).to.eql([pm.globals.get("INSTRUCTOR_USER_ID")]));
+      pm.test("provisioned_by is the admin, not the supervisor", () =>
+        pm.expect(body.provisioned_by).to.eql(pm.globals.get("ADMIN_USER_ID")));
+      pm.globals.set("NEW_TA_USER_ID", body.id);
+    language: text/javascript
+order: 2000

@@ -7,10 +7,7 @@ from models import User, UserRoleEnum
 from routes.batches_routes import require_any_user
 from routes.checks_routes import require_screening
 
-GOOD_CSV = (
-    "external_ref,answer_text\n"
-    "stu-1,This is a perfectly reasonable answer with enough words.\n"
-)
+GOOD_CSV = "external_ref,answer_text\nstu-1,This is a perfectly reasonable answer with enough words.\n"
 
 
 async def _signed_in_instructor(client, db_session):

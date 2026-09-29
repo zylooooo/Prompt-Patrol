@@ -8,6 +8,7 @@ from auth import require_role
 from db import get_db
 from exceptions import (
     Auth0ProvisioningError,
+    CannotAddTeachingAssistantError,
     EmailAlreadyExistsError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
@@ -16,22 +17,31 @@ from exceptions import (
 from models import User, UserRoleEnum, UserStatusEnum
 from schemas import (
     StatusChangeRequest,
-    SupervisorChangeRequest,
+    SupervisorLinkRequest,
+    TeachingAssistantAddRequest,
     UserCreateRequest,
     UserListResponse,
+    UserPatchRequest,
     UserResponse,
     UserRolePatchRequest,
 )
 from services import (
+    add_teaching_assistant,
     change_user_role,
     create_user,
     deactivate_user,
     delete_user,
+    end_supervision,
     get_user_by_id,
+    link_supervisor,
     list_users,
     reactivate_user,
-    set_supervisor,
+    resend_invite,
+    update_display_name,
 )
+
+# One sentence for every refusal, whatever the reason (DECISION LOG [0.21.0]).
+_ADD_TA_REFUSED = "This email can't be added. Contact the root administrator."
 
 # Dependency that requires the minimum role, forcing a valid session on every route.
 router = APIRouter(
@@ -82,6 +92,34 @@ async def list_all_users(
     return UserListResponse(items=[UserResponse.model_validate(u) for u in items], next_cursor=next_cursor)
 
 
+@router.post("/teaching-assistants", response_model=UserResponse)
+async def add_teaching_assistant_route(
+    body: TeachingAssistantAddRequest,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Adds a teaching assistant to the caller's team by email: creates and invites
+    a new account, or links an existing active TA. The response never says
+    which - 200 with the row either way, and every refusal is the same 409.
+    Exactly `instructor`: root_admin places TAs with POST /{id}/supervisors.
+    """
+    try:
+        return await add_teaching_assistant(db, actor, body.email)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only instructors add teaching assistants to a team.",
+        )
+    except CannotAddTeachingAssistantError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ADD_TA_REFUSED)
+    except Auth0ProvisioningError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not create an Auth0 credential for this user. Nothing was saved - try again.",
+        )
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: uuid.UUID,
@@ -100,26 +138,39 @@ async def get_user(
     return target
 
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def provision_user(
-    create_request: UserCreateRequest,
-    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+@router.patch("/{user_id}", response_model=UserResponse)
+async def update_user_route(
+    user_id: uuid.UUID,
+    body: UserPatchRequest,
+    actor: User = Depends(require_role(UserRoleEnum.teaching_assistant)),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Create new user endpoint. Authorization checks performed in service layer.
-
-    Auth0 emails the invitee their own password-set link directly.
+    Sets a display name: your own, or anyone's as root_admin.
     """
     try:
-        user = await create_user(
-            db,
-            actor,
-            create_request.email,
-            create_request.role,
-            create_request.display_name,
-            create_request.supervisor_id,
-        )
+        return await update_display_name(db, actor, user_id, body.display_name)
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def provision_user(
+    create_request: UserCreateRequest,
+    actor: User = Depends(require_role(UserRoleEnum.root_admin)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    root_admin provisioning. Instructors add teaching assistants through
+    POST /api/users/teaching-assistants instead.
+
+    An optional supervisor is linked in the same commit as the account, so
+    the account, the link and the Auth0 invite land together or not at all.
+    """
+    try:
+        user = await create_user(db, actor, create_request.email, create_request.role, create_request.supervisor_id)
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -165,47 +216,60 @@ async def change_user_role_route(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
 
-@router.post("/{user_id}/supervisor", response_model=UserResponse)
-async def set_supervisor_route(
+@router.post("/{user_id}/supervisors", response_model=UserResponse)
+async def add_supervisor_route(
     user_id: uuid.UUID,
-    body: SupervisorChangeRequest,
-    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    body: SupervisorLinkRequest,
+    actor: User = Depends(require_role(UserRoleEnum.root_admin)),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Moves a teaching assistant to a different instructor, or unassigns them with
-    a null supervisor. Assigning is a root admin act; an instructor may only
-    release their own assistant. The rule lives in the service.
-
-    Returns the row so the caller can see the resulting assignment without a
-    follow-up read, matching the status transitions.
+    Places a teaching assistant on an instructor's team. Additive: other
+    supervisors are kept, and linking an existing pair is a no-op.
     """
     try:
-        return await set_supervisor(db, actor, user_id, body.supervisor_id)
+        return await link_supervisor(db, actor, user_id, body.instructor_id)
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to change this user's supervisor.",
+            detail="You are not authorized to place teaching assistants.",
         )
     except UserNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     except InvalidSupervisorError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="That supervisor is not an active instructor.",
+            detail="Only an active instructor can supervise, and only a teaching assistant can be supervised.",
         )
     except InvalidStatusTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.delete("/{user_id}/supervisors/{instructor_id}", response_model=UserResponse)
+async def remove_supervisor_route(
+    user_id: uuid.UUID,
+    instructor_id: uuid.UUID,
+    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Ends one supervision ("Remove from team"). An instructor may end only their
+    own link; anything else is 404, the same as a link that does not exist.
+    """
+    try:
+        return await end_supervision(db, actor, user_id, instructor_id)
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user_route(
     user_id: uuid.UUID,
     body: StatusChangeRequest | None = None,
-    actor: User = Depends(require_role(UserRoleEnum.instructor)),
+    actor: User = Depends(require_role(UserRoleEnum.root_admin)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Removes operational access, reversibly. Delegation enforced in the service."""
+    """Removes operational access, reversibly. root_admin only."""
     return await _transition_route(deactivate_user, db, actor, user_id, body)
 
 
@@ -213,11 +277,36 @@ async def deactivate_user_route(
 async def reactivate_user_route(
     user_id: uuid.UUID,
     body: StatusChangeRequest | None = None,
+    actor: User = Depends(require_role(UserRoleEnum.root_admin)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns a deactivated user to active. Cannot reactivate a deleted one."""
+    return await _transition_route(reactivate_user, db, actor, user_id, body)
+
+
+@router.post("/{user_id}/resend-invite", response_model=UserResponse)
+async def resend_invite_route(
+    user_id: uuid.UUID,
     actor: User = Depends(require_role(UserRoleEnum.instructor)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Returns a deactivated user to active. Cannot revive a deleted one."""
-    return await _transition_route(reactivate_user, db, actor, user_id, body)
+    """Re-sends the password-set email to an invitee who has never signed in."""
+    try:
+        return await resend_invite(db, actor, user_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to re-invite this user.",
+        )
+    except UserNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except Auth0ProvisioningError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send the invite email. Try again.",
+        )
 
 
 @router.delete("/{user_id}", response_model=UserResponse)

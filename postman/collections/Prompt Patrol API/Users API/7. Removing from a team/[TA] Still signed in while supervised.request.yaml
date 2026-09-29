@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[TA] Still signed in while supervised"
+description: |-
+  Environment: Prompt Patrol Dev - TA
+
+  Losing one of two supervisors does not sign the TA out.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - TA environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("the other instructor still supervises", () =>
+        pm.expect(body.supervisor_ids).to.eql([pm.globals.get("NEW_INSTRUCTOR_USER_ID")]));
+    language: text/javascript
+order: 5000

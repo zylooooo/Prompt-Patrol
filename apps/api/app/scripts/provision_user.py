@@ -32,9 +32,7 @@ async def add_user(email: str, role: str) -> None:
         print(f"Auth0 already has a credential for {email} - reusing it instead of re-inviting.")
 
     async with async_session() as db:
-        existing = await db.scalar(
-            select(User).where(User.email == email, User.status != UserStatusEnum.deleted)
-        )
+        existing = await db.scalar(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
         if existing is not None:
             print(f"{email} is already provisioned as {existing.role.value} ({existing.id}) - no-op.")
             return

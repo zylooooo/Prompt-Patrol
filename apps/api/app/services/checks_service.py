@@ -162,8 +162,7 @@ async def list_checks(
         # Strictly older than the anchor, with id breaking ties on equal
         # timestamps so a page boundary cannot repeat or skip a row.
         query = query.where(
-            (Check.created_at < anchor.created_at)
-            | ((Check.created_at == anchor.created_at) & (Check.id < anchor.id))
+            (Check.created_at < anchor.created_at) | ((Check.created_at == anchor.created_at) & (Check.id < anchor.id))
         )
 
     query = query.order_by(Check.created_at.desc(), Check.id.desc()).limit(limit + 1)

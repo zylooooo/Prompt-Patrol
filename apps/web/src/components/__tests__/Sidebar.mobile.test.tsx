@@ -5,7 +5,14 @@ import { installDomStubs } from "../../test/dom-stubs";
 import { Link, Route, Routes } from "react-router-dom";
 import { renderWithProviders } from "../../test/render";
 import { cleanup, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../hooks/useUsers", () => ({
+  useUpdateDisplayName: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 
 /**
  * Drawer behaviour below `md`. Separate file because `useMediaQuery` caches its
@@ -14,9 +21,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  */
 
 const USER: User = {
+  id: "u-1",
   email: "ada@smu.edu.sg",
+  name: null,
   role: "root_admin",
-  provisionedBy: null,
+  supervisorIds: [],
 };
 
 beforeEach(() => installDomStubs({ matches: false }));
@@ -201,5 +210,19 @@ describe("Sidebar drawer — focus containment", () => {
 
     expect(document.activeElement).toBe(outside);
     outside.remove();
+  });
+});
+
+describe("Sidebar drawer - change name", () => {
+  it("closes the drawer so its focus trap doesn't fight the dialog", async () => {
+    renderDrawer();
+    await userEvent.click(opener());
+    await userEvent.click(screen.getByRole("button", { name: "Change name" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change your name",
+    });
+    expect(aside().hasAttribute("inert")).toBe(true);
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 });

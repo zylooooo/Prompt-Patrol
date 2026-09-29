@@ -1,0 +1,5 @@
+$kind: collection
+description: |-
+  PATCH /api/users/{id} (DECISION LOG [0.21.0]): self, or anyone as root_admin; everyone else 404.
+  Renames the TA-environment user, then puts the name back. A TA that had no name ends up named "Postman TA".
+order: 11000

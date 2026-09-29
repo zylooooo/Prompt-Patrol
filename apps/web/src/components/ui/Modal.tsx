@@ -19,8 +19,16 @@ export default function Modal({
 }: ModalProps) {
   const panel = useRef<HTMLDivElement>(null);
 
+  // Mount only: callers pass an inline onClose, so an effect keyed on it
+  // re-ran on every parent render and pulled focus off whatever field the
+  // user was typing in. An autoFocus child keeps focus.
   useEffect(() => {
-    panel.current?.focus();
+    if (!panel.current?.contains(document.activeElement)) {
+      panel.current?.focus();
+    }
+  }, []);
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !busy) onClose();
     }
@@ -46,7 +54,7 @@ export default function Modal({
       >
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
         {subtitle && (
-          <p className="mt-1 font-mono text-xs text-disabled-foreground">
+          <p className="mt-1 font-mono text-xs break-all text-disabled-foreground">
             {subtitle}
           </p>
         )}

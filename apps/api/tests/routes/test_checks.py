@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from models import Check, User, UserRoleEnum
+from models import Check, Supervision, User, UserRoleEnum, UserStatusEnum
 from routes.checks_routes import require_any_user, require_screening
 from services.detector_client import MODEL_VERSION, Score
 
@@ -14,25 +14,27 @@ async def _signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, e
     real foreign key, so an in-memory User that was never inserted only works
     because SQLite leaves FK enforcement off - on Postgres the insert fails.
 
-    An assistant gets a supervisor. `provisioned_by` is what grants screening
-    access, so a fixture without one describes somebody the server refuses -
+    An assistant gets a supervisor. `supervisions` is what grants screening
+    access (DECISION LOG [0.21.0]), so a fixture without one describes somebody the server refuses -
     which is a case worth testing deliberately, not by accident in every test.
     """
-    provisioned_by = None
+    supervisor = None
     if role == UserRoleEnum.teaching_assistant:
         supervisor = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@smu.edu.sg", role=UserRoleEnum.instructor)
         db_session.add(supervisor)
         await db_session.commit()
-        provisioned_by = supervisor.id
 
     user = User(
         id=uuid.uuid4(),
         email=email or f"{uuid.uuid4()}@smu.edu.sg",
         role=role,
-        provisioned_by=provisioned_by,
     )
     db_session.add(user)
     await db_session.commit()
+    if supervisor is not None:
+        db_session.add(Supervision(ta_id=user.id, instructor_id=supervisor.id))
+        await db_session.commit()
+        await db_session.refresh(user)
 
     async def override():
         return user
@@ -342,9 +344,7 @@ async def test_answer_char_len_is_captured_regardless_of_retention(client, db_se
     kept = (await _make_check(client, external_ref="KEPT")).json()
     dropped = (await _make_check(client, external_ref="DROPPED", retain_answer=False)).json()
 
-    kept_row = (
-        await db_session.execute(select(Check).where(Check.id == uuid.UUID(kept["check_id"])))
-    ).scalar_one()
+    kept_row = (await db_session.execute(select(Check).where(Check.id == uuid.UUID(kept["check_id"])))).scalar_one()
     dropped_row = (
         await db_session.execute(select(Check).where(Check.id == uuid.UUID(dropped["check_id"])))
     ).scalar_one()
@@ -444,17 +444,20 @@ async def test_a_bad_cursor_is_400_not_500(client, db_session):
 # is the one that actually runs.
 
 
-async def _really_signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, provisioned_by=None):
+async def _really_signed_in(client, db_session, role=UserRoleEnum.teaching_assistant, supervised_by=None):
     from services import create_session
 
     user = User(
         id=uuid.uuid4(),
         email=f"{uuid.uuid4()}@smu.edu.sg",
         role=role,
-        provisioned_by=provisioned_by,
     )
     db_session.add(user)
     await db_session.commit()
+    if supervised_by is not None:
+        db_session.add(Supervision(ta_id=user.id, instructor_id=supervised_by.id))
+        await db_session.commit()
+        await db_session.refresh(user)
     client.cookies.set("__Host-session", await create_session(db_session, user.id))
     return user
 
@@ -479,10 +482,24 @@ async def test_the_refusal_is_the_reason_not_a_bare_forbidden(client, db_session
 
 
 @pytest.mark.asyncio
+async def test_an_assistant_whose_only_supervisor_is_deactivated_cannot_screen(client, db_session):
+    # Links survive deactivation but stop counting (DECISION LOG [0.21.0]).
+    instructor = await _really_signed_in(client, db_session, role=UserRoleEnum.instructor)
+    instructor.status = UserStatusEnum.deactivated
+    await db_session.commit()
+    client.cookies.clear()
+    await _really_signed_in(client, db_session, supervised_by=instructor)
+
+    response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_a_supervised_assistant_can_screen(client, db_session):
     instructor = await _really_signed_in(client, db_session, role=UserRoleEnum.instructor)
     client.cookies.clear()
-    await _really_signed_in(client, db_session, provisioned_by=instructor.id)
+    await _really_signed_in(client, db_session, supervised_by=instructor)
 
     with patch(
         "services.checks_service.score_text",

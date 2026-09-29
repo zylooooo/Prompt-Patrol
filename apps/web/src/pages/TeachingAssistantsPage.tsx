@@ -1,24 +1,35 @@
 import DataTable, {
-  TABLE_ACTION_COLUMN_WIDTH,
+  TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
   TABLE_STATUS_COLUMN_WIDTH,
   type DataTableColumn,
 } from "../components/ui/DataTable";
 import {
-  useCreateAccount,
+  useAddTeachingAssistant,
   useMyAssistants,
-  useSetSupervisor,
+  useResendInvite,
+  useUnlinkSupervisor,
 } from "../hooks/useUsers";
-import { useState } from "react";
+import { useAuth } from "../hooks/useAuth";
+import { useRef, useState } from "react";
+import ConfirmAddAssistantDialog from "../components/ConfirmAddAssistantDialog";
 import { ApiError } from "../api/client";
 import Modal from "../components/ui/Modal";
 import { fmtDateOnly } from "../lib/format";
 import { useToast } from "../hooks/useToast";
 import Button from "../components/ui/Button";
 import RowAction from "../components/ui/RowAction";
+import RowActionMenu from "../components/ui/RowActionMenu";
+import EmailTypoHint from "../components/ui/EmailTypoHint";
+import FormNotice from "../components/ui/FormNotice";
+import { useEmailTypoGuard } from "../hooks/useEmailTypoGuard";
 import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { displayName, type AppUser } from "../types";
+import {
+  displayName,
+  isPending as isPendingInvite,
+  type AppUser,
+} from "../types";
 import Page, { PageFill } from "../components/ui/Page";
 import UserStatusChip from "../components/ui/UserStatusChip";
 import { SECTION_LABEL } from "../components/ui/section-label";
@@ -30,56 +41,83 @@ export default function TeachingAssistantsPage() {
   usePageTitle("Manage My Assistants");
   const { showToast } = useToast();
   const { data: assistants, isPending, isError, refetch } = useMyAssistants();
-  const createAccount = useCreateAccount();
-  const release = useSetSupervisor();
+  const { user: actor } = useAuth();
+  const addAssistant = useAddTeachingAssistant();
+  const removeFromTeam = useUnlinkSupervisor();
+  const resendInvite = useResendInvite();
 
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{
-    id: string;
-    message: string;
-  } | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<AppUser | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const emailField = useRef<HTMLInputElement>(null);
 
-  async function onAdd() {
+  const typo = useEmailTypoGuard(email, setEmail);
+
+  function onSubmit() {
+    if (!typo.check()) return;
     setError(null);
+    setEmailError(null);
+    setConfirming(email.trim());
+  }
+
+  async function onConfirmAdd() {
+    if (confirming === null) return;
+    const typed = confirming;
     try {
-      const created = await createAccount.mutateAsync({
-        name: name.trim() || undefined,
-        email: email.trim(),
-        role: "teaching_assistant",
-      });
-      setName("");
+      await addAssistant.mutateAsync(typed);
       setEmail("");
-      showToast(`${created.email} added — Auth0 emailed them a link to set their password`);
+      // One message for created, linked and already-there: the server does not
+      // say which, so neither can we ([0.21.0]).
+      showToast(
+        `${typed} is on your team. New accounts get an email to set a password.`,
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
+        setEmailError(err.message);
+      } else {
         setError(
-          "That email already has an account. Ask your administrator to assign them to you.",
+          err instanceof Error ? err.message : "Could not add the account.",
         );
-        return;
       }
-      setError(
-        err instanceof Error ? err.message : "Could not add the account.",
-      );
+    } finally {
+      setConfirming(null);
+    }
+  }
+
+  function onEditEmail() {
+    setConfirming(null);
+    emailField.current?.focus();
+  }
+
+  async function onResendInvite(target: AppUser) {
+    try {
+      await resendInvite.mutateAsync(target.id);
+      showToast(`Invite resent to ${target.email}.`);
+    } catch {
+      showToast(`Couldn't resend the invite to ${target.email}. Try again.`, {
+        tone: "error",
+      });
     }
   }
 
   async function onConfirmRemove() {
     if (!confirmRemove) return;
     const target = confirmRemove;
-    setRowError(null);
     setPending(target.id);
     try {
-      await release.mutateAsync({ id: target.id, supervisorId: null });
-      showToast(`${displayName(target)} removed from your teaching assistants`);
+      await removeFromTeam.mutateAsync({
+        taId: target.id,
+        instructorId: actor!.id,
+      });
+      showToast(`${displayName(target)} removed from your team.`);
       setConfirmRemove(null);
     } catch (err) {
-      setRowError({
-        id: target.id,
-        message: err instanceof Error ? err.message : "Could not remove them.",
+      const reason = err instanceof Error ? err.message : "Try again.";
+      showToast(`Couldn't remove ${displayName(target)}. ${reason}`, {
+        tone: "error",
       });
       setConfirmRemove(null);
     } finally {
@@ -95,7 +133,9 @@ export default function TeachingAssistantsPage() {
       header: "Name",
       width: "minmax(0,1.2fr)",
       cell: (ta) => (
-        <span className="min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground">
+        <span
+          className={`min-w-0 max-w-[11rem] truncate text-sm font-medium text-foreground ${ta.status === "active" ? "" : "opacity-70"}`}
+        >
           {displayName(ta)}
         </span>
       ),
@@ -105,7 +145,10 @@ export default function TeachingAssistantsPage() {
       header: "Email",
       width: "minmax(0,1.5fr)",
       cell: (ta) => (
-        <span className="min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground">
+        <span
+          title={ta.email}
+          className={`min-w-0 max-w-[13rem] truncate font-mono text-xs text-muted-foreground ${ta.status === "active" ? "" : "opacity-70"}`}
+        >
           {ta.email}
         </span>
       ),
@@ -125,27 +168,40 @@ export default function TeachingAssistantsPage() {
       id: "status",
       header: "Status",
       width: TABLE_STATUS_COLUMN_WIDTH,
-      cell: (ta) => <UserStatusChip status={ta.status} />,
+      cell: (ta) => <UserStatusChip user={ta} />,
     },
     {
       id: "actions",
-      header: "",
-      width: TABLE_ACTION_COLUMN_WIDTH,
+      header: "Actions",
+      width: TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
       align: "right",
       cell: (ta) => (
-        <RowAction
-          onClick={() => setConfirmRemove(ta)}
-          disabled={pending === ta.id}
-        >
-          Remove
-        </RowAction>
+        <span className="flex items-center justify-end gap-1">
+          <RowAction
+            onClick={() => setConfirmRemove(ta)}
+            disabled={pending === ta.id}
+          >
+            Remove from team
+          </RowAction>
+          {/* Deactivation is root_admin's now ([0.21.0]), so the menu only
+              exists for a pending invite. */}
+          {isPendingInvite(ta) && (
+            <RowActionMenu
+              items={[
+                {
+                  label: "Resend invite",
+                  onClick: () => void onResendInvite(ta),
+                  disabled: resendInvite.isPending,
+                },
+              ]}
+              ariaLabel={`More actions for ${displayName(ta)}`}
+              disabled={pending === ta.id}
+            />
+          )}
+        </span>
       ),
     },
   ];
-
-  const erroredAssistant = rowError
-    ? list.find((ta) => ta.id === rowError.id)
-    : undefined;
 
   return (
     <Page>
@@ -159,37 +215,52 @@ export default function TeachingAssistantsPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void onAdd();
+            onSubmit();
           }}
           className="mt-4 flex flex-wrap items-end gap-3"
         >
           <label className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">
-              Name (optional)
-            </span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Full name"
-              className={`w-56 ${FIELD}`}
-            />
-          </label>
-          <label className="flex flex-col gap-2">
             <span className="text-xs text-muted-foreground">SMU email</span>
             <input
+              ref={emailField}
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setEmailError(null);
+              }}
               placeholder="name@smu.edu.sg"
+              aria-invalid={emailError ? true : undefined}
+              aria-describedby={
+                emailError
+                  ? "add-email-error"
+                  : typo.suggestion
+                    ? "add-email-hint"
+                    : undefined
+              }
               className={`w-64 ${FIELD}`}
             />
           </label>
           <Button
             type="submit"
-            disabled={!email.trim() || createAccount.isPending}
+            disabled={!email.trim() || addAssistant.isPending}
           >
-            {createAccount.isPending ? "Adding…" : "Add teaching assistant"}
+            {addAssistant.isPending ? "Adding…" : "Add teaching assistant"}
           </Button>
+          {(typo.suggestion || emailError) && (
+            <div className="flex basis-full flex-col gap-1.5">
+              <EmailTypoHint
+                suggestion={typo.suggestion}
+                onUse={typo.applySuggestion}
+                onKeep={typo.keepAsTyped}
+              />
+              {emailError && (
+                <FormNotice tone="error" id="add-email-error" role="alert">
+                  {emailError}
+                </FormNotice>
+              )}
+            </div>
+          )}
         </form>
 
         {error && (
@@ -224,48 +295,51 @@ export default function TeachingAssistantsPage() {
                   No teaching assistants yet
                 </p>
                 <p className="mx-auto mt-2 max-w-sm text-muted-foreground">
-                  Add one above. They will be able to screen answers for your
-                  courses.
+                  Add one above by email. They will be able to screen answers
+                  for your courses.
                 </p>
               </div>
             }
           />
-          {rowError && (
-            <p className="mt-3 shrink-0 text-xs text-danger" role="alert">
-              {erroredAssistant ? `${displayName(erroredAssistant)}: ` : ""}
-              {rowError.message}
-            </p>
-          )}
         </PageFill>
+      )}
+
+      {confirming !== null && (
+        <ConfirmAddAssistantDialog
+          email={confirming}
+          busy={addAssistant.isPending}
+          onEdit={onEditEmail}
+          onConfirm={() => void onConfirmAdd()}
+        />
       )}
 
       {confirmRemove && (
         <Modal
-          title={`Remove ${displayName(confirmRemove)}`}
-          busy={release.isPending}
+          title={`Remove ${displayName(confirmRemove)} from your team?`}
+          busy={removeFromTeam.isPending}
           onClose={() => setConfirmRemove(null)}
           footer={
             <>
               <Button
                 variant="secondary"
                 onClick={() => setConfirmRemove(null)}
-                disabled={release.isPending}
+                disabled={removeFromTeam.isPending}
               >
                 Cancel
               </Button>
               <Button
                 onClick={() => void onConfirmRemove()}
-                disabled={release.isPending}
+                disabled={removeFromTeam.isPending}
               >
-                {release.isPending ? "Removing…" : "Remove"}
+                {removeFromTeam.isPending ? "Removing…" : "Remove from team"}
               </Button>
             </>
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            They keep their account, and it stays active. They stop being able
-            to screen answers until an administrator assigns them to an
-            instructor again.
+            They leave your team. Their account stays active, and anyone else
+            who supervises them keeps them. If you were their only instructor,
+            they can't screen answers until someone adds them again.
           </p>
         </Modal>
       )}

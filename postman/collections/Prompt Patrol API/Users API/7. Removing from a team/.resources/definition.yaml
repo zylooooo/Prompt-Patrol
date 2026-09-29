@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  DELETE /api/users/{id}/supervisors/{instructor_id}: an instructor ends only their own link; anything else is 404.
+order: 7000

@@ -61,9 +61,7 @@ class Check(Base):
     # that is the shape the SPA reads.
     model_version: Mapped[str] = mapped_column(String, nullable=False)
     calibration_version: Mapped[str | None] = mapped_column(String, nullable=True)
-    strictness_applied: Mapped[StrictnessEnum] = mapped_column(
-        Enum(StrictnessEnum, native_enum=False), nullable=False
-    )
+    strictness_applied: Mapped[StrictnessEnum] = mapped_column(Enum(StrictnessEnum, native_enum=False), nullable=False)
     threshold_applied: Mapped[float] = mapped_column(Float, nullable=False)
     target_fpr: Mapped[float | None] = mapped_column(Float, nullable=True)
     used_question_text: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -82,9 +80,7 @@ class Check(Base):
     # The timestamp the check is created, written by the API server, not the database.
     # server_default is kept so that if a row is inserted outside the app, there is
     # still a default value.
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(UTC), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), server_default=func.now())
 
     __table_args__ = (
         # The history page's only query: this author's checks, newest first,

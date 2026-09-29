@@ -32,7 +32,13 @@ const wrapper = ({ children }: { children: ReactNode }) => {
 const signedInAs = (email: string) =>
   mockedGetSession.mockResolvedValue({
     status: "authenticated",
-    user: { email, role: "instructor", provisionedBy: null },
+    user: {
+      id: "u-1",
+      email,
+      name: null,
+      role: "instructor",
+      supervisorIds: [],
+    },
     session: {
       expiresAt: Date.now() + 90 * 60_000,
       capped: false,

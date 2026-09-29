@@ -31,13 +31,16 @@ export default function DeactivateInstructorDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Only assistants this instructor supervises alone: anyone with another
+  // supervisor keeps screening ([0.21.0]).
   const stranded = useMemo(
     () =>
       allUsers.filter(
         (u) =>
           u.role === "teaching_assistant" &&
-          u.provisionedBy === instructor.id &&
-          u.status !== "deleted",
+          u.status !== "deleted" &&
+          u.supervisorIds.length === 1 &&
+          u.supervisorIds[0] === instructor.id,
       ),
     [allUsers, instructor.id],
   );
@@ -142,21 +145,21 @@ export default function DeactivateInstructorDialog({
     >
       {stranded.length === 0 ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
-          This account supervises nobody, so no teaching assistants are
+          No teaching assistant depends on this account alone, so none are
           affected.
         </p>
       ) : (
         <>
           <p className="text-sm leading-relaxed text-muted-foreground">
             {stranded.map(displayName).join(", ")}{" "}
-            {stranded.length === 1 ? "reports" : "report"} to this account.
-            Choose what happens to them.
+            {stranded.length === 1 ? "has" : "have"} no other supervisor. Choose
+            what happens to them.
           </p>
 
           <div className="mt-5 flex flex-col gap-1.5">
             {option(
               "reassign",
-              "Reassign them to another instructor",
+              "Add them to another instructor's team",
               undefined,
               <span className="mt-3 block" onClick={(e) => e.stopPropagation()}>
                 <Dropdown<string>
@@ -167,7 +170,7 @@ export default function DeactivateInstructorDialog({
                     label: displayName(candidate),
                   }))}
                   placeholder="Choose an instructor"
-                  ariaLabel="Instructor to reassign to"
+                  ariaLabel="Instructor to add them to"
                   emptyLabel="No other active instructors"
                   size="lg"
                   triggerLeading={false}
@@ -184,8 +187,8 @@ export default function DeactivateInstructorDialog({
             )}
             {option(
               "leave",
-              "Leave them unassigned for now",
-              "They keep their accounts and appear under the Unassigned filter until someone assigns them.",
+              "Leave them for now",
+              "They keep their accounts but can't screen until this instructor is reactivated or someone adds them to a team.",
             )}
           </div>
         </>

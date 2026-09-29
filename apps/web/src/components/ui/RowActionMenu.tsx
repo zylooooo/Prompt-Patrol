@@ -100,7 +100,10 @@ export default function RowActionMenu({
   const activate = (item: RowActionMenuItem) => {
     if (item.disabled) return;
     setIsOpen(false);
-    item.onClick();
+    // FloatingFocusManager hands focus back to the trigger in a microtask
+    // after the menu unmounts. Run the action after that, so a dialog it opens
+    // keeps focus instead of losing it to the trigger behind the scrim.
+    window.setTimeout(item.onClick, 0);
   };
 
   return (

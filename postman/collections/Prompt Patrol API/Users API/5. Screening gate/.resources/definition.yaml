@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  A TA can screen only while an active instructor supervises them.
+order: 5000

@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[TA] Who am I"
+description: |-
+  Environment: Prompt Patrol Dev - TA
+
+  Reads the TA session and stores its id as TA_USER_ID.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{SESSION_COOKIE}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("run with the Prompt Patrol Dev - TA environment", () =>
+        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("session payload shape (0.21.0)", () => {
+        pm.expect(body).to.include.keys("id", "email", "display_name", "role", "supervisor_ids", "session");
+        pm.expect(body.supervisor_ids).to.be.an("array");
+        pm.expect(body).to.not.have.property("provisioned_by");
+      });
+      pm.test("is a teaching assistant", () => pm.expect(body.role).to.eql("teaching_assistant"));
+      pm.globals.set("TA_USER_ID", body.id);
+    language: text/javascript
+order: 3000

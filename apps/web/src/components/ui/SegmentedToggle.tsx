@@ -3,6 +3,8 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 export interface SegmentedToggleOption<T extends string> {
   value: T;
   label: string;
+  /** Rendered as a quiet annotation after the label; zero is dimmed further. */
+  count?: number;
   disabled?: boolean;
   title?: string;
 }
@@ -162,6 +164,18 @@ export default function SegmentedToggle<T extends string>({
             }`}
           >
             {option.label}
+            {option.count !== undefined && " "}
+            {option.count !== undefined && (
+              <span
+                className={`ml-1 text-xs font-normal tabular-nums ${
+                  option.count === 0
+                    ? "text-disabled-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {option.count}
+              </span>
+            )}
           </button>
         );
       })}

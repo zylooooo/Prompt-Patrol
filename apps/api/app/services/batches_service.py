@@ -52,9 +52,9 @@ def parse_and_validate(
     column_mapping: dict[str, str] | None,
     requires_question_text: bool,
 ) -> tuple[list[dict], list[dict]]:
-    """Authoritative server-side parse. column_mapping, if given, maps the 
-    instructor's literal header text to the internal field names. 
-    The mapping is applied here, not client-side, so the untouched original 
+    """Authoritative server-side parse. column_mapping, if given, maps the
+    instructor's literal header text to the internal field names.
+    The mapping is applied here, not client-side, so the untouched original
     upload stays the source of truth in S3."""
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
@@ -144,7 +144,10 @@ async def create_batch(
     await db.refresh(batch)
     logger.info(
         "Batch %s created by actor %s: %d rows queued, %d rejected at parse time.",
-        batch.id, actor_id, len(rows), len(failures),
+        batch.id,
+        actor_id,
+        len(rows),
+        len(failures),
     )
 
     enqueue_failed = 0
@@ -165,9 +168,7 @@ async def create_batch(
             # SQS is unavailable/throttled partway through. The row never
             # reaches the Worker, so it must count as `failed` rather than
             # sit as `pending` forever.
-            logger.exception(
-                "Failed to enqueue row %r for batch %s.", row["external_ref"], batch.id
-            )
+            logger.exception("Failed to enqueue row %r for batch %s.", row["external_ref"], batch.id)
             enqueue_failed += 1
             db.add(
                 BatchRowFailure(
@@ -179,9 +180,7 @@ async def create_batch(
                 )
             )
     if enqueue_failed:
-        logger.warning(
-            "Batch %s: %d of %d rows failed to enqueue.", batch.id, enqueue_failed, len(rows)
-        )
+        logger.warning("Batch %s: %d of %d rows failed to enqueue.", batch.id, enqueue_failed, len(rows))
         await db.commit()
 
     return batch
@@ -205,9 +204,7 @@ async def get_batch_progress(db: AsyncSession, actor: User, batch_id: uuid.UUID)
     failures = list(
         (
             await db.execute(
-                select(BatchRowFailure)
-                .where(BatchRowFailure.batch_id == batch_id)
-                .order_by(BatchRowFailure.created_at)
+                select(BatchRowFailure).where(BatchRowFailure.batch_id == batch_id).order_by(BatchRowFailure.created_at)
             )
         )
         .scalars()

@@ -249,7 +249,7 @@ export default function HistoryPage() {
           <p className="text-lg font-medium text-foreground">No checks yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Checked answers will appear here. Run your first check from the
-            Check answers page.
+            Screen New Answers page.
           </p>
         </section>
       ) : (

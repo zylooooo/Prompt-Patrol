@@ -321,7 +321,7 @@ function toSingleCheckFromSummary(
 }
 
 export function hasScreeningAccess(actor: User): boolean {
-  return actor.role !== "teaching_assistant" || actor.provisionedBy !== null;
+  return actor.role !== "teaching_assistant" || actor.supervisorIds.length > 0;
 }
 
 function requireScreeningAccess(actor: User): void {
@@ -354,4 +354,3 @@ export async function checkAnswer(
     strictness,
   );
 }
-
