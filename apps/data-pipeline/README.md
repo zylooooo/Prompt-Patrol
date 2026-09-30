@@ -39,17 +39,32 @@ python app/leakage_check.py # verify no question crosses a split boundary
 python app/logo_folds.py    # leave-one-generator-out folds (needs AI-generated data first)
 ```
 
+These predate the generated data and split Mohler human answers only.
+The fine-tuning corpus is split by `corpus.build`, see Corpus build.
+
 ## Generation harness
 
 `app/harness/configs/` holds one config per dataset: `mohler.yaml`,
 `sprag.yaml` and `engsaf.yaml`. Each sets the question file, the dataset
-namespace, sample counts per tier, decoding parameters and the generator
-list, which mixes API and local Ollama models. The three differ only in
-the question file and namespace, and a test fails if anything else drifts
-apart, so a generator or decoding change goes into all three. Every run
-covers one dataset, so generation stays separate for each corpus.
+namespace, the course named in the student persona, sample counts per
+tier, decoding parameters and the generator list, which mixes API and
+local Ollama models. The three differ only in the question file,
+namespace and course, and a test fails if anything else drifts apart, so
+a generator or decoding change goes into all three. Every run covers one
+dataset, so generation stays separate for each corpus.
 
-A generator entry can carry provider switches through `extra_body`. The
+The prompts are written so that nothing but the writing tells the two
+labels apart. Every quality-tier answer is asked for about N words,
+where N is the length of a student answer to the same question, drawn
+with the answer id as seed, so generated lengths follow the students'.
+N is never below 3, and the corpus builder drops shorter answers on
+both sides.
+The prompts also name the course, keep an exam answer's neutral tone,
+and forbid markdown and remarks about certainty or memory. The weak,
+partial and wrong tiers put their weakness in the content, not in casual
+wording.
+
+A generator entry can carry provider switches through `extra_body`. Each
 config uses this to turn off DeepSeek and qwen3 reasoning, since both
 think by default and can spend the whole token budget before writing any
 visible answer.
@@ -109,9 +124,11 @@ counts and token usage. Record shape:
       "question_id": "mohler/E03.Q03",
       "generator": "gpt-5.5",
       "model_version": "gpt-5.5-2026-04-23",
-      "prompt_template": "weak_v1",
+      "prompt_template": "weak_v3",
       "tier": "weak",
-      "params_honoured": {"max_completion_tokens": 400},
+      "target_words": 23,
+      "course": "an introductory C++ programming and data structures course",
+      "params_honoured": {"max_completion_tokens": 800},
       "usage": {"prompt_tokens": 211, "completion_tokens": 87},
       "timestamp": "2026-09-18T08:51:46+00:00",
       "answer": "..."
@@ -129,16 +146,18 @@ Notes:
 - answer is never empty. Reasoning traces are discarded, and a response
   whose whole token budget went to reasoning counts as a failure in the
   run report instead of being written.
-- rewrite records also carry source_answer_id, the id of the student
-  answer they polish.
+- quality-tier records carry target_words and course, which with the
+  template fix the exact prompt sent. A resume stops if the folder holds
+  answers made with another template or course. rewrite records carry
+  source_answer_id instead, the id of the student answer they polish.
 - a generator that fails three calls in a row is abandoned for the rest
   of the run, so a dead endpoint or bad key cannot stall every remaining
   call. The run report then shows fewer requested calls than the plan.
 - The splicer links spliced documents to answer_id and question_id.
   Each question goes wholly to train, val or test, and every record
-  follows its question there through question_id. Mohler asks two
-  questions twice under different ids (E06.Q01 and E12.Q01, E09.Q01 and
-  E12.Q06), so each pair counts as one question and lands on the same
+  follows its question there through question_id. Ids asking the same
+  question, by identical text or as the twins listed in
+  `app/corpus/config.yaml`, count as one question and land on the same
   side. The leave-one-generator-out folds use generator to leave one
   model's answers out of training. Cost reporting sums usage.
 
@@ -247,6 +266,53 @@ document.
 The record schema is documented in `docs/spliced-schema.md`, and the
 segmenter validation evidence lives in `docs/segmentation_review_v1.md`
 to `v3`.
+
+## Corpus build
+
+`app/corpus/build.py` turns the cleaned human corpora and one full
+harness run per dataset into a fine-tuning corpus version, in the shape
+ml-training's `load_splits()` reads. No model calls.
+
+- Labels: cleaned student answers are 0 with generator `human`, raw
+  harness answers are 1. Rewrite-tier records are skipped.
+- Split: each dataset is split on its own, 70/15/15 by question with the
+  seed in `app/config.py`, so every dataset appears in train, val and
+  test. Ids sharing a question text, and the twins listed under
+  `same_question` in `app/corpus/config.yaml`, land in one partition.
+- Balance: in train, each question keeps as many human answers as it
+  has ai answers, so no dataset is mostly human. Val and test keep every
+  human answer, since they set and measure the false-positive rate.
+- Cleanup: every answer, human and ai, goes through `clean_text` in
+  `app/corpus/clean.py` (line breaks, list markers, answer-sheet labels,
+  LaTeX arrows, empty call brackets, curly quotes and dashes, backticks
+  and bold), so formatting only one side uses cannot give the label
+  away. The detector has to apply the same function to submitted text.
+- Floor: answers under 3 words are dropped on both sides. The harness
+  never asks for fewer, so they exist only among students. The detector
+  therefore has no evidence on answers that short, and the app should
+  report them as too short to check.
+- Checks: the build stops if a question or question group spans two
+  partitions, an answer_id repeats, an answer is empty, or any dataset
+  lacks human or ai answers in any partition.
+
+Set each dataset's `ai_answers` in `app/corpus/config.yaml` to its full
+harness run, then from inside `app/`:
+
+```
+python -m corpus.build                     # every dataset in the config
+python -m corpus.build --datasets mohler   # a check build, written as v0.1-only-mohler
+```
+
+Output goes to `data/corpus/<version>.parquet` and
+`<version>_manifest.json`. The manifest records the source files and
+their hashes, rows per partition and dataset, the cleanup version,
+questions without ai answers, and the partition of every question.
+
+To publish a version, copy both files into `ml-training/data/splits/`
+and follow "Changing the data" in `ml-training/README.md`. Run
+`dvc pull` there first. `dvc add data` records only what is in the
+folder, so adding from a clone that lacks the other split files would
+publish a folder without them.
 
 ## Shared artifact storage
 

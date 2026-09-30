@@ -9,6 +9,10 @@ import pytest
 from harness import generate
 from harness.clients import GenerationResult
 
+COURSE = "a test course"
+# every tier needs a pool, rewrites polish one answer and the rest take its length
+POOL = [("mohler/E01.Q01.A00", "a stack is last in first out")]
+
 
 class FakeClient:
     def generate(self, system, user, decoding):
@@ -56,9 +60,10 @@ def test_load_questions_normalises_other_dataset_columns(tmp_path):
 def test_run_writes_records_and_report(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": FakeClient()})
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "What is a stack?"},
+        {"question_id": "mohler/E01.Q01", "question": "What is a stack?", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"weak": 2},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -74,9 +79,10 @@ def test_run_writes_records_and_report(tmp_path, monkeypatch):
 def test_empty_answer_counts_as_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": EmptyClient()})
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "What is a stack?"},
+        {"question_id": "mohler/E01.Q01", "question": "What is a stack?", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"wrong": 1},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -101,9 +107,10 @@ def test_repeated_empty_answers_abandon_the_generator(tmp_path, monkeypatch):
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": CountingEmptyClient()})
     questions = pd.DataFrame([
-        {"question_id": f"mohler/E01.Q{i:02d}", "question": "q"} for i in range(10)
+        {"question_id": f"mohler/E01.Q{i:02d}", "question": "q", "student_answers": POOL} for i in range(10)
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 2},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -121,8 +128,8 @@ def test_raising_client_is_abandoned_after_three_calls(tmp_path, monkeypatch):
             raise RuntimeError("endpoint down")
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": BrokenClient()})
-    questions = pd.DataFrame([{"question_id": f"mohler/E01.Q{i:02d}", "question": "q"} for i in range(10)])
-    config = {"samples_per_question": {"correct": 2}, "decoding": {}, "generators": []}
+    questions = pd.DataFrame([{"question_id": f"mohler/E01.Q{i:02d}", "question": "q", "student_answers": POOL} for i in range(10)])
+    config = {"course": COURSE, "samples_per_question": {"correct": 2}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path, go=True)
 
     assert calls["n"] == 3
@@ -146,8 +153,8 @@ def test_errors_and_empty_answers_share_one_streak(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": MixedClient()})
-    questions = pd.DataFrame([{"question_id": f"mohler/E01.Q{i:02d}", "question": "q"} for i in range(4)])
-    config = {"samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
+    questions = pd.DataFrame([{"question_id": f"mohler/E01.Q{i:02d}", "question": "q", "student_answers": POOL} for i in range(4)])
+    config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path, go=True)
     assert calls["n"] == 3
 
@@ -164,8 +171,8 @@ def test_every_record_is_on_disk_before_the_next_call(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": PeekingClient()})
-    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q"}])
-    config = {"samples_per_question": {"correct": 2}, "decoding": {}, "generators": []}
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"correct": 2}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path, go=True)
     assert lines_seen == [0, 1]
 
@@ -183,9 +190,10 @@ def test_rerunning_a_folder_skips_paid_calls_and_reports_the_folder(tmp_path, mo
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": CountingClient()})
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 2},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -212,9 +220,10 @@ def test_a_good_answer_resets_the_failure_streak(tmp_path, monkeypatch):
 
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": FlakyClient()})
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 6},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -237,9 +246,10 @@ def test_resume_fills_gaps_and_keeps_billed_failures(tmp_path, monkeypatch):
             )
 
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 2},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -259,9 +269,10 @@ def test_resume_fills_gaps_and_keeps_billed_failures(tmp_path, monkeypatch):
 def test_resume_after_a_killed_run_counts_the_records(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": FakeClient()})
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 1},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -278,8 +289,8 @@ def test_resume_after_a_killed_run_counts_the_records(tmp_path, monkeypatch):
 
 def test_resume_after_a_killed_resume_recounts_a_stale_report(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": FakeClient()})
-    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q"}])
-    config = {"samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path, go=True)
     # a resume killed after writing a record leaves the older report behind
     answers = tmp_path / "answers.jsonl"
@@ -294,8 +305,8 @@ def test_resume_after_a_killed_resume_recounts_a_stale_report(tmp_path, monkeypa
 
 
 def test_resume_keeps_the_report_of_generators_left_out(tmp_path, monkeypatch):
-    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q"}])
-    config = {"samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
     monkeypatch.setattr(generate, "build_clients", lambda config: {"g1": FakeClient(), "g2": EmptyClient()})
     generate.run(config, questions, tmp_path, go=True)
     monkeypatch.setattr(generate, "build_clients", lambda config: {"g1": FakeClient()})
@@ -308,8 +319,8 @@ def test_resume_keeps_the_report_of_generators_left_out(tmp_path, monkeypatch):
 def test_dry_run_counts_only_answers_the_plan_would_skip(tmp_path, caplog):
     record = {"answer_id": "mohler/E01.Q01/g1/correct/01", "generator": "g1"}
     (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
-    questions = pd.DataFrame([{"question_id": "sprag/PythonQ057", "question": "q"}])
-    config = {"samples_per_question": {"correct": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
+    questions = pd.DataFrame([{"question_id": "sprag/PythonQ057", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
     with caplog.at_level(logging.INFO, logger="harness.generate"):
         generate.run(config, questions, tmp_path, go=False)
     assert "0 answers already in" in caplog.text and "1 calls still to make" in caplog.text
@@ -323,7 +334,7 @@ def fake_main_inputs(tmp_path, monkeypatch, argv):
     # the fake config names its dataset after the file, as the real ones do
     monkeypatch.setattr(generate, "load_config", lambda path: {"questions_file": "q.parquet", "dataset": Path(path).stem})
     monkeypatch.setattr(generate, "load_questions", lambda path, namespace: pd.DataFrame(
-        [{"question_id": "mohler/E01.Q01", "question": "q"}]
+        [{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}]
     ))
     monkeypatch.setattr(generate, "run", lambda config, questions, out_dir, go: calls.append(out_dir))
     monkeypatch.setattr("sys.argv", ["generate", *argv])
@@ -365,15 +376,16 @@ def test_dataset_configs_differ_only_in_their_corpus():
         assert config["dataset"] == name
         assert config["questions_file"] == f"data/cleaned/{name}_cleaned.parquet"
     # a generator or decoding change has to reach all three files
-    shared = [{k: v for k, v in c.items() if k not in ("dataset", "questions_file")} for c in configs.values()]
+    assert all(config["course"] for config in configs.values())
+    shared = [{k: v for k, v in c.items() if k not in ("dataset", "questions_file", "course")} for c in configs.values()]
     assert all(s == shared[0] for s in shared)
 
 
 def test_dry_run_writes_nothing(tmp_path):
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
-    config = {"samples_per_question": {"weak": 1}, "decoding": {}, "generators": []}
+    config = {"course": COURSE, "samples_per_question": {"weak": 1}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path / "out", go=False)
     assert not (tmp_path / "out").exists()
 
@@ -404,6 +416,7 @@ def test_only_the_rewrite_template_swaps_the_system_prompt(tmp_path, monkeypatch
          "student_answers": [("mohler/E01.Q01.A00", "a stack is last in first out")]},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"correct": 1, "weak": 1, "partial": 1, "wrong": 1, "rewrite": 1},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -412,7 +425,7 @@ def test_only_the_rewrite_template_swaps_the_system_prompt(tmp_path, monkeypatch
 
     assert systems.pop("a stack is last in first out") == REWRITE_SYSTEM
     assert len(systems) == 4
-    assert set(systems.values()) == {SYSTEM}
+    assert set(systems.values()) == {SYSTEM.format(course=COURSE)}
 
 
 def test_is_rewrite_follows_the_tier():
@@ -426,11 +439,85 @@ def test_is_rewrite_follows_the_tier():
                            "source_answer_id": "mohler/E01.Q01/fake/weak/01"})
 
 
+def test_word_target_comes_from_the_question_students(tmp_path, monkeypatch):
+    prompts = []
+
+    class CapturingClient:
+        def generate(self, system, user, decoding):
+            prompts.append(user)
+            return GenerationResult(
+                text="an answer", model_version="fake-1",
+                params_honoured=decoding, usage={"prompt_tokens": 1, "completion_tokens": 1},
+            )
+
+    monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": CapturingClient()})
+    pool = [(f"mohler/E01.Q01.A{i:02d}", " ".join(["word"] * n)) for i, n in enumerate((5, 12, 30))]
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": pool}])
+    config = {"course": COURSE, "samples_per_question": {"correct": 1, "weak": 1, "partial": 1, "wrong": 1},
+              "decoding": {}, "generators": []}
+    generate.run(config, questions, tmp_path, go=True)
+
+    records = [json.loads(line) for line in (tmp_path / "answers.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert {r["target_words"] for r in records} <= {5, 12, 30}
+    assert {r["course"] for r in records} == {COURSE}
+    for record, prompt in zip(records, prompts, strict=True):
+        assert f"about {record['target_words']} words" in prompt
+        assert "Question: q" in prompt
+        # fixed by the answer id, so a resumed call asks for the same length
+        assert record["target_words"] == generate.pick_target_words(questions.iloc[0], record["answer_id"])
+
+
+def test_every_quality_tier_has_its_own_template():
+    from harness.prompts import TIER_TO_TEMPLATE
+
+    for tier, template in TIER_TO_TEMPLATE.items():
+        assert template.startswith(tier + "_")
+
+
+def test_count_words_splits_on_commas_too():
+    assert generate.count_words("min(),max(),len()") == 3
+    assert generate.count_words("a stack  is\nLIFO") == 4
+
+
+def test_word_targets_spread_over_the_students_lengths():
+    pool = [(f"mohler/E01.Q01.A{i:02d}", " ".join(["w"] * n)) for i, n in enumerate(range(3, 33))]
+    row = {"student_answers": pool}
+    targets = [generate.pick_target_words(row, f"mohler/E01.Q01/g{g}/{t}/01")
+               for g in range(20) for t in ("correct", "weak", "partial", "wrong")]
+    assert len(set(targets)) > 15
+    assert min(targets) < 10 and max(targets) > 25
+
+
+def test_word_target_never_drops_below_the_floor():
+    row = {"student_answers": [("mohler/E01.Q01.A00", "LIFO")]}
+    assert generate.pick_target_words(row, "mohler/E01.Q01/fake/correct/01") == generate.MIN_TARGET_WORDS
+
+
+def test_system_prompt_names_the_course(tmp_path, monkeypatch):
+    systems = []
+
+    class CapturingClient:
+        def generate(self, system, user, decoding):
+            systems.append(system)
+            return GenerationResult(
+                text="an answer", model_version="fake-1",
+                params_honoured=decoding, usage={"prompt_tokens": 1, "completion_tokens": 1},
+            )
+
+    monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": CapturingClient()})
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": "a Python programming course", "samples_per_question": {"correct": 1},
+              "decoding": {}, "generators": []}
+    generate.run(config, questions, tmp_path, go=True)
+    assert "in a Python programming course." in systems[0]
+    assert "{course}" not in systems[0]
+
+
 def test_every_template_formats_with_the_run_keys():
     from harness.prompts import TEMPLATES
 
     for template in TEMPLATES.values():
-        template.format(question="q", student_answer="s")
+        template.format(question="q", student_answer="s", target_words=10)
 
 
 def test_questions_flag_rejects_zero_and_negatives():
@@ -477,7 +564,7 @@ def test_each_generator_polishes_a_different_student(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "build_clients", lambda config: {"g1": capturing("g1"), "g2": capturing("g2")})
     pool = [(f"mohler/E01.Q01.A{i:02d}", f"student answer {i}") for i in range(5)]
     questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": pool}])
-    config = {"samples_per_question": {"rewrite": 2}, "decoding": {}, "generators": []}
+    config = {"course": COURSE, "samples_per_question": {"rewrite": 2}, "decoding": {}, "generators": []}
     generate.run(config, questions, tmp_path, go=True)
 
     records = [json.loads(line) for line in (tmp_path / "answers.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -487,6 +574,7 @@ def test_each_generator_polishes_a_different_student(tmp_path, monkeypatch):
 
 def test_plan_warns_when_a_question_is_short_of_answers(tmp_path, caplog):
     config = {
+        "course": COURSE,
         "samples_per_question": {"rewrite": 2}, "decoding": {},
         "generators": [{"name": "g1"}, {"name": "g2"}],
     }
@@ -509,12 +597,14 @@ def test_slots_wrap_when_a_question_is_short_of_answers():
     assert generate.pick_student_answer(row, position=1, count=2, seq=2) == ("a", "1")
 
 
-def test_question_with_no_student_answer_fails_at_plan_time(tmp_path):
+@pytest.mark.parametrize("tiers", [{"correct": 1}, {"rewrite": 1}])
+def test_question_with_no_student_answer_fails_at_plan_time(tmp_path, tiers):
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": []},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
+        {"question_id": "mohler/E01.Q02", "question": "q", "student_answers": []},
     ])
-    config = {"samples_per_question": {"rewrite": 1}, "decoding": {}, "generators": []}
-    with pytest.raises(SystemExit, match="no student answer"):
+    config = {"course": COURSE, "samples_per_question": tiers, "decoding": {}, "generators": []}
+    with pytest.raises(SystemExit, match="no student answers"):
         generate.run(config, questions, tmp_path / "out", go=False)
 
 
@@ -537,6 +627,7 @@ def test_rewrite_tier_feeds_student_answer_into_prompt(tmp_path, monkeypatch):
          "student_answers": [("mohler/E01.Q01.A00", "a stack is last in first out")]},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"rewrite": 1},
         "decoding": {"temperature": 0.8, "max_tokens": 400},
         "generators": [],
@@ -552,20 +643,32 @@ def test_rewrite_tier_feeds_student_answer_into_prompt(tmp_path, monkeypatch):
     assert record["source_answer_id"] == "mohler/E01.Q01.A00"
 
 
-def test_rewrite_tier_without_student_answers_fails_at_plan_time(tmp_path):
+def test_question_file_without_student_answers_fails_at_plan_time(tmp_path):
     questions = pd.DataFrame([
         {"question_id": "mohler/E01.Q01", "question": "q"},
     ])
-    config = {"samples_per_question": {"rewrite": 1}, "decoding": {}, "generators": []}
-    with pytest.raises(SystemExit, match="student answers"):
+    config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
+    with pytest.raises(SystemExit, match="needs student answers"):
         generate.run(config, questions, tmp_path / "out", go=False)
+
+
+@pytest.mark.parametrize("course", ["absent", None, ""])
+def test_missing_course_fails_at_plan_time(tmp_path, course):
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"samples_per_question": {"correct": 1}, "decoding": {}, "generators": []}
+    if course != "absent":
+        config["course"] = course
+    with pytest.raises(SystemExit, match="course"):
+        generate.run(config, questions, tmp_path / "out", go=False)
+    assert not (tmp_path / "out").exists()
 
 
 def test_unknown_tier_fails_at_plan_time(tmp_path):
     questions = pd.DataFrame([
-        {"question_id": "mohler/E01.Q01", "question": "q"},
+        {"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL},
     ])
     config = {
+        "course": COURSE,
         "samples_per_question": {"weak": 1, "sarcastic": 1},
         "decoding": {},
         "generators": [],
@@ -574,3 +677,16 @@ def test_unknown_tier_fails_at_plan_time(tmp_path):
         generate.run(config, questions, tmp_path / "out", go=False)
     assert not (tmp_path / "out").exists()
     
+
+
+@pytest.mark.parametrize("stale", [{"prompt_template": "weak_v1"}, {"course": "another course"}])
+def test_resume_refuses_answers_from_other_prompts(tmp_path, stale):
+    record = {"answer_id": "mohler/E01.Q01/g1/weak/01", "question_id": "mohler/E01.Q01", "generator": "g1",
+              "tier": "weak", "prompt_template": "weak_v3", "course": COURSE, "answer": "an answer",
+              "usage": {"prompt_tokens": 1, "completion_tokens": 1}, **stale}
+    (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"weak": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
+    with pytest.raises(SystemExit, match="came from other prompts"):
+        generate.run(config, questions, tmp_path, go=False)
+

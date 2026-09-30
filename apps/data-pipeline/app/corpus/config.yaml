@@ -1,0 +1,37 @@
+# Corpus build: the human corpus and harness run behind each dataset.
+# Seed and split ratios come from app/config.py, shared with splitting.py
+version: v0.1
+out_dir: data/corpus
+datasets:
+  mohler:
+    human_corpus: data/cleaned/mohler_cleaned.parquet
+    ai_answers: data/generated/REPLACE-WITH-RUN-ID/answers.jsonl   # the full mohler run
+  sprag:
+    human_corpus: data/cleaned/sprag_cleaned.parquet
+    ai_answers: data/generated/REPLACE-WITH-RUN-ID/answers.jsonl   # the full sprag run
+  engsaf:
+    human_corpus: data/cleaned/engsaf_cleaned.parquet
+    ai_answers: data/generated/REPLACE-WITH-RUN-ID/answers.jsonl   # the full engsaf run
+# Ids asking the same thing in other words, grouped so each pair lands in
+# one partition: reworded repeats, shared instructor answers, and true or
+# false statements given once negated. Identical texts are grouped anyway
+same_question:
+  mohler:
+    - [E02.Q01, E11.Q01]
+    - [E03.Q01, E11.Q04]
+    - [E04.Q02, E11.Q08]
+    - [E04.Q03, E07.Q04]
+    - [E04.Q04, E11.Q07]
+    - [E05.Q02, E12.Q04]
+    - [E07.Q02, E12.Q05]
+    - [E08.Q02, E12.Q07]
+    - [E08.Q05, E09.Q05]
+    - [E10.Q07, E12.Q10]
+  sprag:
+    - [PythonQ015, PythonQ063]
+  engsaf:
+    - [Q0, Q11]
+    - [Q9, Q39]
+    - [Q13, Q32]
+    - [Q14, Q26]
+    - [Q23, Q43]

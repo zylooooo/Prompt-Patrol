@@ -147,6 +147,8 @@ class GeminiClient:
                     # thinking shares max_output_tokens, minimal is the
                     # lowest setting on gemini 3.5, there is no off
                     "thinking_config": {"thinking_level": "minimal"},
+                    # no tools are passed, and left on, it logs an AFC line on every call
+                    "automatic_function_calling": {"disable": True},
                 },
             ),
             is_retryable,

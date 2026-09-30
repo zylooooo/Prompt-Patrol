@@ -1,7 +1,8 @@
 # Harness config for sprag, API keys live in .env. The three dataset
-# configs differ only in questions_file and dataset
+# configs differ only in questions_file, dataset and course
 questions_file: data/cleaned/sprag_cleaned.parquet
 dataset: sprag        # id namespace
+course: a Python programming course   # named in the student persona
 samples_per_question:
   correct: 1
   weak: 1
@@ -11,7 +12,9 @@ samples_per_question:
   # a different one each call while the question has enough
 decoding:
   temperature: 0.8
-  max_tokens: 400
+  # the longest student answers run to about 380 tokens, and gpt-5 models
+  # spend part of this budget on hidden reasoning
+  max_tokens: 800
 generators:
   - name: claude-sonnet-5
     provider: anthropic

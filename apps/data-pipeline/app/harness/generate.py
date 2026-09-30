@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import random
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 APP_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = APP_DIR.parent
 CONFIG_DIR = Path(__file__).parent / "configs"
+MIN_TARGET_WORDS = 3
+# commas and semicolons separate words too, students join lists without spaces
+_WORD = re.compile(r"[^\s,;<>]+")
 DATASETS = sorted(path.stem for path in CONFIG_DIR.glob("*.yaml"))
 
 
@@ -44,8 +48,9 @@ def load_questions(path, namespace):
     corpus has student answers, student_answers. That is every non-blank
     answer to the question as a (source_answer_id, text) pair, shuffled
     in an order fixed by the question id, so every run sees the same
-    order. The rewrite tier polishes one of them per call, see
-    pick_student_answer.
+    order. Every tier needs them: the rewrite tier polishes one per call
+    (pick_student_answer), the others take one's length
+    (pick_target_words).
 
     Accepts the project's cleaned corpora. Column names are normalised through
     COLUMN_ALIASES, and when no question_id column exists, composite ids
@@ -79,6 +84,22 @@ def pick_student_answer(row, position, count, seq):
     return pool[(position * count + seq - 1) % len(pool)]
 
 
+def count_words(text):
+    """Words as students write them, so "min(),max(),len()" counts three.
+    The corpus builder counts n_words the same way."""
+    return len(_WORD.findall(text))
+
+
+def pick_target_words(row, answer_id):
+    """The word count one generated answer is asked for: the length of a
+    student answer to the same question, drawn with the answer id as
+    seed. Generated lengths then follow the students' spread above the
+    floor instead of each model's habit. Never below MIN_TARGET_WORDS,
+    the corpus builder drops shorter answers on both sides."""
+    lengths = sorted(count_words(text) for _, text in row["student_answers"])
+    return max(MIN_TARGET_WORDS, random.Random(answer_id).choice(lengths))
+
+
 def existing_answers(path):
     """Records already in answers.jsonl, keyed by answer_id, so a resumed
     run neither pays twice for an answer it holds nor writes a duplicate."""
@@ -98,13 +119,16 @@ def run(config, questions, out_dir, go):
     if unknown:
         raise SystemExit(f"unknown tiers {unknown}, known tiers are {sorted(TIER_TO_TEMPLATE)}")
     generators = [g["name"] for g in config["generators"]]
+    if not config.get("course"):
+        raise SystemExit("the config needs a course, the student persona names it")
+    # every tier uses them, rewrites polish one and the rest take its length
+    if "student_answers" not in questions.columns:
+        raise SystemExit("the question file needs student answers with ids")
+    empty = [q for q, pool in zip(questions["question_id"], questions["student_answers"], strict=True) if not pool]
+    if empty:
+        raise SystemExit(f"no student answers for {len(empty)} questions, first {empty[:5]}")
     needs_student = sorted(t for t in tiers if t in REWRITE_TIERS)
     if needs_student:
-        if "student_answers" not in questions.columns:
-            raise SystemExit(f"tiers {needs_student} need student answers with ids in the question file")
-        empty = [q for q, pool in zip(questions["question_id"], questions["student_answers"], strict=True) if not pool]
-        if empty:
-            raise SystemExit(f"no student answer to polish for {len(empty)} questions, first {empty[:5]}")
         per_question = max(tiers[t] for t in needs_student) * len(generators)
         short = sum(len(pool) < per_question for pool in questions["student_answers"])
         if short:
@@ -137,6 +161,18 @@ def run(config, questions, out_dir, go):
             for seq in range(1, count + 1)
             for name in generators
         }
+        # answer ids carry no prompt version, so an answer made with other
+        # prompts would otherwise be kept as if it were this run's
+        stale = sorted(
+            answer_id for answer_id in planned & done.keys()
+            if done[answer_id].get("prompt_template") != TIER_TO_TEMPLATE[done[answer_id]["tier"]]
+            or (done[answer_id]["tier"] not in REWRITE_TIERS and done[answer_id].get("course") != config["course"])
+        )
+        if stale:
+            raise SystemExit(
+                f"{len(stale)} answers in {answers_path} came from other prompts, first {stale[:3]}, "
+                "start a new run folder"
+            )
         skipped = len(planned & done.keys())
         logger.info("%d answers already in %s, %d calls still to make", skipped, answers_path, total - skipped)
         outside = sorted(done.keys() - planned)
@@ -185,12 +221,16 @@ def run(config, questions, out_dir, go):
                     if answer_id in done:
                         continue
                     template_name = TIER_TO_TEMPLATE[tier]
-                    student_id, student_answer = None, ""
+                    student_id, student_answer, target_words = None, "", None
                     if tier in REWRITE_TIERS:
                         student_id, student_answer = pick_student_answer(row, position, tiers[tier], seq)
-                    prompt = TEMPLATES[template_name].format(question=row["question"], student_answer=student_answer)
+                    else:
+                        target_words = pick_target_words(row, answer_id)
+                    prompt = TEMPLATES[template_name].format(
+                        question=row["question"], student_answer=student_answer, target_words=target_words,
+                    )
                     report[name]["requested"] += 1
-                    system = SYSTEM_OVERRIDES.get(template_name, SYSTEM)
+                    system = SYSTEM_OVERRIDES.get(template_name) or SYSTEM.format(course=config["course"])
                     result = None
                     try:
                         result = client.generate(system, prompt, config["decoding"])
@@ -228,6 +268,10 @@ def run(config, questions, out_dir, go):
                     if tier in REWRITE_TIERS:
                         # id of the student answer the model polished
                         record["source_answer_id"] = student_id
+                    else:
+                        # with the template, these fix the exact prompt sent
+                        record["target_words"] = target_words
+                        record["course"] = config["course"]
                     out.write(json.dumps(record, ensure_ascii=False) + "\n")
                     # a killed run keeps every answer it paid for
                     out.flush()
