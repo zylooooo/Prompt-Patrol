@@ -54,10 +54,17 @@ visible answer.
 
 The keys under `samples_per_question` are tier names, which map to
 prompt templates through TIER_TO_TEMPLATE in
-`app/harness/prompts.py`. Besides the four quality tiers there are
-humanize variants of each, and a rewrite category that paraphrases a
-real student answer, following the prompting strategies in Tufts, Zhao
-and Li (NAACL 2025).
+`app/harness/prompts.py`. Besides the four quality tiers there is a
+rewrite tier, where the model polishes a real student answer instead of
+writing its own. Its prompt follows Tufts, Zhao and Li (NAACL 2025).
+Each generator and each sample polishes a different student answer to
+the question while the question has enough of them, taken in an order
+fixed by the question id. A rerun or resume polishes the same ones as
+long as the question file, the rewrite count and the order of the
+generator list stay the same. Rewrites count as ai, but the splicer,
+paraphrase and human-edit passes all skip them through `is_rewrite` in
+`app/harness/prompts.py`, so those passes only build on answers the
+model wrote itself.
 
 ### Running it
 
@@ -76,9 +83,14 @@ Then, from inside `app/`:
 python -m harness.generate                                # dry run, prints the call plan
 python -m harness.generate --questions 1 --tag smoke --go # one question, real calls
 python -m harness.generate --tag pilot --go               # full run per config
+python -m harness.generate --resume <run_id> --go         # continue an interrupted run
 ```
 
-Nothing spends money without `--go`.
+Nothing spends money without `--go`. A resumed run skips every answer
+the folder already holds, so an interrupted run is finished without
+paying for those calls twice. It plans from the current config and
+`--questions` and ignores `--tag`, so resume with the config and
+`--questions` the run started with.
 
 ### Output records
 
@@ -104,26 +116,32 @@ Notes:
   so re-running the same config reproduces the same ids.
 - params_honoured records the decoding parameters the call actually
   sent, which differ by provider. gpt-5 models take max_completion_tokens
-  and set their own sampling, Claude takes max_tokens only, Gemini and
-  DeepSeek take both temperature and max_tokens.
+  and set their own sampling, Claude takes max_tokens only, DeepSeek and
+  the Ollama models take temperature and max_tokens, and Gemini takes
+  temperature, max_output_tokens and thinking_level. A generator's
+  extra_body, where set, is recorded with the rest.
 - answer is never empty. Reasoning traces are discarded, and a response
   whose whole token budget went to reasoning counts as a failure in the
   run report instead of being written.
-- records whose template paraphrases a student answer also carry
-  source_answer_id, the human answer they rewrote. The splicer refuses
-  to pair those two.
+- rewrite records also carry source_answer_id, the id of the student
+  answer they polish.
 - a generator that fails three calls in a row is abandoned for the rest
   of the run, so a dead endpoint or bad key cannot stall every remaining
   call. The run report then shows fewer requested calls than the plan.
 - The splicer links spliced documents to answer_id and question_id.
-  Splits and folds key on question_id and generator. Cost reporting sums
-  usage.
+  Each question goes wholly to train, val or test, and every record
+  follows its question there through question_id. Mohler asks two
+  questions twice under different ids (E06.Q01 and E12.Q01, E09.Q01 and
+  E12.Q06), so each pair counts as one question and lands on the same
+  side. The leave-one-generator-out folds use generator to leave one
+  model's answers out of training. Cost reporting sums usage.
 
 ## Paraphrase pass
 
-`app/paraphrase/` rewrites raw AI answers from the harness at two
+`app/paraphrase/` rewords raw AI answers from the harness at two
 strengths, light (synonym swaps, small reorderings) and heavy (fully
 restructured sentences), so the detector is tested on reworded AI text.
+Rewrite-tier records are skipped.
 `app/paraphrase/config.yaml` sets the share of answers to cover, the
 strengths, the paraphraser model and the two filter thresholds.
 
@@ -140,7 +158,7 @@ python -m paraphrase.filter --run ../data/paraphrased/<run_id> --spot-check 30
 `source_answer_id`, keeps the source's `generator` and `tier`, and stores
 `strength`, `paraphraser`, `paraphraser_model_version`,
 `paraphraser_settings` and `prompt_template`. A rerun with `--out` pointing
-at an existing run folder skips rewrites already written.
+at an existing run folder skips paraphrases already written.
 
 `filter` scores every candidate and writes `paraphrased.jsonl` (kept,
 labelled `paraphrased`), `excluded.jsonl` (with `exclusion_reason`) and
@@ -154,12 +172,13 @@ labelled `paraphrased`), `excluded.jsonl` (with `exclusion_reason`) and
 The thresholds in the config come from a hand spot-check of the pilot.
 To redo that, set both to null so `filter` keeps and scores everything,
 fill in the two blank columns of `spot_check.csv`, pick new values, and
-rerun `filter`. No new rewrites are paid for.
+rerun `filter`. No new paraphrases are paid for.
 
 ## Human-edited set
 
 `app/human_edit/` builds the human_edited style: AI answers a student
-touched up before submitting. Editing rules are in
+touched up before submitting. Rewrite-tier records are never used as
+sources. Editing rules are in
 `docs/human_edit_protocol.md`, settings in `app/human_edit/config.yaml`.
 Two subsets:
 
@@ -188,8 +207,8 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id> --push <p
 3. `simulate` derives the prompt from the genuine edits (how often each
    edit type was used, how many types per answer, and a fixed set of
    genuine edits as examples) and saves it as `prompt_spec.json`. Answers
-   already hand-edited are skipped. Dry run by default, resumes like the
-   harness.
+   already hand-edited are skipped. Dry run by default, and `--out`
+   pointing at an existing run folder resumes it.
 4. `compare` measures word-level edit distance for both subsets and writes
    `comparison.json` plus `comparison.md`, the section for the dataset card.
 5. `build` writes `human_edited.jsonl`: every record labelled

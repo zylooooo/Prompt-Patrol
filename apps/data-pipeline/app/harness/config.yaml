@@ -2,13 +2,12 @@
 questions_file: data/cleaned/mohler_cleaned.parquet
 dataset: mohler        # id namespace, run the harness once per dataset
 samples_per_question:
-  correct: 2
-  weak: 2
-  partial: 2
-  wrong: 2
-# further categories: correct_humanize, weak_humanize, partial_humanize,
-# wrong_humanize, rewrite
-# template_overrides remaps a tier to another template, for example wrong: wrong_ref_v1
+  correct: 1
+  weak: 1
+  partial: 1
+  wrong: 1
+  # rewrite: N polishes N student answers per question per generator,
+  # a different one each call while the question has enough
 decoding:
   temperature: 0.8
   max_tokens: 400

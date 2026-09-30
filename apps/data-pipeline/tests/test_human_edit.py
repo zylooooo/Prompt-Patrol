@@ -6,7 +6,7 @@ import pytest
 
 from harness.clients import GenerationResult
 from human_edit import assign, build, collect, compare, simulate
-from human_edit.common import stratified_sample, word_edit_distance
+from human_edit.common import load_answers, stratified_sample, word_edit_distance
 
 EDIT_TYPES = ["reorder", "delete", "reword", "fact_tweak"]
 
@@ -53,6 +53,15 @@ class FakeClient:
         )
 
 
+# a reasoning model that spent the whole budget thinking and returned nothing
+class EmptyClient:
+    def generate(self, system, user, decoding):
+        return GenerationResult(
+            text="", model_version="fake-1",
+            params_honoured=decoding, usage={"prompt_tokens": 10, "completion_tokens": 500},
+        )
+
+
 # common
 
 def test_word_edit_distance():
@@ -60,6 +69,15 @@ def test_word_edit_distance():
     assert word_edit_distance("one two", "three four") == 1.0
     assert word_edit_distance("a b c d", "a b c") == 0.25
     assert word_edit_distance("", "") == 0.0
+
+
+def test_load_answers_skips_rewrites(tmp_path):
+    path = tmp_path / "answers.jsonl"
+    path.write_text(
+        json.dumps(make_answer(1)) + "\n" + json.dumps(make_answer(2, tier="rewrite")) + "\n",
+        encoding="utf-8",
+    )
+    assert [r["answer_id"] for r in load_answers(path)] == [make_answer(1)["answer_id"]]
 
 
 def test_stratified_sample_is_stable_and_covers_groups():
@@ -211,10 +229,43 @@ def test_run_skips_genuine_sources_and_labels_simulated(tmp_path, monkeypatch):
     assert {r["source_answer_id"] for r in records}.isdisjoint({g["source_answer_id"] for g in genuine})
     assert all(r["edit_source"] == "simulated" and r["edit_id"].endswith("/edit-simulated") for r in records)
     assert json.loads((tmp_path / "prompt_spec.json").read_text())["genuine_count"] == 5
+    report = json.loads((tmp_path / "run_report.json").read_text())
+    assert report["prompt_tokens"] == 30 and report["completion_tokens"] == 15
 
     simulate.run(CONFIG, answers, genuine, tmp_path, go=True)
     assert len(client.prompts) == 3
     assert json.loads((tmp_path / "run_report.json").read_text())["skipped_existing"] == 3
+
+
+def test_a_good_edit_resets_the_failure_streak(tmp_path, monkeypatch):
+    texts = iter(["", "", "ok", "", "", "ok"])
+
+    class FlakyClient:
+        def generate(self, system, user, decoding):
+            return GenerationResult(
+                text=next(texts), model_version="fake-1",
+                params_honoured=decoding, usage={"prompt_tokens": 10, "completion_tokens": 5},
+            )
+
+    monkeypatch.setattr(simulate, "build_clients", lambda config: {"fake": FlakyClient()})
+    genuine = [make_genuine(i) for i in range(5)]
+    # six answers in one generator and tier group, so share 1.0 takes all six
+    answers = [make_answer(i) for i in range(20, 26)]
+    simulate.run(CONFIG, answers, genuine, tmp_path, go=True)
+    report = json.loads((tmp_path / "run_report.json").read_text())
+    assert report["requested"] == 6
+    assert report["succeeded"] == 2 and report["failed"] == 4
+
+
+def test_run_stops_after_three_empty_edits(tmp_path, monkeypatch):
+    monkeypatch.setattr(simulate, "build_clients", lambda config: {"fake": EmptyClient()})
+    genuine = [make_genuine(i) for i in range(5)]
+    answers = [make_answer(i) for i in range(20, 30)]
+    simulate.run(CONFIG, answers, genuine, tmp_path, go=True)
+    report = json.loads((tmp_path / "run_report.json").read_text())
+    assert report["failed"] == 3 and report["requested"] == 3
+    assert report["completion_tokens"] == 1500
+    assert (tmp_path / "simulated.jsonl").read_text() == ""
 
 
 # compare

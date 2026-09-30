@@ -124,11 +124,20 @@ def run(config, answers, genuine, out_dir, go):
                     report["skipped_existing"] += 1
                     continue
                 report["requested"] += 1
+                result = None
                 try:
                     result = client.generate(SYSTEM, render_prompt(spec, source["answer"], edit_types),
                                              simulated["decoding"])
                 except Exception:
                     logger.exception("failed: %s", source["answer_id"])
+                if result is not None:
+                    report["prompt_tokens"] += result.usage["prompt_tokens"]
+                    report["completion_tokens"] += result.usage["completion_tokens"]
+                    if not result.text:
+                        # empty edits are billed, so they count toward the three-failure stop
+                        logger.warning("empty edit: %s", source["answer_id"])
+                        result = None
+                if result is None:
                     report["failed"] += 1
                     streak += 1
                     if streak >= 3:
@@ -136,12 +145,6 @@ def run(config, answers, genuine, out_dir, go):
                         break
                     continue
                 streak = 0
-                report["prompt_tokens"] += result.usage["prompt_tokens"]
-                report["completion_tokens"] += result.usage["completion_tokens"]
-                if not result.text:
-                    logger.warning("empty edit: %s", source["answer_id"])
-                    report["failed"] += 1
-                    continue
                 record = {
                     "edit_id": edit_id,
                     "source_answer_id": source["answer_id"],

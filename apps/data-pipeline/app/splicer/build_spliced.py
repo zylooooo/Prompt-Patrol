@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from harness.prompts import is_rewrite
 from splicer.segment import segment
 from splicer.splice import is_eligible, make_rng, splice_pair
 
@@ -48,21 +49,27 @@ def load_human_answers(path, min_sentences, namespace):
 
 
 def load_ai_answers(path):
-    """Segment the harness output, grouped by question. No prose gate here.
-    The AI side only donates sentences and splice_pair rejects short donors."""
+    """Segment a harness answers.jsonl, grouped by question. No prose gate
+    here. The AI side only donates sentences and splice_pair rejects short
+    donors.
+
+    Rewrite-tier records are skipped, their sentences are polished
+    student text, not text the model wrote itself."""
     grouped = {}
+    rewrites = 0
     with open(path, encoding="utf-8") as f:
         for line in f:
             record = json.loads(line)
+            if is_rewrite(record):
+                rewrites += 1
+                continue
             sentences = segment(record["answer"])
             if sentences:
                 grouped.setdefault(record["question_id"], []).append(
-                    {
-                        "answer_id": record["answer_id"],
-                        "sentences": sentences,
-                        "source_answer_id": record.get("source_answer_id"),
-                    }
+                    {"answer_id": record["answer_id"], "sentences": sentences}
                 )
+    kept = sum(len(v) for v in grouped.values())
+    logger.info("ai answers: %d kept, %d rewrite-tier records skipped", kept, rewrites)
     return grouped
 
 
@@ -82,9 +89,6 @@ def build_corpus(humans, ais, config, rng):
         for human, ai in pairs:
             if count >= config["docs_per_fraction"]:
                 break
-            if ai.get("source_answer_id") == human["answer_id"]:
-                # never pair an answer with its own rewrite
-                continue
             result = splice_pair(human["sentences"], ai["sentences"], fraction, rng)
             if result is None:
                 continue
@@ -115,9 +119,15 @@ def main():
             f"no AI answers at {ai_path}, point ai_answers in app/splicer/config.yaml "
             "or --ai-answers at a run folder's answers.jsonl"
         )
-    humans = load_human_answers(PIPELINE_DIR / config["human_corpus"], config["min_sentences"], config["dataset"])
     ais = load_ai_answers(ai_path)
+    if not ais:
+        # checked before the slow segmentation of the human corpus
+        raise SystemExit(f"nothing to splice in {ai_path}, it holds only rewrite-tier records or empty answers")
+    humans = load_human_answers(PIPELINE_DIR / config["human_corpus"], config["min_sentences"], config["dataset"])
     records = build_corpus(humans, ais, config, make_rng(config["seed"]))
+    if not records:
+        # an empty build must not replace the previous spliced file
+        raise SystemExit("no documents built, check that dataset and ai_answers point at the same corpus")
     out_dir = PIPELINE_DIR / config["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"spliced_{config['dataset']}.jsonl"

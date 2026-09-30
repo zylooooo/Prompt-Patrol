@@ -25,8 +25,10 @@ Field notes:
 - sentences preserves document order. label is "human" or "ai", nothing
   else.
 - Human base answers pass the eligibility rule in app/splicer/splice.py.
-  The AI donor side is gated only by splice_pair's sentence-count check.
-  Excluded counts are logged at build time.
-- An answer is never paired with its own rewrite. Harness records that
-  paraphrase a student answer carry its id as source_answer_id, and the
-  splicer skips that pair.
+  The AI donor side has no eligibility rule, only splice_pair's
+  sentence-count check and the rewrite skip below. Human exclusions and
+  rewrite skips are logged at build time, pairs that splice_pair rejects
+  are not counted.
+- Rewrites are never spliced. The splicer skips every record that
+  is_rewrite in app/harness/prompts.py flags, so each ai sentence comes
+  from an answer the model wrote itself.

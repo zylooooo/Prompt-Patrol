@@ -3,7 +3,7 @@
 Dry-run by default: it prints the call plan and stops. Nothing spends
 money without --go. Scoring and filtering is a separate step
 (paraphrase.filter), so thresholds can be retuned without paying for
-the rewrites again.
+the paraphrases again.
 """
 
 import argparse
@@ -17,6 +17,7 @@ import yaml
 from dotenv import load_dotenv
 
 from harness.clients import build_clients
+from harness.prompts import is_rewrite
 from paraphrase.prompts import STRENGTH_TO_TEMPLATE, SYSTEM, TEMPLATES
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,14 @@ def load_config(path):
 
 
 def load_answers(path):
-    """Harness records with a non-empty answer, in file order."""
+    """Harness records with a non-empty answer, in file order.
+    Rewrite-tier records are skipped."""
     with open(path, encoding="utf-8") as f:
         records = [json.loads(line) for line in f if line.strip()]
-    return [r for r in records if r.get("answer", "").strip()]
+    rewrites = sum(is_rewrite(r) for r in records)
+    if rewrites:
+        logger.info("%d rewrite-tier records skipped", rewrites)
+    return [r for r in records if r.get("answer", "").strip() and not is_rewrite(r)]
 
 
 def select_answers(answers, share, seed):
@@ -66,7 +71,7 @@ def existing_ids(path):
 
 
 def build_record(source, strength, template_name, paraphraser_name, result):
-    record = {
+    return {
         "paraphrase_id": f"{source['answer_id']}/para-{strength}",
         "source_answer_id": source["answer_id"],
         "question_id": source["question_id"],
@@ -84,10 +89,6 @@ def build_record(source, strength, template_name, paraphraser_name, result):
         "source_answer": source["answer"],
         "answer": result.text,
     }
-    if source.get("source_answer_id"):
-        # the source was itself a rewrite of a real student answer
-        record["human_source_answer_id"] = source["source_answer_id"]
-    return record
 
 
 def run(config, answers, out_dir, go):
@@ -120,7 +121,7 @@ def run(config, answers, out_dir, go):
     }
     calls = [(source, strength) for source in selected for strength in strengths]
     try:
-        # append, a rerun into an existing folder must not erase paid rewrites
+        # append, a rerun into an existing folder must not erase paid paraphrases
         with open(out_path, "a", encoding="utf-8") as out:
             streak = 0
             for source, strength in calls:
@@ -130,10 +131,19 @@ def run(config, answers, out_dir, go):
                 template_name = STRENGTH_TO_TEMPLATE[strength]
                 prompt = TEMPLATES[template_name].format(answer=source["answer"])
                 report["requested"] += 1
+                result = None
                 try:
                     result = client.generate(SYSTEM, prompt, config["decoding"])
                 except Exception:
                     logger.exception("failed: %s %s", source["answer_id"], strength)
+                if result is not None:
+                    report["prompt_tokens"] += result.usage["prompt_tokens"]
+                    report["completion_tokens"] += result.usage["completion_tokens"]
+                    if not result.text:
+                        # empty paraphrases are billed, so they count toward the three-failure stop
+                        logger.warning("empty paraphrase: %s %s", source["answer_id"], strength)
+                        result = None
+                if result is None:
                     report["failed"] += 1
                     streak += 1
                     if streak >= 3:
@@ -141,12 +151,6 @@ def run(config, answers, out_dir, go):
                         break
                     continue
                 streak = 0
-                report["prompt_tokens"] += result.usage["prompt_tokens"]
-                report["completion_tokens"] += result.usage["completion_tokens"]
-                if not result.text:
-                    logger.warning("empty paraphrase: %s %s", source["answer_id"], strength)
-                    report["failed"] += 1
-                    continue
                 record = build_record(source, strength, template_name, paraphraser["name"], result)
                 out.write(json.dumps(record, ensure_ascii=False) + "\n")
                 report["succeeded"] += 1
