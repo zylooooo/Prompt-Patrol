@@ -41,11 +41,13 @@ python app/logo_folds.py    # leave-one-generator-out folds (needs AI-generated 
 
 ## Generation harness
 
-`app/harness/config.yaml` drives every run. It sets the question file, the
-dataset namespace, sample counts per tier, decoding parameters and the
-generator list, which mixes API and local Ollama models. The
-pilot and the full run are the same code with different config values. Run
-the harness once per dataset so generation stays separate for each corpus.
+`app/harness/configs/` holds one config per dataset: `mohler.yaml`,
+`sprag.yaml` and `engsaf.yaml`. Each sets the question file, the dataset
+namespace, sample counts per tier, decoding parameters and the generator
+list, which mixes API and local Ollama models. The three differ only in
+the question file and namespace, and a test fails if anything else drifts
+apart, so a generator or decoding change goes into all three. Every run
+covers one dataset, so generation stays separate for each corpus.
 
 A generator entry can carry provider switches through `extra_body`. The
 config uses this to turn off DeepSeek and qwen3 reasoning, since both
@@ -80,16 +82,20 @@ ollama pull qwen3:8b
 Then, from inside `app/`:
 
 ```
-python -m harness.generate                                # dry run, prints the call plan
-python -m harness.generate --questions 1 --tag smoke --go # one question, real calls
-python -m harness.generate --tag pilot --go               # full run per config
-python -m harness.generate --resume <run_id> --go         # continue an interrupted run
+python -m harness.generate --dataset mohler                                 # dry run, prints the call plan
+python -m harness.generate --dataset mohler --questions 1 --tag smoke --go  # one question, real calls
+python -m harness.generate --dataset mohler --tag pilot --go                # full run
+python -m harness.generate --dataset mohler --resume <run_id> --go          # continue an interrupted run
 ```
+
+`--dataset` is required, so a run never falls back to another corpus.
+`--config <path>` takes any other config instead. Run folders are named
+`<timestamp>-<dataset>-<tag>`.
 
 Nothing spends money without `--go`. A resumed run skips every answer
 the folder already holds, so an interrupted run is finished without
 paying for those calls twice. It plans from the current config and
-`--questions` and ignores `--tag`, so resume with the config and
+`--questions` and ignores `--tag`, so resume with the dataset and
 `--questions` the run started with.
 
 ### Output records

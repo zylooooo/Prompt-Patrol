@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = APP_DIR.parent
-DEFAULT_CONFIG = Path(__file__).parent / "config.yaml"
+CONFIG_DIR = Path(__file__).parent / "configs"
+DATASETS = sorted(path.stem for path in CONFIG_DIR.glob("*.yaml"))
 
 
 def load_config(path):
@@ -250,18 +251,21 @@ def positive_int(value):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Generate raw AI answers per the harness config.")
-    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    # no default, so a run cannot silently use another dataset's config
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--dataset", choices=DATASETS, help="use harness/configs/<dataset>.yaml")
+    source.add_argument("--config", help="path to any other harness config")
     parser.add_argument("--questions", type=positive_int, default=None, help="limit to the first N questions (pilot)")
     parser.add_argument("--tag", default="run", help="label for the output folder")
     parser.add_argument("--resume", default=None, help="run id to continue, skips answers it already holds")
     parser.add_argument("--go", action="store_true", help="actually call the APIs; default is a dry-run plan")
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = load_config(args.config or CONFIG_DIR / f"{args.dataset}.yaml")
     questions = load_questions(PIPELINE_DIR / config["questions_file"], config["dataset"])
     if args.questions is not None:
         questions = questions.head(args.questions)
-    run_id = args.resume or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + args.tag
+    run_id = args.resume or f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{config['dataset']}-{args.tag}"
     out_dir = PIPELINE_DIR / "data" / "generated" / run_id
     if args.resume and not out_dir.is_dir():
         # a mistyped id would otherwise start a new, fully paid run

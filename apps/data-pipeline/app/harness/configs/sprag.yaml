@@ -1,6 +1,7 @@
-# Harness config, API keys live in .env
-questions_file: data/cleaned/mohler_cleaned.parquet
-dataset: mohler        # id namespace, run the harness once per dataset
+# Harness config for sprag, API keys live in .env. The three dataset
+# configs differ only in questions_file and dataset
+questions_file: data/cleaned/sprag_cleaned.parquet
+dataset: sprag        # id namespace
 samples_per_question:
   correct: 1
   weak: 1

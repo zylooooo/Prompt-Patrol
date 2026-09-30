@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -318,7 +320,8 @@ def fake_main_inputs(tmp_path, monkeypatch, argv):
     """Point main() at tmp_path and capture the folder it would write to."""
     calls = []
     monkeypatch.setattr(generate, "PIPELINE_DIR", tmp_path)
-    monkeypatch.setattr(generate, "load_config", lambda path: {"questions_file": "q.parquet", "dataset": "mohler"})
+    # the fake config names its dataset after the file, as the real ones do
+    monkeypatch.setattr(generate, "load_config", lambda path: {"questions_file": "q.parquet", "dataset": Path(path).stem})
     monkeypatch.setattr(generate, "load_questions", lambda path, namespace: pd.DataFrame(
         [{"question_id": "mohler/E01.Q01", "question": "q"}]
     ))
@@ -328,18 +331,42 @@ def fake_main_inputs(tmp_path, monkeypatch, argv):
 
 
 def test_resume_writes_into_the_named_run(tmp_path, monkeypatch):
-    run_dir = tmp_path / "data" / "generated" / "20260930T120000Z-pilot"
+    run_dir = tmp_path / "data" / "generated" / "20260930T120000Z-mohler-pilot"
     run_dir.mkdir(parents=True)
-    calls = fake_main_inputs(tmp_path, monkeypatch, ["--resume", "20260930T120000Z-pilot"])
+    calls = fake_main_inputs(tmp_path, monkeypatch, ["--dataset", "mohler", "--resume", "20260930T120000Z-mohler-pilot"])
     generate.main()
     assert calls == [run_dir]
 
 
 def test_resume_refuses_a_missing_run(tmp_path, monkeypatch):
-    calls = fake_main_inputs(tmp_path, monkeypatch, ["--resume", "20260930T120000Z-pilt"])
+    calls = fake_main_inputs(tmp_path, monkeypatch, ["--dataset", "mohler", "--resume", "20260930T120000Z-mohler-pilt"])
     with pytest.raises(SystemExit, match="no run folder"):
         generate.main()
     assert calls == []
+
+
+def test_new_run_folder_names_its_dataset_and_tag(tmp_path, monkeypatch):
+    calls = fake_main_inputs(tmp_path, monkeypatch, ["--dataset", "sprag", "--tag", "pilot"])
+    generate.main()
+    assert re.fullmatch(r"\d{8}T\d{6}Z-sprag-pilot", calls[0].name)
+
+
+def test_a_run_needs_a_dataset_or_a_config(tmp_path, monkeypatch):
+    calls = fake_main_inputs(tmp_path, monkeypatch, ["--tag", "pilot"])
+    with pytest.raises(SystemExit):
+        generate.main()
+    assert calls == []
+
+
+def test_dataset_configs_differ_only_in_their_corpus():
+    configs = {path.stem: generate.load_config(path) for path in generate.CONFIG_DIR.glob("*.yaml")}
+    assert set(configs) == {"mohler", "sprag", "engsaf"}
+    for name, config in configs.items():
+        assert config["dataset"] == name
+        assert config["questions_file"] == f"data/cleaned/{name}_cleaned.parquet"
+    # a generator or decoding change has to reach all three files
+    shared = [{k: v for k, v in c.items() if k not in ("dataset", "questions_file")} for c in configs.values()]
+    assert all(s == shared[0] for s in shared)
 
 
 def test_dry_run_writes_nothing(tmp_path):
