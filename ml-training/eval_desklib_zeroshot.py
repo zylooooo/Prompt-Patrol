@@ -67,9 +67,23 @@ class Scorer:
     loading beyond the class above."""
 
     def __init__(self, device: str = "cuda"):
+        # DesklibAIDetectionModel.from_pretrained() breaks on current
+        # transformers (AttributeError: no attribute 'all_tied_weights_keys'
+        # - a newer internal weight-tying path this older custom class
+        # doesn't support). Load it the way MELD's own code does instead:
+        # build the model from config, then load the real weights directly
+        # from the safetensors file, skipping from_pretrained() entirely.
+        from huggingface_hub import snapshot_download
+        from safetensors.torch import load_file
+
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(DESKLIB_REPO)
-        self.model = DesklibAIDetectionModel.from_pretrained(DESKLIB_REPO).to(self.device)
+        model_dir = snapshot_download(DESKLIB_REPO)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        config = AutoConfig.from_pretrained(model_dir)
+        self.model = DesklibAIDetectionModel(config)
+        self.model.load_state_dict(load_file(Path(model_dir) / "model.safetensors"))
+        self.model.to(self.device)
         self.model.eval()
 
     @torch.no_grad()
