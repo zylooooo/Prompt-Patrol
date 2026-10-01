@@ -38,8 +38,15 @@ MLFLOW_EXPERIMENT = "zeroshot-baselines"
 
 
 class DesklibAIDetectionModel(PreTrainedModel):
-    """Copied verbatim from the model card - desklib ships no importable
-    module, just this class definition, meant to be pasted into the caller.
+    """Copied from the model card (desklib ships no importable module, just
+    this class definition), with one change: tie_weights() is overridden as
+    a no-op. This architecture has no tied weights at all - no LM head, just
+    a classifier on pooled output - but current transformers' base
+    PreTrainedModel.init_weights() unconditionally calls tie_weights(), which
+    reads a self.all_tied_weights_keys property this bare custom subclass
+    never gets, crashing with an AttributeError before load_state_dict ever
+    runs. Since there is nothing to tie here, skipping it is correct, not a
+    workaround.
     Mean-pooled DeBERTa representation, one logit, sigmoid -> P(AI)."""
 
     config_class = AutoConfig
@@ -49,6 +56,9 @@ class DesklibAIDetectionModel(PreTrainedModel):
         self.model = AutoModel.from_config(config)
         self.classifier = nn.Linear(config.hidden_size, 1)
         self.init_weights()
+
+    def tie_weights(self, *args, **kwargs):
+        pass
 
     def forward(self, input_ids, attention_mask=None, labels=None):
         outputs = self.model(input_ids, attention_mask=attention_mask)
