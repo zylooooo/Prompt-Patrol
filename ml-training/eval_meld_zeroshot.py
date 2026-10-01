@@ -22,14 +22,17 @@ import sys
 import time
 from pathlib import Path
 
+import mlflow
 import numpy as np
 import pandas as pd
 
 from metrics import evaluate, threshold_at_fpr
+from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
 
 MELD_REPO = "anon-review-meld-2026/meld"
 SPLITS_PATH = Path(__file__).parent / "data" / "splits" / "v0.1.parquet"
 OUT_PATH = Path(__file__).parent / "outputs" / "meld_zeroshot_results.json"
+MLFLOW_EXPERIMENT = "zeroshot-baselines"
 
 
 def load_meld_scorer(device: str = "cuda"):
@@ -74,6 +77,7 @@ def main() -> None:
                         help="FPR budget to fit the threshold at - matches "
                              "metrics.py's fixed project-wide HEADLINE_FPR")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
     args = parser.parse_args()
 
     if not SPLITS_PATH.exists():
@@ -88,39 +92,55 @@ def main() -> None:
     print("\nLoading MELD (downloads ~4.1GB on first run, cached after)...")
     scorer = load_meld_scorer(device=args.device)
 
-    print("\nScoring val...")
-    val_probs = score_split(scorer, val, "val")
-    print("\nScoring test...")
-    test_probs = score_split(scorer, test, "test")
+    setup_mlflow(MLFLOW_EXPERIMENT)
+    with mlflow.start_run(run_name="meld-zeroshot"):
+        mlflow.set_tags({"owner": args.owner, "run_role": "eval", "tuning_method": "zeroshot"})
+        mlflow.log_params({
+            "model": MELD_REPO,
+            "target_fpr": args.target_fpr,
+            "val_n": len(val),
+            "test_n": len(test),
+        })
 
-    # drop any answer MELD couldn't score at all, from both the probs and labels
-    val_ok = ~np.isnan(val_probs)
-    test_ok = ~np.isnan(test_probs)
-    if (~val_ok).any() or (~test_ok).any():
-        print(f"\ndropped unscoreable answers: {(~val_ok).sum()} val, {(~test_ok).sum()} test")
+        print("\nScoring val...")
+        val_probs = score_split(scorer, val, "val")
+        print("\nScoring test...")
+        test_probs = score_split(scorer, test, "test")
 
-    threshold = threshold_at_fpr(val["label"][val_ok], val_probs[val_ok], args.target_fpr)
-    print(f"\nthreshold fit on val at target_fpr={args.target_fpr}: {threshold:.4f}")
+        # drop any answer MELD couldn't score at all, from both the probs and labels
+        val_ok = ~np.isnan(val_probs)
+        test_ok = ~np.isnan(test_probs)
+        if (~val_ok).any() or (~test_ok).any():
+            print(f"\ndropped unscoreable answers: {(~val_ok).sum()} val, {(~test_ok).sum()} test")
 
-    results = evaluate(
-        test["label"][test_ok], test_probs[test_ok], threshold,
-        headline_fpr=args.target_fpr,
-    )
+        threshold = threshold_at_fpr(val["label"][val_ok], val_probs[val_ok], args.target_fpr)
+        print(f"\nthreshold fit on val at target_fpr={args.target_fpr}: {threshold:.4f}")
+        mlflow.log_metric("threshold", threshold)
 
-    print("\n=== MELD zero-shot, test split ===")
-    for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
-        print(f"  {key}: {results[key]:.4f}")
+        results = evaluate(
+            test["label"][test_ok], test_probs[test_ok], threshold,
+            headline_fpr=args.target_fpr,
+        )
+        log_split_metrics(results, "test")
 
-    OUT_PATH.parent.mkdir(exist_ok=True)
-    OUT_PATH.write_text(json.dumps({
-        "model": "MELD (zero-shot, anon-review-meld-2026/meld)",
-        "target_fpr": args.target_fpr,
-        "threshold": threshold,
-        "val_n": int(val_ok.sum()),
-        "test_n": int(test_ok.sum()),
-        "results": {k: float(v) for k, v in results.items()},
-    }, indent=2))
-    print(f"\nWrote {OUT_PATH}")
+        print("\n=== MELD zero-shot, test split ===")
+        for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
+            print(f"  {key}: {results[key]:.4f}")
+
+        payload = {
+            "model": "MELD (zero-shot, anon-review-meld-2026/meld)",
+            "target_fpr": args.target_fpr,
+            "threshold": threshold,
+            "val_n": int(val_ok.sum()),
+            "test_n": int(test_ok.sum()),
+            "results": {k: float(v) for k, v in results.items()},
+        }
+        log_dict_artifact(payload, "zeroshot_results.json")
+
+        OUT_PATH.parent.mkdir(exist_ok=True)
+        OUT_PATH.write_text(json.dumps(payload, indent=2))
+        print(f"\nWrote {OUT_PATH}")
+        print(f"MLflow run: {mlflow.active_run().info.run_id}")
 
 
 if __name__ == "__main__":
