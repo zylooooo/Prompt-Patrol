@@ -167,7 +167,7 @@ export default function Sidebar({ user, items = NAV_ITEMS }: SidebarProps) {
           >
             {user?.email}
           </p>
-          <p className="mt-1 text-[13px] text-primary-foreground/60">
+          <p className="mt-1 text-[13px] text-primary-foreground/70">
             {user ? ROLE_TEXT[user.role] : ""}
           </p>
           {user && (

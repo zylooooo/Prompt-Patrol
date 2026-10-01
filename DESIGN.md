@@ -11,7 +11,7 @@ colors:
   border: "#d9ddec"
   foreground: "#1e2030"
   muted-foreground: "#585d75"
-  disabled-foreground: "#9ca0b4"
+  disabled-foreground: "#6b7086"
   primary: "#4338ca"
   primary-hover: "#3730a3"
   primary-soft: "#e4e4fa"
@@ -150,7 +150,7 @@ A near-monochrome deep-indigo system: one hue family carries chrome, structure, 
 - **Soft Indigo Line** (`#d9ddec`): the one border color used everywhere a hairline is needed.
 - **Dark Indigo Ink** (`#1e2030`): primary text color — never pure black, ties body text back into the indigo family.
 - **Slate Grey Text** (`#585d75`): secondary/muted text.
-- **Disabled Grey** (`#9ca0b4`): disabled text and placeholder icons.
+- **Disabled Grey** (`#6b7086`): disabled text, helper and hint text, and placeholder icons. Darkened from `#9ca0b4` (2.6:1) to clear WCAG AA 4.5:1 on white and the page background, since it carries real helper copy.
 
 ### Named Rules
 **The Reserved Signal Rule.** Verdict colors (`flag` #924a0a, `human` #1a7038, `unsure` #545a78) and detector-status colors (`status-ready` #1a7038, `status-warming` #924a0a, `status-down` #b91c1c) are separate token families from each other, even where hex values coincide (human/status-ready share a green; flag/status-warming share an amber). Never write a component that reuses a verdict token to express detector status, or vice versa — a green dot on the model badge means "the service is up," a green chip on a result means "human-written," and the two claims must be free to diverge in a future color change without touching each other's code.
