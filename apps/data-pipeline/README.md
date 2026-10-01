@@ -1,9 +1,11 @@
 # data-pipeline
 
-Assembles the labelled corpus other epics train and evaluate on. Covers
-dataset ingest, profiling and cleaning for Mohler, SPRAG and EngSAF,
-question-level splits, the generation harness that produces the raw
-AI answers, and the splicer that builds mixed-authorship documents.
+Assembles the labelled corpus the detector is trained and evaluated on.
+Covers dataset ingest, profiling and cleaning for Mohler, SPRAG and
+EngSAF, question-level splits, the generation harness that produces the
+raw AI answers, the paraphrase and human-edit passes, the splicer that
+builds mixed-authorship documents, and the corpus build that turns
+cleaned answers and harness runs into fine-tuning corpus versions.
 
 ## Setup
 
@@ -36,10 +38,10 @@ Cross-dataset steps stay flat in `app/` and run directly, from inside
 ```
 python app/splitting.py     # question-level train/val/test -> data/splits/
 python app/leakage_check.py # verify no question crosses a split boundary
-python app/logo_folds.py    # leave-one-generator-out folds (needs AI-generated data first)
+python app/logo_folds.py    # leave-one-generator-out folds (needs a generator column, which splitting.py does not write)
 ```
 
-These predate the generated data and split Mohler human answers only.
+These work on Mohler human answers only.
 The fine-tuning corpus is split by `corpus.build`, see Corpus build.
 
 ## Generation harness
@@ -78,10 +80,11 @@ Each generator and each sample polishes a different student answer to
 the question while the question has enough of them, taken in an order
 fixed by the question id. A rerun or resume polishes the same ones as
 long as the question file, the rewrite count and the order of the
-generator list stay the same. Rewrites count as ai, but the splicer,
-paraphrase and human-edit passes all skip them through `is_rewrite` in
-`app/harness/prompts.py`, so those passes only build on answers the
-model wrote itself.
+generator list stay the same. All three configs leave `rewrite`
+commented out, and the corpus build, splicer, paraphrase and
+human-edit passes all skip rewrites through `is_rewrite` in
+`app/harness/prompts.py`, so they only build on answers the model
+wrote itself.
 
 ### Running it
 
@@ -105,7 +108,9 @@ python -m harness.generate --dataset mohler --resume <run_id> --go          # co
 
 `--dataset` is required, so a run never falls back to another corpus.
 `--config <path>` takes any other config instead. Run folders are named
-`<timestamp>-<dataset>-<tag>`.
+`<timestamp>-<dataset>-<tag>` under `data/generated/`, and `--resume`
+takes a folder name there, so finish a run before moving it to
+`data/ai_runs/` (see Corpus build).
 
 Nothing spends money without `--go`. A resumed run skips every answer
 the folder already holds, so an interrupted run is finished without
@@ -174,8 +179,8 @@ strengths, the paraphraser model and the two filter thresholds.
 It runs in two steps, from inside `app/`:
 
 ```
-python -m paraphrase.generate --answers ../data/generated/<run_id>/answers.jsonl            # dry run
-python -m paraphrase.generate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot --go
+python -m paraphrase.generate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl            # dry run
+python -m paraphrase.generate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl --tag pilot --go
 python -m paraphrase.filter --run ../data/paraphrased/<run_id> --spot-check 30
 ```
 
@@ -215,18 +220,20 @@ Two subsets:
 Steps, from inside `app/`:
 
 ```
-python -m human_edit.assign --answers ../data/generated/<run_id>/answers.jsonl
+python -m human_edit.assign --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl
 python -m human_edit.collect --returned <folder with the edited sheets>
-python -m human_edit.simulate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot       # dry run
-python -m human_edit.simulate --answers ../data/generated/<run_id>/answers.jsonl --tag pilot --go
+python -m human_edit.simulate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl --tag pilot       # dry run
+python -m human_edit.simulate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl --tag pilot --go
 python -m human_edit.compare --run ../data/human_edit/simulated/<run_id>
-python -m human_edit.build --run ../data/human_edit/simulated/<run_id> --push <path_in_repo>
+python -m human_edit.build --run ../data/human_edit/simulated/<run_id>
 ```
 
 1. `assign` writes one CSV per editor plus `manifest.jsonl` into
    `data/human_edit/sheets/`. Each answer goes to one editor, and each
    editor gets a mix of generators and tiers. `edited_answer` starts as a
-   copy of the original and editors change it in place.
+   copy of the original and editors change it in place. Question text
+   comes from `questions_file` in the config, so `--answers` must be a
+   run of the config's `dataset`.
 2. `collect` reads the returned sheets into `data/human_edit/genuine.jsonl`.
    Unchanged rows are dropped and counted. Unknown edit types, unknown ids
    and rows in the wrong sheet stop the run with a list of rows to fix.
@@ -241,8 +248,11 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id> --push <p
    `human_edited`, linked to its source through `source_answer_id`, and
    carrying `edit_source` of `genuine` or `simulated`. The edit_source is
    set from the file a record came from, so a simulated edit can never be
-   passed off as genuine. `--push` sends the file to the shared artifact
-   repo and records the version id in `build_report.json`.
+   passed off as genuine. `--push <path_in_repo>` uploads the file
+   through `app/artifact_store.py` to the HuggingFace repo
+   prompt-patrol/corpus and records the version id in
+   `build_report.json`. That repo is not the team store. Shared data
+   lives in DVC on DagsHub, see Corpus build.
 
 ## Splicer
 
@@ -252,14 +262,18 @@ are replaced, at their original positions, with sentences from one AI
 answer to the same question. Every sentence carries a human or ai label.
 No model calls, it only recombines answers that already exist.
 
-`app/splicer/config.yaml` sets the human corpus, the harness output to
-draw from, the target AI fractions and the seed. Harness run folders
-are timestamped, so first edit `ai_answers` to the run the harness
-printed, or pass it directly. From inside `app/`:
+`app/splicer/config.yaml` sets the dataset and its human corpus, the
+harness output to draw from, the target AI fractions and the seed. Each
+build covers one dataset, so a SPRAG or EngSAF build also changes
+`dataset` and `human_corpus`. `ai_answers` holds a placeholder, so first
+point it at a run, such as `data/ai_runs/mohler-v3-20260930/answers.jsonl`,
+or pass it directly. Paths in the config and in `--ai-answers` are
+relative to `apps/data-pipeline`, though the splicer runs from inside
+`app/`:
 
 ```
 python -m splicer.build_spliced                # reads ai_answers from config.yaml
-python -m splicer.build_spliced --ai-answers data/generated/<run_id>/answers.jsonl   # or override it for one run
+python -m splicer.build_spliced --ai-answers data/ai_runs/mohler-v3-20260930/answers.jsonl   # or override it for one run
 ```
 
 Output goes to `data/spliced/spliced_<dataset>.jsonl`, one record per
@@ -292,8 +306,8 @@ ml-training's `load_splits()` reads. No model calls.
   The paraphrase, human-edit and splicer passes read a run's
   answers.jsonl, so a set meant to match a corpus version should keep
   only the ai answer_ids found in that version's parquet.
-- Balance: in train, each question keeps as many human answers as it
-  has ai answers, so no dataset is mostly human. Val and test keep every
+- Balance: in train, each question keeps at most as many human answers
+  as it has ai answers, so no dataset is mostly human. Val and test keep every
   human answer, since they set and measure the false-positive rate.
 - Cleanup: every answer, human and ai, goes through `clean_text` in
   `app/corpus/clean.py` (HTML escapes, line breaks, list markers,
@@ -314,7 +328,7 @@ ml-training's `load_splits()` reads. No model calls.
   outside its dataset, a tier mixes prompt templates or courses, a
   question has no text, `same_question` names an unknown id or dataset,
   a dataset has a setting the builder does not read, or `keep` names a
-  tier the run lacks or a share outside 0 to 1.
+  tier the run lacks or a share that is 0, negative or above 1.
 
 Each dataset's `ai_answers` in `app/corpus/config.yaml` points at its
 full harness run under `data/ai_runs/`, where finished runs are moved
@@ -325,8 +339,9 @@ DagsHub remote that ml-training uses, through the pointer file
 `data/ai_runs.dvc`. Without them locally, set up DVC as in
 ml-training's README and run `dvc pull apps/data-pipeline/data/ai_runs.dvc`
 from the repo root. To add a run, pull the existing runs first, move
-the new run in, then run `dvc add apps/data-pipeline/data/ai_runs` from
-the repo root, commit the updated pointer and `dvc push`. `dvc add`
+the new run in and add a row for it to `data/ai_runs/README.md`, then
+run `dvc add apps/data-pipeline/data/ai_runs` from the repo root,
+commit the updated pointer and `dvc push`. `dvc add`
 records only what is in the folder, so adding from a clone without the
 other runs would publish a folder without them. Then from inside `app/`:
 
@@ -346,117 +361,34 @@ the partition of every question.
 To publish a version, copy both files into `ml-training/data/splits/`
 and follow "Changing the data" in `ml-training/README.md`. Run
 `dvc pull` there first. `dvc add data` records only what is in the
-folder, so adding from a clone that lacks the other split files would
-publish a folder without them.
+folder, so adding from a clone that lacks the other files in
+`ml-training/data/` would publish a folder without them. Corpus v0.1 is
+published.
 
 ## Shared artifact storage
 
-One person produces a finished file and **pushes** it once to a
-shared, private HuggingFace dataset repo, prompt-patrol/corpus
-(ARTIFACT_REPO_ID in app/config.py). Everyone else can **pull** that exact same file
-down instead of regenerating it themselves.
+Shared data is stored with DVC on the team's DagsHub remote, named in
+`.dvc/config` at the repo root and also used by ml-training. Git holds
+only the pointer files and the remote holds the bytes. DVC comes with
+ml-training's requirements, or install it on its own with
+`pip install "dvc[http]==3.67.1"`. Set its credentials as in "The data,
+and DVC" in `ml-training/README.md`, then run `dvc pull` from the repo
+root. Two pointer files cover everything shared:
 
-Every push also comes back with a "commit hash" - a short code that
-identifies that exact version of the file. Once MLflow tracking is wired up
-for training runs, this hash gets logged automatically as part of each run's
-parameters.
+- `apps/data-pipeline/data/ai_runs.dvc`: the finished harness runs in
+  `data/ai_runs/`. Adding a run is covered under Corpus build.
+- `ml-training/data.dvc`: the published corpus versions in
+  `ml-training/data/splits/`, plus copies of the three cleaned corpora
+  in `ml-training/data/sources/`, the files v0.1 was built from. The
+  corpus build reads `data/cleaned/`, so copy them there to rebuild
+  v0.1 without running the cleaning steps.
 
-### One-time setup
+Nothing else under `data/` is in git or DVC.
 
-1. **Create your own personal access token.** Go to
-   (https://huggingface.co/settings/tokens), click "New token," give it **Write** access.
-2. **Make your token available in your terminal.** Every time you open a new
-   terminal window and want to push or pull, run this first (replace with
-   your actual token):
-   ```bash
-   export HF_TOKEN=hf_your_own_token_here
-   ```
-   In PowerShell: `$env:HF_TOKEN = "hf_your_own_token_here"`
-   This only lasts for that one terminal window/session - you'll need to run
-   it again next time you open a new terminal.
-3. **Check it actually worked**, before trying anything else:
-   ```bash
-   python -c "from huggingface_hub import whoami; print(whoami())"
-   ```
-   If this prints your HuggingFace account info, you're set up correctly.
-
-### Push an artifact
-
-Make sure you've done the one-time setup above and exported your token in
-this terminal session first. Then, from inside `apps/data-pipeline`:
-
-```bash
-python -c "
-import sys
-sys.path.insert(0, 'app')
-from pathlib import Path
-from artifact_store import push_artifact
-
-commit_hash = push_artifact(
-    local_path=Path('data/splits/mohler_splits_2cc2d581.parquet'),
-    path_in_repo='mohler/splits/mohler_splits_2cc2d581.parquet',
-    commit_message='initial question-level split, 70/15/15',
-)
-print('Pushed. Version id:', commit_hash)
-"
-```
-
-Replace the two file paths with whatever you're actually pushing, and the commit message
-
-### Pull an artifact
-
-To get the newest version of a file:
-
-```bash
-python -c "
-import sys
-sys.path.insert(0, 'app')
-from pathlib import Path
-from artifact_store import pull_artifact
-
-path = pull_artifact('mohler/splits/mohler_splits_2cc2d581.parquet', Path('data/splits'))
-print('Downloaded to:', path)
-"
-```
-
-To get one *specific past* version instead of the newest (using the commit
-hash from when it was pushed):
-
-```bash
-python -c "
-import sys
-sys.path.insert(0, 'app')
-from pathlib import Path
-from artifact_store import pull_artifact
-
-path = pull_artifact(
-    'mohler/splits/mohler_splits_2cc2d581.parquet',
-    Path('data/splits'),
-    revision='paste-the-commit-hash-here',
-)
-print('Downloaded to:', path)
-"
-```
-
-### Verifying a push worked correctly
-
-This pushes a file, immediately pulls that exact version back down, and
-checks the bytes match perfectly. Useful the first time you set 
-this up.
-
-```bash
-python -c "
-import sys
-sys.path.insert(0, 'app')
-from pathlib import Path
-from artifact_store import verify_roundtrip
-
-ok = verify_roundtrip(
-    local_path=Path('data/splits/mohler_splits_2cc2d581.parquet'),
-    path_in_repo='mohler/splits/mohler_splits_2cc2d581.parquet',
-    commit_message='verify round-trip',
-    download_dir=Path('/tmp/verify'),
-)
-print('Round-trip OK:', ok)
-"
-```
+`app/artifact_store.py` is not the team store. Its `push_artifact`,
+`pull_artifact` and `verify_roundtrip` push to and pull from a private
+HuggingFace dataset repo, prompt-patrol/corpus (ARTIFACT_REPO_ID in
+`app/config.py`), with the commit hash of each push as the version id.
+In `app/`, only `python -m human_edit.build --push` calls it.
+`push_artifact` creates the repo if it is missing, which needs an
+HF_TOKEN with write access to the prompt-patrol organisation.
