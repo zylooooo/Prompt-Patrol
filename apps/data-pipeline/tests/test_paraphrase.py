@@ -32,6 +32,15 @@ class BrokenClient:
         raise RuntimeError("endpoint down")
 
 
+# a reasoning model that spent the whole budget thinking and returned nothing
+class EmptyClient:
+    def generate(self, system, user, decoding):
+        return GenerationResult(
+            text="", model_version="fake-1",
+            params_honoured=decoding, usage={"prompt_tokens": 10, "completion_tokens": 500},
+        )
+
+
 class FakeEmbedder:
     """Same text gets the same vector, texts sharing a first word point the
     same way, so similarity is predictable without an API."""
@@ -53,6 +62,16 @@ def test_load_answers_drops_empty(tmp_path):
     path.write_text(
         json.dumps(make_answer("mohler/E01.Q01/gpt-5.5/weak/01")) + "\n"
         + json.dumps(make_answer("mohler/E01.Q01/gpt-5.5/weak/02", text="  ")) + "\n",
+        encoding="utf-8",
+    )
+    assert [r["answer_id"] for r in generate.load_answers(path)] == ["mohler/E01.Q01/gpt-5.5/weak/01"]
+
+
+def test_load_answers_skips_rewrites(tmp_path):
+    path = tmp_path / "answers.jsonl"
+    path.write_text(
+        json.dumps(make_answer("mohler/E01.Q01/gpt-5.5/weak/01")) + "\n"
+        + json.dumps(make_answer("mohler/E01.Q01/gpt-5.5/rewrite/01", tier="rewrite")) + "\n",
         encoding="utf-8",
     )
     assert [r["answer_id"] for r in generate.load_answers(path)] == ["mohler/E01.Q01/gpt-5.5/weak/01"]
@@ -89,7 +108,6 @@ def test_run_writes_linked_records_per_strength(tmp_path, monkeypatch):
     client = FakeClient()
     monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": client})
     source = make_answer("mohler/E01.Q01/gpt-5.5/weak/01")
-    source["source_answer_id"] = "mohler/E01.Q01.A05"
     generate.run(CONFIG, [source], tmp_path, go=True)
 
     records = [json.loads(line) for line in (tmp_path / "candidates.jsonl").read_text().splitlines()]
@@ -102,10 +120,10 @@ def test_run_writes_linked_records_per_strength(tmp_path, monkeypatch):
     assert first["paraphraser"] == "fake"
     assert first["paraphraser_model_version"] == "fake-1"
     assert first["prompt_template"] == "light_v2"
-    assert first["human_source_answer_id"] == "mohler/E01.Q01.A05"
     assert source["answer"] in client.prompts[0]
     report = json.loads((tmp_path / "run_report.json").read_text())
     assert report["succeeded"] == 2 and report["failed"] == 0
+    assert report["prompt_tokens"] == 20 and report["completion_tokens"] == 10
 
 
 def test_rerun_skips_existing(tmp_path, monkeypatch):
@@ -125,6 +143,34 @@ def test_run_stops_after_three_failures(tmp_path, monkeypatch):
     generate.run(CONFIG, answers, tmp_path, go=True)
     report = json.loads((tmp_path / "run_report.json").read_text())
     assert report["failed"] == 3 and report["requested"] == 3
+
+
+def test_a_good_paraphrase_resets_the_failure_streak(tmp_path, monkeypatch):
+    texts = iter(["", "", "ok", "", "", "ok"])
+
+    class FlakyClient:
+        def generate(self, system, user, decoding):
+            return GenerationResult(
+                text=next(texts), model_version="fake-1",
+                params_honoured=decoding, usage={"prompt_tokens": 10, "completion_tokens": 5},
+            )
+
+    monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": FlakyClient()})
+    answers = [make_answer(f"mohler/E01.Q0{i}/gpt-5.5/weak/01") for i in range(1, 4)]
+    generate.run(CONFIG, answers, tmp_path, go=True)
+    report = json.loads((tmp_path / "run_report.json").read_text())
+    assert report["requested"] == 6
+    assert report["succeeded"] == 2 and report["failed"] == 4
+
+
+def test_run_stops_after_three_empty_paraphrases(tmp_path, monkeypatch):
+    monkeypatch.setattr(generate, "build_clients", lambda config: {"fake": EmptyClient()})
+    answers = [make_answer(f"mohler/E01.Q0{i}/gpt-5.5/weak/01") for i in range(1, 6)]
+    generate.run(CONFIG, answers, tmp_path, go=True)
+    report = json.loads((tmp_path / "run_report.json").read_text())
+    assert report["failed"] == 3 and report["requested"] == 3
+    assert report["completion_tokens"] == 1500
+    assert (tmp_path / "candidates.jsonl").read_text() == ""
 
 
 def test_unknown_strength_fails_at_plan_time(tmp_path):

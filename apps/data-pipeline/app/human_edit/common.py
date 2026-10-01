@@ -1,11 +1,16 @@
 """Shared helpers for the human-edited answer set."""
 
 import json
+import logging
 import random
 import re
 from pathlib import Path
 
 import yaml
+
+from harness.prompts import is_rewrite
+
+logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = APP_DIR.parent
@@ -31,8 +36,13 @@ def write_jsonl(path, records):
 
 
 def load_answers(path):
-    """Harness records with a non-empty answer, in file order."""
-    return [r for r in read_jsonl(path) if r.get("answer", "").strip()]
+    """Harness records with a non-empty answer, in file order.
+    Rewrite-tier records are skipped."""
+    records = read_jsonl(path)
+    rewrites = sum(is_rewrite(r) for r in records)
+    if rewrites:
+        logger.info("%d rewrite-tier records skipped", rewrites)
+    return [r for r in records if r.get("answer", "").strip() and not is_rewrite(r)]
 
 
 def normalise(text):

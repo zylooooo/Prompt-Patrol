@@ -1,8 +1,14 @@
+import numpy as np
 import pytest
 
 pytest.importorskip("en_core_web_sm")  # skip when the spacy model is not installed
 
 from splicer.segment import segment
+
+
+def test_missing_or_blank_answers_segment_to_nothing():
+    for value in (None, np.nan, "", "   "):
+        assert segment(value) == []
 
 
 def test_technical_tokens_do_not_split_sentences():

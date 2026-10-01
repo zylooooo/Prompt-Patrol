@@ -23,7 +23,7 @@ def _pipeline():
     return _nlp
 
 
-def segment(text: str) -> list[str]:
+def segment(text) -> list[str]:
     """Split an answer into sentences.
 
     Line breaks count as sentence boundaries. The validation set showed
@@ -33,7 +33,12 @@ def segment(text: str) -> list[str]:
     or when the next chunk starts with a lowercase coordinating
     conjunction. Wraps with no grammatical signal still split, which the
     validation in docs/segmentation_review_v1.md to v3 measures.
+
+    A missing or blank answer (None, NaN, empty or whitespace only)
+    segments to nothing.
     """
+    if not isinstance(text, str) or not text.strip():
+        return []
     chunks = []
     for raw in _BREAKS.split(text):
         raw = raw.strip()

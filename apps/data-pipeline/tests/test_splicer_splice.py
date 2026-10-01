@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from splicer.splice import is_eligible, make_rng, splice_pair
@@ -74,14 +76,70 @@ def test_build_corpus_records_both_sources():
     assert {s["label"] for s in record["sentences"]} == {"human", "ai"}
 
 
-def test_build_corpus_never_pairs_an_answer_with_its_own_rewrite():
-    from splicer.build_spliced import build_corpus
+def test_load_ai_answers_skips_every_rewrite(tmp_path):
+    pytest.importorskip("en_core_web_sm")
+    from splicer.build_spliced import load_ai_answers
 
-    humans = {"mohler/E01.Q01": [{"question_id": "mohler/E01.Q01", "answer_id": "mohler/E01.Q01.A00", "sentences": HUMAN}]}
-    ais = {"mohler/E01.Q01": [{
-        "answer_id": "mohler/E01.Q01/fake/rewrite/01", "sentences": AI,
-        "source_answer_id": "mohler/E01.Q01.A00",
-    }]}
-    config = {"dataset": "mohler", "target_fractions": [0.5], "docs_per_fraction": 5}
-    assert build_corpus(humans, ais, config, make_rng(3)) == []
-    
+    own = {
+        "answer_id": "mohler/E01.Q01/fake/weak/01", "question_id": "mohler/E01.Q01",
+        "tier": "weak", "answer": " ".join(AI),
+    }
+    rewrite = {
+        "answer_id": "mohler/E01.Q01/fake/rewrite/01", "question_id": "mohler/E01.Q01",
+        "tier": "rewrite", "answer": " ".join(HUMAN), "source_answer_id": "mohler/E01.Q01.A00",
+    }
+    path = tmp_path / "answers.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in [own, rewrite]), encoding="utf-8")
+
+    grouped = load_ai_answers(path)
+    assert [a["answer_id"] for a in grouped["mohler/E01.Q01"]] == ["mohler/E01.Q01/fake/weak/01"]
+
+
+def test_a_run_of_only_rewrites_stops_before_writing(tmp_path, monkeypatch):
+    from splicer import build_spliced
+
+    run = tmp_path / "answers.jsonl"
+    run.write_text(json.dumps({
+        "answer_id": "mohler/E01.Q01/fake/rewrite/01", "question_id": "mohler/E01.Q01",
+        "tier": "rewrite", "answer": " ".join(HUMAN), "source_answer_id": "mohler/E01.Q01.A00",
+    }) + "\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "human_corpus: human.parquet\ndataset: mohler\nai_answers: answers.jsonl\nout_dir: spliced\n"
+        "seed: 1\ntarget_fractions: [0.5]\ndocs_per_fraction: 5\nmin_sentences: 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build_spliced, "PIPELINE_DIR", tmp_path)
+    monkeypatch.setattr(build_spliced, "DEFAULT_CONFIG", config)
+    monkeypatch.setattr("sys.argv", ["build_spliced"])
+    with pytest.raises(SystemExit, match="nothing to splice"):
+        build_spliced.main()
+    assert not (tmp_path / "spliced").exists()
+
+
+def test_a_build_with_no_documents_keeps_the_previous_file(tmp_path, monkeypatch):
+    pytest.importorskip("en_core_web_sm")
+    from splicer import build_spliced
+
+    (tmp_path / "answers.jsonl").write_text(json.dumps({
+        "answer_id": "mohler/E01.Q01/fake/weak/01", "question_id": "mohler/E01.Q01",
+        "tier": "weak", "answer": " ".join(AI),
+    }) + "\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "human_corpus: human.parquet\ndataset: mohler\nai_answers: answers.jsonl\nout_dir: spliced\n"
+        "seed: 1\ntarget_fractions: [0.5]\ndocs_per_fraction: 5\nmin_sentences: 2\n",
+        encoding="utf-8",
+    )
+    previous = tmp_path / "spliced" / "spliced_mohler.jsonl"
+    previous.parent.mkdir()
+    previous.write_text("earlier build\n", encoding="utf-8")
+    # human answers to a different question, so no pair can be built
+    humans = {"mohler/E09.Q09": [{"question_id": "mohler/E09.Q09", "answer_id": "mohler/E09.Q09.A00", "sentences": HUMAN}]}
+    monkeypatch.setattr(build_spliced, "load_human_answers", lambda path, min_sentences, namespace: humans)
+    monkeypatch.setattr(build_spliced, "PIPELINE_DIR", tmp_path)
+    monkeypatch.setattr(build_spliced, "DEFAULT_CONFIG", config)
+    monkeypatch.setattr("sys.argv", ["build_spliced"])
+    with pytest.raises(SystemExit, match="no documents built"):
+        build_spliced.main()
+    assert previous.read_text(encoding="utf-8") == "earlier build\n"

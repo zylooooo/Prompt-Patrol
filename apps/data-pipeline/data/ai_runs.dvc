@@ -1,0 +1,6 @@
+outs:
+- md5: 8d212152eb872a21c8171540e89b92b6.dir
+  size: 2380323
+  nfiles: 7
+  hash: md5
+  path: ai_runs

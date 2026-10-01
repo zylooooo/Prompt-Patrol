@@ -1,17 +1,20 @@
-# Harness config, API keys live in .env
-questions_file: data/cleaned/mohler_cleaned.parquet
-dataset: mohler        # id namespace, run the harness once per dataset
+# Harness config for engsaf, API keys live in .env. The three dataset
+# configs differ only in questions_file, dataset and course
+questions_file: data/cleaned/engsaf_cleaned.parquet
+dataset: engsaf        # id namespace
+course: an undergraduate operating systems and systems programming course   # named in the student persona
 samples_per_question:
-  correct: 2
-  weak: 2
-  partial: 2
-  wrong: 2
-# further categories: correct_humanize, weak_humanize, partial_humanize,
-# wrong_humanize, rewrite
-# template_overrides remaps a tier to another template, for example wrong: wrong_ref_v1
+  correct: 1
+  weak: 1
+  partial: 1
+  wrong: 1
+  # rewrite: N polishes N student answers per question per generator,
+  # a different one each call while the question has enough
 decoding:
   temperature: 0.8
-  max_tokens: 400
+  # the longest student answers run to about 380 tokens, and gpt-5 models
+  # spend part of this budget on hidden reasoning
+  max_tokens: 800
 generators:
   - name: claude-sonnet-5
     provider: anthropic
