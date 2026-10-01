@@ -23,7 +23,7 @@ import yaml
 
 from config import SPLIT_RATIOS, SPLIT_SEED
 from corpus.clean import CLEANING_VERSION, clean_text
-from harness.generate import COLUMN_ALIASES, count_words
+from harness.generate import COLUMN_ALIASES, MIN_TARGET_WORDS, count_words
 from harness.prompts import is_rewrite
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,8 @@ PIPELINE_DIR = APP_DIR.parent
 DEFAULT_CONFIG = Path(__file__).parent / "config.yaml"
 
 HUMAN, AI = 0, 1
-MIN_WORDS = 3
+# the same floor the harness asks for, so both sides are cut in one place
+MIN_WORDS = MIN_TARGET_WORDS
 PARTITIONS = ("train", "val", "test")
 # the load_splits() contract first, then two columns kept for slicing results
 COLUMNS = ["answer", "label", "partition", "question_id", "answer_id", "generator", "n_words", "dataset", "tier"]
@@ -233,8 +234,9 @@ def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None):
     corpus["partition"] = corpus["question_id"].map(question_partitions)
     corpus["question_group"] = corpus["question_id"].map(groups)
     corpus["n_words"] = corpus["answer"].map(count_words)
-    # the harness never asks for fewer than 3 words, so shorter answers
-    # exist only on the human side and would give the label away
+    # the harness never asks for fewer than 3 words and models seldom write
+    # fewer, while some students do, so shorter answers would give the
+    # label away. Both sides are cut and the manifest counts each
     short = corpus["n_words"] < MIN_WORDS
     too_short = {
         "human": int((short & (corpus["label"] == HUMAN)).sum()),

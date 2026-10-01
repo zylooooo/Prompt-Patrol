@@ -148,7 +148,8 @@ Notes:
   run report instead of being written.
 - quality-tier records carry target_words and course, which with the
   template fix the exact prompt sent. A resume stops if the folder holds
-  answers made with another template or course. rewrite records carry
+  any answer made with another template or course, or for another
+  dataset. rewrite records carry
   source_answer_id instead, the id of the student answer they polish.
 - a generator that fails three calls in a row is abandoned for the rest
   of the run, so a dead endpoint or bad key cannot stall every remaining
@@ -283,17 +284,23 @@ ml-training's `load_splits()` reads. No model calls.
   has ai answers, so no dataset is mostly human. Val and test keep every
   human answer, since they set and measure the false-positive rate.
 - Cleanup: every answer, human and ai, goes through `clean_text` in
-  `app/corpus/clean.py` (line breaks, list markers, answer-sheet labels,
-  LaTeX arrows, empty call brackets, curly quotes and dashes, backticks
-  and bold), so formatting only one side uses cannot give the label
-  away. The detector has to apply the same function to submitted text.
+  `app/corpus/clean.py` (HTML escapes, line breaks, list markers,
+  answer-sheet labels, LaTeX arrows, empty call brackets, curly quotes
+  and dashes, backticks and bold, and a full stop where a line ended a
+  sentence without one), so formatting only one side uses cannot give
+  the label away. The detector has to apply the same function to
+  submitted text.
 - Floor: answers under 3 words are dropped on both sides. The harness
-  never asks for fewer, so they exist only among students. The detector
+  never asks for fewer and models seldom write fewer, while some
+  students do, so these answers would give the label away. The detector
   therefore has no evidence on answers that short, and the app should
   report them as too short to check.
 - Checks: the build stops if a question or question group spans two
-  partitions, an answer_id repeats, an answer is empty, or any dataset
-  lacks human or ai answers in any partition.
+  partitions, an answer_id repeats, an answer is empty, any dataset
+  lacks human or ai answers in any partition, a run answers questions
+  outside its dataset, a tier mixes prompt templates or courses, a
+  question has no text, or `same_question` names an unknown id or
+  dataset.
 
 Set each dataset's `ai_answers` in `app/corpus/config.yaml` to its full
 harness run, then from inside `app/`:
@@ -305,8 +312,11 @@ python -m corpus.build --datasets mohler   # a check build, written as v0.1-only
 
 Output goes to `data/corpus/<version>.parquet` and
 `<version>_manifest.json`. The manifest records the source files and
-their hashes, rows per partition and dataset, the cleanup version,
-questions without ai answers, and the partition of every question.
+their hashes, rows per partition and dataset, the generators, the
+prompt template behind each tier, the cleanup version, the twin pairs
+used, the answers dropped by the floor, by the train cap and as rewrite
+records, questions without ai answers, and the partition of every
+question.
 
 To publish a version, copy both files into `ml-training/data/splits/`
 and follow "Changing the data" in `ml-training/README.md`. Run

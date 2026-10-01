@@ -16,6 +16,7 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
+from corpus.clean import clean_text
 from harness.clients import build_clients
 from harness.prompts import REWRITE_TIERS, SYSTEM, SYSTEM_OVERRIDES, TEMPLATES, TIER_TO_TEMPLATE
 
@@ -25,7 +26,8 @@ APP_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = APP_DIR.parent
 CONFIG_DIR = Path(__file__).parent / "configs"
 MIN_TARGET_WORDS = 3
-# commas and semicolons separate words too, students join lists without spaces
+# commas, semicolons and angle brackets separate words too, students join
+# lists without spaces and write vector<int>
 _WORD = re.compile(r"[^\s,;<>]+")
 DATASETS = sorted(path.stem for path in CONFIG_DIR.glob("*.yaml"))
 
@@ -86,17 +88,18 @@ def pick_student_answer(row, position, count, seq):
 
 def count_words(text):
     """Words as students write them, so "min(),max(),len()" counts three.
-    The corpus builder counts n_words the same way."""
+    Callers pass clean_text output, as the corpus builder does for n_words."""
     return len(_WORD.findall(text))
 
 
 def pick_target_words(row, answer_id):
     """The word count one generated answer is asked for: the length of a
-    student answer to the same question, drawn with the answer id as
-    seed. Generated lengths then follow the students' spread above the
+    student answer to the same question after clean_text, drawn with the
+    answer id as seed, so <br> tags and list markers never count as
+    words. Generated lengths then follow the students' spread above the
     floor instead of each model's habit. Never below MIN_TARGET_WORDS,
     the corpus builder drops shorter answers on both sides."""
-    lengths = sorted(count_words(text) for _, text in row["student_answers"])
+    lengths = sorted(count_words(clean_text(text)) for _, text in row["student_answers"])
     return max(MIN_TARGET_WORDS, random.Random(answer_id).choice(lengths))
 
 
@@ -162,16 +165,20 @@ def run(config, questions, out_dir, go):
             for name in generators
         }
         # answer ids carry no prompt version, so an answer made with other
-        # prompts would otherwise be kept as if it were this run's
+        # prompts or for another dataset would otherwise be kept as if it
+        # were this run's. Every record is checked, not only the planned
+        # ones, since the whole folder becomes one corpus source
+        namespaces = {question_id.split("/", 1)[0] for question_id in questions["question_id"]}
         stale = sorted(
-            answer_id for answer_id in planned & done.keys()
-            if done[answer_id].get("prompt_template") != TIER_TO_TEMPLATE[done[answer_id]["tier"]]
-            or (done[answer_id]["tier"] not in REWRITE_TIERS and done[answer_id].get("course") != config["course"])
+            answer_id for answer_id, record in done.items()
+            if record.get("prompt_template") != TIER_TO_TEMPLATE.get(record.get("tier"))
+            or (record.get("tier") not in REWRITE_TIERS and record.get("course") != config["course"])
+            or record.get("question_id", "").split("/", 1)[0] not in namespaces
         )
         if stale:
             raise SystemExit(
-                f"{len(stale)} answers in {answers_path} came from other prompts, first {stale[:3]}, "
-                "start a new run folder"
+                f"{len(stale)} answers in {answers_path} came from other prompts or another dataset, "
+                f"first {stale[:3]}, start a new run folder"
             )
         skipped = len(planned & done.keys())
         logger.info("%d answers already in %s, %d calls still to make", skipped, answers_path, total - skipped)

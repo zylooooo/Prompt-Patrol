@@ -6,7 +6,8 @@ prompt it is sent with (SYSTEM or its SYSTEM_OVERRIDES entry). A change
 to either gets a new template version, so the prompt_template field in
 every record stays accurate. The course strings in harness/configs fill
 SYSTEM, so quality-tier records store their course too, and a resume
-refuses answers made with another template or course. Retired versions
+refuses a folder holding answers made with another template or course,
+or for another dataset. Retired versions
 were only ever used in smoke runs and are not kept.
 """
 

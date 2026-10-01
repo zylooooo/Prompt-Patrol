@@ -317,7 +317,11 @@ def test_resume_keeps_the_report_of_generators_left_out(tmp_path, monkeypatch):
 
 
 def test_dry_run_counts_only_answers_the_plan_would_skip(tmp_path, caplog):
-    record = {"answer_id": "mohler/E01.Q01/g1/correct/01", "generator": "g1"}
+    from harness.prompts import TIER_TO_TEMPLATE
+
+    # made with this run's prompts for this dataset, by a generator the plan leaves out
+    record = {"answer_id": "sprag/PythonQ057/g2/correct/01", "question_id": "sprag/PythonQ057", "generator": "g2",
+              "tier": "correct", "prompt_template": TIER_TO_TEMPLATE["correct"], "course": COURSE}
     (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
     questions = pd.DataFrame([{"question_id": "sprag/PythonQ057", "question": "q", "student_answers": POOL}])
     config = {"course": COURSE, "samples_per_question": {"correct": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
@@ -477,6 +481,8 @@ def test_every_quality_tier_has_its_own_template():
 def test_count_words_splits_on_commas_too():
     assert generate.count_words("min(),max(),len()") == 3
     assert generate.count_words("a stack  is\nLIFO") == 4
+    assert generate.count_words("a;b;c") == 3
+    assert generate.count_words("vector<int>") == 2
 
 
 def test_word_targets_spread_over_the_students_lengths():
@@ -490,7 +496,7 @@ def test_word_targets_spread_over_the_students_lengths():
 
 def test_word_target_never_drops_below_the_floor():
     row = {"student_answers": [("mohler/E01.Q01.A00", "LIFO")]}
-    assert generate.pick_target_words(row, "mohler/E01.Q01/fake/correct/01") == generate.MIN_TARGET_WORDS
+    assert generate.pick_target_words(row, "mohler/E01.Q01/fake/correct/01") == generate.MIN_TARGET_WORDS == 3
 
 
 def test_system_prompt_names_the_course(tmp_path, monkeypatch):
@@ -689,4 +695,44 @@ def test_resume_refuses_answers_from_other_prompts(tmp_path, stale):
     config = {"course": COURSE, "samples_per_question": {"weak": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
     with pytest.raises(SystemExit, match="came from other prompts"):
         generate.run(config, questions, tmp_path, go=False)
+
+
+def test_word_target_counts_the_cleaned_text():
+    # four words, but <br> tags would add three "br" words to a raw count
+    row = {"student_answers": [("mohler/E01.Q01.A00", "one<br>two<br>three<br>four")]}
+    assert generate.pick_target_words(row, "mohler/E01.Q01/fake/correct/01") == 4
+
+
+def test_resume_refuses_other_prompts_even_outside_the_plan(tmp_path):
+    record = {"answer_id": "sprag/PythonQ057/g1/weak/01", "question_id": "sprag/PythonQ057", "generator": "g1",
+              "tier": "weak", "prompt_template": "weak_v1", "course": COURSE, "answer": "an answer",
+              "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+    (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"weak": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
+    with pytest.raises(SystemExit, match="came from other prompts"):
+        generate.run(config, questions, tmp_path, go=False)
+
+
+def test_resume_refuses_a_folder_from_another_dataset(tmp_path):
+    from harness.prompts import TIER_TO_TEMPLATE
+
+    record = {"answer_id": "mohler/E01.Q01/g1/weak/01", "question_id": "mohler/E01.Q01", "generator": "g1",
+              "tier": "weak", "prompt_template": TIER_TO_TEMPLATE["weak"], "course": COURSE, "answer": "an answer",
+              "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+    (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    questions = pd.DataFrame([{"question_id": "sprag/PythonQ057", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"weak": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
+    with pytest.raises(SystemExit, match="another dataset"):
+        generate.run(config, questions, tmp_path, go=False)
+
+
+def test_resume_accepts_rewrite_records_without_a_course(tmp_path):
+    record = {"answer_id": "mohler/E01.Q01/g1/rewrite/01", "question_id": "mohler/E01.Q01", "generator": "g1",
+              "tier": "rewrite", "prompt_template": "rewrite_human_v1", "source_answer_id": "mohler/E01.Q01.A00",
+              "answer": "a polished answer", "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+    (tmp_path / "answers.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    questions = pd.DataFrame([{"question_id": "mohler/E01.Q01", "question": "q", "student_answers": POOL}])
+    config = {"course": COURSE, "samples_per_question": {"rewrite": 1}, "decoding": {}, "generators": [{"name": "g1"}]}
+    generate.run(config, questions, tmp_path, go=False)
 

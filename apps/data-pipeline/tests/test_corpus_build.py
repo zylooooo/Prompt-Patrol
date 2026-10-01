@@ -355,6 +355,9 @@ def test_a_partial_build_never_replaces_the_full_corpus(tmp_path, monkeypatch):
     write_sources(tmp_path)
     write_sources(tmp_path, dataset="sprag")
     config = write_config(tmp_path, ["mohler", "sprag"])
+    # twins listed for a dataset the partial build leaves out are not an error
+    with open(config, "a", encoding="utf-8") as f:
+        f.write("same_question:\n  sprag:\n    - [E01.Q01, E01.Q02]\n")
     monkeypatch.setattr(corpus_build, "PIPELINE_DIR", tmp_path)
     monkeypatch.setattr("sys.argv", ["build", "--config", str(config), "--datasets", "mohler"])
     corpus_build.main()
@@ -402,10 +405,11 @@ def test_twins_from_the_config_land_together(tmp_path):
 def test_the_split_ignores_input_order():
     texts = {f"d/q{i}": f"text {i % 11}" for i in range(30)}
     twins = [["d/q1", "d/q2"], ["d/q5", "d/q9"]]
-    forward = corpus_build.assign_partitions(texts, "d", 42, SPLIT_RATIOS, twins)
-    backward = corpus_build.assign_partitions(dict(reversed(texts.items())), "d", 42, SPLIT_RATIOS,
-                                              [list(reversed(pair)) for pair in reversed(twins)])
-    assert forward == backward
+    for seed in range(50):
+        forward = corpus_build.assign_partitions(texts, "d", seed, SPLIT_RATIOS, twins)
+        backward = corpus_build.assign_partitions(dict(reversed(texts.items())), "d", seed, SPLIT_RATIOS,
+                                                  [list(reversed(pair)) for pair in reversed(twins)])
+        assert forward == backward
 
 
 @pytest.mark.parametrize("groups, sizes", [(13, {"train": 9, "val": 2, "test": 2}),
@@ -431,10 +435,9 @@ def test_n_words_counts_comma_joined_lists(tmp_path):
     df = pd.read_parquet(human_path)
     df.loc[0, "student_answer"] = "min(),max(),len()"
     df.to_parquet(human_path)
-    corpus, _ = corpus_build.build({"mohler": (human_path, ai_path)})
-    answers = corpus.set_index("answer_id")
-    if "mohler/E01.Q00.A00" in answers.index:
-        assert answers.loc["mohler/E01.Q00.A00", "n_words"] == 3
+    _, manifest = corpus_build.build({"mohler": (human_path, ai_path)})
+    # counted by whitespace it would be one word and fall under the floor
+    assert manifest["answers_under_min_words_dropped"] == {"human": 0, "ai": 0}
 
 
 def test_a_misspelt_same_question_dataset_stops_main(tmp_path, monkeypatch):
@@ -458,4 +461,27 @@ def test_a_two_dataset_subset_gets_its_own_name(tmp_path, monkeypatch, chosen):
     corpus_build.main()
     assert not (tmp_path / "corpus" / "v0.1.parquet").exists()
     assert (tmp_path / "corpus" / "v0.1-only-mohler-sprag.parquet").exists()
+
+
+def test_the_builder_floor_is_the_harness_floor():
+    from harness import generate
+
+    assert corpus_build.MIN_WORDS == generate.MIN_TARGET_WORDS == 3
+
+
+def test_the_floor_keeps_three_words_and_drops_two(tmp_path):
+    human_path, ai_path = write_sources(tmp_path)
+    df = pd.read_parquet(human_path)
+    df.loc[0, "student_answer"] = "last in first"
+    df.loc[1, "student_answer"] = "last in"
+    df.to_parquet(human_path)
+    _, manifest = corpus_build.build({"mohler": (human_path, ai_path)})
+    assert manifest["answers_under_min_words_dropped"] == {"human": 1, "ai": 0}
+
+
+def test_a_run_mixing_courses_stops_the_build(tmp_path):
+    other = {"answer_id": "mohler/E01.Q00/fake/correct/09", "question_id": "mohler/E01.Q00", "generator": "fake",
+             "tier": "correct", "course": "another course", "answer": "an answer from another course"}
+    with pytest.raises(SystemExit, match="mixes prompt versions"):
+        corpus_build.build({"mohler": write_sources(tmp_path, extra_records=[other])})
 
