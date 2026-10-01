@@ -485,3 +485,171 @@ def test_a_run_mixing_courses_stops_the_build(tmp_path):
     with pytest.raises(SystemExit, match="mixes prompt versions"):
         corpus_build.build({"mohler": write_sources(tmp_path, extra_records=[other])})
 
+
+def thinned_sources(tmp_path, dataset="mohler", questions=20, extra_records=()):
+    """write_sources plus one wrong-tier answer per question from each of two generators."""
+    wrong = [
+        {"answer_id": f"{dataset}/E01.Q{q:02d}/{g}/wrong/01", "question_id": f"{dataset}/E01.Q{q:02d}",
+         "generator": g, "tier": "wrong", "answer": f"a wrong answer {q} {g}"}
+        for q in range(questions) for g in ("alpha", "beta")
+    ]
+    return write_sources(tmp_path, dataset=dataset, questions=questions, extra_records=[*wrong, *extra_records])
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_keep_thins_a_tier_by_the_same_share_for_every_generator_in_every_partition(tmp_path, seed):
+    corpus, manifest = corpus_build.build({"mohler": thinned_sources(tmp_path)}, seed=seed,
+                                          keep={"mohler": {"wrong": 0.5}})
+    wrong = corpus[corpus["tier"] == "wrong"]
+    # 20 questions split 14/3/3, half of each rounded half to even
+    per_partition = {"test": 2, "train": 7, "val": 2}
+    assert wrong.groupby(["generator", "partition"]).size().unstack().to_dict("index") == {
+        "alpha": per_partition, "beta": per_partition}
+    assert (corpus["tier"] == "correct").sum() == 20 * 4
+    assert manifest["ai_keep_shares"] == {"mohler": {"wrong": 0.5}}
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"wrong": 18}}
+
+
+def test_keep_draws_the_same_answers_every_build_and_moves_with_the_seed(tmp_path):
+    sources = {"mohler": thinned_sources(tmp_path)}
+
+    def wrong_kept(seed):
+        corpus, _ = corpus_build.build(sources, seed=seed, keep={"mohler": {"wrong": 0.5}})
+        return set(corpus[corpus["tier"] == "wrong"]["answer_id"])
+
+    assert wrong_kept(42) == wrong_kept(42)
+    assert wrong_kept(42) != wrong_kept(7)
+
+
+def test_keep_draws_each_generator_on_its_own(tmp_path):
+    corpus, _ = corpus_build.build({"mohler": thinned_sources(tmp_path)}, keep={"mohler": {"wrong": 0.5}})
+    kept = corpus[corpus["tier"] == "wrong"].groupby("generator")["question_id"].apply(set)
+    assert kept["alpha"] != kept["beta"]
+
+
+def test_keep_does_not_depend_on_the_order_of_the_run(tmp_path):
+    human_path, ai_path = thinned_sources(tmp_path)
+    first, _ = corpus_build.build({"mohler": (human_path, ai_path)}, keep={"mohler": {"wrong": 0.5}})
+    lines = ai_path.read_text(encoding="utf-8").splitlines()
+    ai_path.write_text("\n".join(reversed(lines)) + "\n", encoding="utf-8")
+    second, _ = corpus_build.build({"mohler": (human_path, ai_path)}, keep={"mohler": {"wrong": 0.5}})
+    assert set(first["answer_id"]) == set(second["answer_id"])
+
+
+def test_keep_thins_before_the_train_cap_so_train_stays_balanced(tmp_path):
+    corpus, _ = corpus_build.build({"mohler": thinned_sources(tmp_path)}, keep={"mohler": {"wrong": 0.5}})
+    train = corpus[corpus["partition"] == "train"].groupby(["question_id", "label"]).size().unstack(fill_value=0)
+    assert (train[0] == train[1]).all()
+
+
+def test_keep_draws_from_answers_the_floor_has_not_yet_cut(tmp_path):
+    short = [
+        {"answer_id": f"mohler/E01.Q{q:02d}/{g}/wrong/02", "question_id": f"mohler/E01.Q{q:02d}",
+         "generator": g, "tier": "wrong", "answer": "too short"}
+        for q in range(20) for g in ("alpha", "beta")
+    ]
+    _, manifest = corpus_build.build({"mohler": thinned_sources(tmp_path, extra_records=short)},
+                                     keep={"mohler": {"wrong": 0.5}})
+    # pools of 28/6/6 per generator lose 14/3/3, not the 7/1/1 of the 14/3/3 left after the floor
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"wrong": 40}}
+
+
+def test_keep_counts_the_answers_each_tier_lost_on_its_own(tmp_path):
+    _, manifest = corpus_build.build({"mohler": thinned_sources(tmp_path)},
+                                     keep={"mohler": {"correct": 0.5, "wrong": 0.5}})
+    # the correct tier is one generator with 4 answers per question, pools of 56/12/12
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"correct": 40, "wrong": 18}}
+
+
+def test_keep_for_one_dataset_leaves_the_others_whole(tmp_path):
+    sources = {name: thinned_sources(tmp_path, dataset=name) for name in ("mohler", "sprag")}
+    corpus, manifest = corpus_build.build(sources, keep={"mohler": {"wrong": 0.5}})
+    assert ((corpus["dataset"] == "sprag") & (corpus["tier"] == "wrong")).sum() == 40
+    assert manifest["ai_keep_shares"] == {"mohler": {"wrong": 0.5}, "sprag": {}}
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"wrong": 18}, "sprag": {}}
+
+
+@pytest.mark.parametrize("share", [1, 1.0])
+def test_keep_of_one_keeps_the_whole_tier(tmp_path, share):
+    corpus, manifest = corpus_build.build({"mohler": thinned_sources(tmp_path)}, keep={"mohler": {"wrong": share}})
+    assert (corpus["tier"] == "wrong").sum() == 40
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"wrong": 0}}
+
+
+def test_keep_rounds_the_kept_count_rather_than_cutting_it():
+    ais = pd.DataFrame({"answer_id": [f"q{i:02d}/g/wrong/01" for i in range(19)],
+                        "question_id": [f"q{i:02d}" for i in range(19)], "generator": "g", "tier": "wrong"})
+    kept, lost = corpus_build.keep_share(ais, {"wrong": 0.5}, "mohler", 42, {f"q{i:02d}": "train" for i in range(19)})
+    assert len(kept) == 10 and lost == {"wrong": 9}
+
+
+def one_pool(n):
+    """n wrong-tier answers from one generator, every question in train."""
+    ais = pd.DataFrame({"answer_id": [f"q{i:02d}/g/wrong/01" for i in range(n)],
+                        "question_id": [f"q{i:02d}" for i in range(n)], "generator": "g", "tier": "wrong"})
+    return ais, {f"q{i:02d}": "train" for i in range(n)}
+
+
+@pytest.mark.parametrize("n, share, kept_n", [(5, 0.5, 2), (13, 0.5, 6), (4, 0.3, 1)])
+def test_keep_rounds_the_kept_count_half_to_even(n, share, kept_n):
+    ais, partitions = one_pool(n)
+    kept, _ = corpus_build.keep_share(ais, {"wrong": share}, "mohler", 42, partitions)
+    assert len(kept) == kept_n
+
+
+def test_keep_draw_follows_the_seed_with_the_split_held_fixed():
+    ais, partitions = one_pool(20)
+
+    def kept(seed):
+        return set(corpus_build.keep_share(ais, {"wrong": 0.5}, "mohler", seed, partitions)[0]["answer_id"])
+
+    assert kept(42) == kept(42)
+    assert kept(42) != kept(7)
+
+
+@pytest.mark.parametrize("shares, message", [
+    ({"wrong": 0}, "above 0 and at most 1"),
+    ({"wrong": 1.5}, "above 0 and at most 1"),
+    ({"wrong": "half"}, "above 0 and at most 1"),
+    ({"wrong": True}, "above 0 and at most 1"),
+    ({"wrng": 0.5}, "tiers its run does not have"),
+    (0.5, "must map tiers to shares"),
+    (["wrong"], "must map tiers to shares"),
+    ("wrong", "must map tiers to shares"),
+    (0, "must map tiers to shares"),
+    (False, "must map tiers to shares"),
+])
+def test_keep_refuses_a_setting_it_cannot_apply(tmp_path, shares, message):
+    with pytest.raises(SystemExit, match=message):
+        corpus_build.build({"mohler": thinned_sources(tmp_path)}, keep={"mohler": shares})
+
+
+def test_without_keep_every_ai_answer_stays(tmp_path):
+    corpus, manifest = corpus_build.build({"mohler": thinned_sources(tmp_path)})
+    assert (corpus["tier"] == "wrong").sum() == 40
+    assert manifest["ai_keep_shares"] == {"mohler": {}}
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {}}
+
+
+def test_main_applies_the_keep_in_the_config(tmp_path, monkeypatch):
+    thinned_sources(tmp_path)
+    config = write_config(tmp_path, ["mohler"])
+    config.write_text(config.read_text(encoding="utf-8") + "    keep: {wrong: 0.25}\n", encoding="utf-8")
+    monkeypatch.setattr(corpus_build, "PIPELINE_DIR", tmp_path)
+    monkeypatch.setattr("sys.argv", ["build", "--config", str(config)])
+    corpus_build.main()
+
+    manifest = json.loads((tmp_path / "corpus" / "v0.1_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["ai_keep_shares"] == {"mohler": {"wrong": 0.25}}
+    # a quarter of 14/3/3 rounds to 4/1/1 kept per generator
+    assert manifest["ai_answers_dropped_by_keep"] == {"mohler": {"wrong": 28}}
+
+
+def test_main_stops_on_a_dataset_setting_it_does_not_read(tmp_path, monkeypatch):
+    thinned_sources(tmp_path)
+    config = write_config(tmp_path, ["mohler"])
+    config.write_text(config.read_text(encoding="utf-8") + "    kepp: {wrong: 0.5}\n", encoding="utf-8")
+    monkeypatch.setattr(corpus_build, "PIPELINE_DIR", tmp_path)
+    monkeypatch.setattr("sys.argv", ["build", "--config", str(config)])
+    with pytest.raises(SystemExit, match="settings the builder does not read"):
+        corpus_build.main()

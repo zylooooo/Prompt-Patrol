@@ -280,6 +280,18 @@ ml-training's `load_splits()` reads. No model calls.
   seed in `app/config.py`, so every dataset appears in train, val and
   test. Ids sharing a question text, and the twins listed under
   `same_question` in `app/corpus/config.yaml`, land in one partition.
+- Keep: a dataset's `keep` setting thins an ai tier to a share of its
+  answers before the floor and the train cap, drawn per partition and
+  generator with the split seed, so each generator keeps the same share
+  in train, val and test. v0.1 keeps half of the wrong tier on every
+  dataset. Graded blind on one scale, fully wrong answers are 1.6 to 5.8
+  times more common among ai answers than among students, and a
+  detector could learn that instead of the writing. Thinning also
+  raises the ai share at full marks, which at half is already 1.1 to 1.3
+  times the students', so going further trades one skew for another.
+  The paraphrase, human-edit and splicer passes read a run's
+  answers.jsonl, so a set meant to match a corpus version should keep
+  only the ai answer_ids found in that version's parquet.
 - Balance: in train, each question keeps as many human answers as it
   has ai answers, so no dataset is mostly human. Val and test keep every
   human answer, since they set and measure the false-positive rate.
@@ -293,17 +305,30 @@ ml-training's `load_splits()` reads. No model calls.
 - Floor: answers under 3 words are dropped on both sides. The harness
   never asks for fewer and models seldom write fewer, while some
   students do, so these answers would give the label away. The detector
-  therefore has no evidence on answers that short, and the app should
-  report them as too short to check.
+  therefore has no evidence on answers that short. The app already
+  reports answers under 10 words as too short to judge, so its floor
+  must never go below this one.
 - Checks: the build stops if a question or question group spans two
   partitions, an answer_id repeats, an answer is empty, any dataset
   lacks human or ai answers in any partition, a run answers questions
   outside its dataset, a tier mixes prompt templates or courses, a
-  question has no text, or `same_question` names an unknown id or
-  dataset.
+  question has no text, `same_question` names an unknown id or dataset,
+  a dataset has a setting the builder does not read, or `keep` names a
+  tier the run lacks or a share outside 0 to 1.
 
-Set each dataset's `ai_answers` in `app/corpus/config.yaml` to its full
-harness run, then from inside `app/`:
+Each dataset's `ai_answers` in `app/corpus/config.yaml` points at its
+full harness run under `data/ai_runs/`, where finished runs are moved
+from `data/generated/` and renamed by dataset, prompt version and date.
+The config notes each folder's original run id. The runs cannot be
+regenerated identically, so `data/ai_runs/` is tracked with DVC on the
+DagsHub remote that ml-training uses, through the pointer file
+`data/ai_runs.dvc`. Without them locally, set up DVC as in
+ml-training's README and run `dvc pull apps/data-pipeline/data/ai_runs.dvc`
+from the repo root. To add a run, pull the existing runs first, move
+the new run in, then run `dvc add apps/data-pipeline/data/ai_runs` from
+the repo root, commit the updated pointer and `dvc push`. `dvc add`
+records only what is in the folder, so adding from a clone without the
+other runs would publish a folder without them. Then from inside `app/`:
 
 ```
 python -m corpus.build                     # every dataset in the config
@@ -314,9 +339,9 @@ Output goes to `data/corpus/<version>.parquet` and
 `<version>_manifest.json`. The manifest records the source files and
 their hashes, rows per partition and dataset, the generators, the
 prompt template behind each tier, the cleanup version, the twin pairs
-used, the answers dropped by the floor, by the train cap and as rewrite
-records, questions without ai answers, and the partition of every
-question.
+used, the keep shares, the answers dropped by keep, by the floor, by
+the train cap and as rewrite records, questions without ai answers, and
+the partition of every question.
 
 To publish a version, copy both files into `ml-training/data/splits/`
 and follow "Changing the data" in `ml-training/README.md`. Run

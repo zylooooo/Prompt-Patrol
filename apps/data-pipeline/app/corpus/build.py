@@ -1,9 +1,11 @@
 """Build a fine-tuning corpus version from files already on disk.
 
 Cleaned student answers are labelled human (0) and raw harness answers
-ai (1), both passed through corpus.clean.clean_text. Every dataset is split by question on its own, so each one
-appears in train, val and test, and every answer follows its question
-into one partition. The output is the single parquet with a partition
+ai (1), both passed through corpus.clean.clean_text. A dataset's keep
+setting can thin an ai tier to a share of its answers first. Every
+dataset is split by question on its own, so each one appears in train,
+val and test, and every answer follows its question into one
+partition. The output is the single parquet with a partition
 column that ml-training's load_splits() reads, plus a manifest recording
 the sources, counts and the partition of every question.
 
@@ -105,6 +107,39 @@ def load_ai(path, dataset, question_texts):
         "tier": [r["tier"] for r in kept],
         "question_text": [question_texts[r["question_id"]] for r in kept],
     }), len(records) - len(kept), templates
+
+
+def keep_share(ais, shares, dataset, seed, partitions):
+    """Thin each ai tier named in shares to that share of its answers.
+    The draw is made per partition and generator over sorted ids with a
+    seed, so every generator keeps the same share of a tier in train, val
+    and test, and every build keeps the same answers. Tiers not named are
+    kept whole. Returns the kept answers and how many each named tier lost."""
+    if shares is None:
+        shares = {}
+    if not isinstance(shares, dict):
+        raise SystemExit(f"{dataset} keep must map tiers to shares, got {shares!r}")
+    unknown = sorted(set(shares) - set(ais["tier"]))
+    if unknown:
+        raise SystemExit(f"{dataset} keep names tiers its run does not have: {unknown}")
+    bad = sorted(
+        tier for tier, share in shares.items()
+        if isinstance(share, bool) or not isinstance(share, int | float) or not 0 < share <= 1
+    )
+    if bad:
+        raise SystemExit(f"{dataset} keep shares must be above 0 and at most 1, check {bad}")
+    partition = ais["question_id"].map(partitions)
+    dropped_ids, lost = set(), {}
+    for tier, share in sorted(shares.items()):
+        lost[tier] = 0
+        in_tier = ais["tier"] == tier
+        for (part, generator), group in ais[in_tier].groupby([partition[in_tier], "generator"]):
+            ids = sorted(group["answer_id"])
+            draw = random.Random(f"{seed}/keep/{dataset}/{tier}/{part}/{generator}")
+            kept = set(draw.sample(ids, round(len(ids) * share)))
+            dropped_ids |= set(ids) - kept
+            lost[tier] += len(ids) - len(kept)
+    return ais[~ais["answer_id"].isin(dropped_ids)].reset_index(drop=True), lost
 
 
 def question_groups(question_texts, twins=()):
@@ -209,13 +244,14 @@ def shown(path):
     return path.relative_to(PIPELINE_DIR).as_posix() if path.is_relative_to(PIPELINE_DIR) else path.as_posix()
 
 
-def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None):
+def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None, keep=None):
     """sources maps dataset to (cleaned human corpus, harness answers.jsonl),
-    same_question maps dataset to twin id pairs. Returns the corpus, in
+    same_question maps dataset to twin id pairs and keep maps dataset to
+    the share of each thinned ai tier to keep. Returns the corpus, in
     load_splits() shape, and its manifest."""
-    same_question = same_question or {}
+    same_question, keep = same_question or {}, keep or {}
     frames, question_partitions, groups, twins_used, uncovered, rewrites = [], {}, {}, {}, {}, 0
-    prompt_templates = {}
+    prompt_templates, thinned = {}, {}
     for dataset, (human_path, ai_path) in sources.items():
         humans = load_human(human_path, dataset)
         question_texts = dict(zip(humans["question_id"], humans["question_text"], strict=True))
@@ -224,7 +260,9 @@ def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None):
         twins = [[f"{dataset}/{q}" for q in pair] for pair in same_question.get(dataset, [])]
         twins_used[dataset] = twins
         groups |= question_groups(question_texts, twins)
-        question_partitions |= assign_partitions(question_texts, dataset, seed, ratios, twins)
+        partitions = assign_partitions(question_texts, dataset, seed, ratios, twins)
+        question_partitions |= partitions
+        ais, thinned[dataset] = keep_share(ais, keep.get(dataset), dataset, seed, partitions)
         uncovered[dataset] = sorted(set(question_texts) - set(ais["question_id"]))
         if uncovered[dataset]:
             logger.warning("%s: %d questions have no ai answers, first %s",
@@ -271,6 +309,8 @@ def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None):
         "generators": sorted(set(corpus["generator"]) - {"human"}),
         # the detector must clean submitted text the same way
         "text_cleaning": CLEANING_VERSION,
+        "ai_keep_shares": {dataset: dict(sorted((keep.get(dataset) or {}).items())) for dataset in sources},
+        "ai_answers_dropped_by_keep": thinned,
         "answers_under_min_words_dropped": too_short,
         "train_human_answers_dropped_by_cap": dropped,
         "rewrite_records_skipped": rewrites,
@@ -299,6 +339,11 @@ def main():
     unknown = sorted(set(names) - set(config["datasets"]))
     if unknown:
         raise SystemExit(f"unknown datasets {unknown}, the config has {sorted(config['datasets'])}")
+    # a misspelt keep would otherwise build the corpus unthinned
+    for name, paths in config["datasets"].items():
+        extra = sorted(set(paths) - {"human_corpus", "ai_answers", "keep"})
+        if extra:
+            raise SystemExit(f"{name} has settings the builder does not read: {extra}")
     sources = {}
     for name in names:
         paths = config["datasets"][name]
@@ -308,7 +353,8 @@ def main():
                 raise SystemExit(f"no file at {path}, set the {name} paths in {shown(Path(args.config))}")
         sources[name] = (human_path, ai_path)
 
-    corpus, manifest = build(sources, same_question=config.get("same_question"))
+    keep = {name: config["datasets"][name].get("keep") for name in names}
+    corpus, manifest = build(sources, same_question=config.get("same_question"), keep=keep)
     out_dir = PIPELINE_DIR / config["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     version = config["version"]

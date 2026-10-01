@@ -1,1 +1,3 @@
-data/
+data/*
+# finished runs in data/ai_runs live in DVC on DagsHub, only their pointer file is in git
+!data/ai_runs.dvc
