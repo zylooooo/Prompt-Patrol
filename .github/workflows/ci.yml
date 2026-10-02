@@ -105,6 +105,82 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+  # Full stack in compose, torn down after - there is no staging environment
+  # (docs/superpowers/specs/2026-10-01-playwright-smoke-suite-design.md). Runs
+  # on main only, where it will gate the deploy once there is one.
+  # TEMPORARY: e2e-test is allowed too, to prove the job on a real runner before
+  # merging. Remove that clause before merging into main.
+  e2e-frontend:
+    runs-on: ubuntu-latest
+    needs: [unit-tests-frontend, unit-tests]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/e2e-test')
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds api/worker/frontend under the compose `image:` tags, which
+      # global-setup then starts without --build when CI is set. workdir matters:
+      # bake resolves env_file and build contexts against the cwd, not the
+      # compose file's directory, and refuses contexts outside the cwd (../api,
+      # the worker's repo-root ../..) without the fs.read grant. api/web reuse
+      # docker-build's cache scopes; nothing else builds the worker, so it
+      # writes its own.
+      - name: Build stack images
+        uses: docker/bake-action@v6
+        with:
+          workdir: apps/e2e
+          source: .
+          allow: fs.read=../..
+          files: docker-compose.yml
+          load: true
+          set: |
+            api.cache-from=type=gha,scope=api
+            frontend.cache-from=type=gha,scope=web
+            worker.cache-from=type=gha,scope=worker
+            worker.cache-to=type=gha,mode=max,scope=worker
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e suite
+        run: npm run test:e2e
+        env:
+          CI: "true"
+          # Leave the stack for the log dump below; the last step tears it down.
+          E2E_KEEP_STACK: "1"
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7
+
+      - name: Dump stack logs
+        if: failure()
+        working-directory: apps/e2e
+        run: docker compose logs --no-color
+
+      - name: Tear down stack
+        if: always()
+        working-directory: apps/e2e
+        run: docker compose down -v
+
   # The detector is a separate service with its own requirements and its own
   # conftest, so it needs its own job - `pytest` in apps/api never sees it.
   unit-tests-detector:

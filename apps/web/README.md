@@ -5,13 +5,16 @@ running the full stack; this file covers the frontend toolchain only.
 
 ## Scripts
 
-| Script              | What it does                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------- |
-| `npm run dev`       | Vite dev server on <http://localhost:5173>, `/api` proxied to `http://localhost:8000` |
-| `npm run build`     | Typecheck, then production bundle                                                     |
-| `npm run lint`      | ESLint                                                                                |
-| `npm run lint:fix`  | ESLint with autofix                                                                   |
-| `npm run typecheck` | `tsc -b` on its own, without building                                                 |
+| Script               | What it does                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `npm run dev`        | Vite dev server on <http://localhost:5173>, `/api` proxied to `http://localhost:8000`             |
+| `npm run build`      | Typecheck, then production bundle                                                                 |
+| `npm run lint`       | ESLint                                                                                            |
+| `npm run lint:fix`   | ESLint with autofix                                                                               |
+| `npm run typecheck`  | `tsc -b` on its own, without building                                                             |
+| `npm test`           | Vitest unit tests, once                                                                           |
+| `npm run test:watch` | Vitest in watch mode                                                                              |
+| `npm run test:e2e`   | Playwright smoke suite against a throwaway full stack — see [End-to-end tests](#end-to-end-tests) |
 
 ## Node version
 
@@ -85,3 +88,53 @@ without `strictNullChecks`, so keep it on.
 
 This replaced Oxlint, which was faster but had no type-aware rules wired up.
 Don't run both — one linter, one config.
+
+## End-to-end tests
+
+Playwright smoke tests for the two core instructor flows: sign-in → single check
+→ result, and sign-in → batch upload → CSV download. Each flow also gets an axe
+scan (WCAG 2 A/AA) and a keyboard-only pass. Specs live in `e2e/`; the Vitest
+suite still covers component logic, so this is not a replacement for it.
+
+```sh
+npm run test:e2e
+```
+
+That one command owns the whole lifecycle: it tears down any leftover stack,
+builds and starts `apps/e2e/docker-compose.yml`, seeds a signed-in instructor,
+runs the specs in Chromium, then tears the stack down again with `down -v`.
+Postgres runs on `tmpfs`, so every run starts from an empty database — there is
+no staging environment, and nothing from one run leaks into the next.
+
+Before running it:
+
+- **Stop the dev stack.** Both stacks bind `5173` and `4566`, and the LocalStack
+  port can't move — the presigned upload URL the browser follows and the CSP
+  `connect-src` both name it.
+- **Use Node 24** (see [Node version](#node-version)). On Windows, run it from
+  PowerShell rather than Git Bash if `docker` isn't found from Git Bash.
+- **Install Chromium once** with `npx playwright install chromium`.
+
+Two things are stubbed, deliberately:
+
+- **Auth0.** `python -m scripts.e2e_seed` (in the API container) creates the user
+  and a session through `create_session`, the same function the real callback
+  uses, and Playwright sets it as the `__Host-session` cookie. Every request still
+  goes through the real session check — only the Universal Login redirect is
+  skipped. The script refuses to run unless `ENVIRONMENT=dev`, and no HTTP route
+  reaches it.
+- **The detector.** `apps/e2e/detector-stub.py` scores every answer `0.99`, so
+  the verdict is `ai_generated` at every strictness. The suite tests the
+  frontend, not the model. The stub has to keep the real detector's
+  request/response shapes, so update it alongside `apps/detector/app/routes.py`.
+
+Set `E2E_KEEP_STACK=1` to leave the stack up after a run, for poking at a failure
+in the browser on <http://localhost:5173> or with `docker compose -f
+../e2e/docker-compose.yml logs`. The next run tears it down first either way.
+
+In CI the `e2e-frontend` job runs the same suite on pushes to `main` only — it's
+too heavy for every branch push, and it's meant to gate the deploy. The images
+are built beforehand with `docker/bake-action`, so `CI=true` makes the suite start
+the stack with `--no-build`. A missing image then fails the job outright rather
+than being quietly rebuilt without cache. On failure the job uploads the
+Playwright report and dumps the stack's logs.

@@ -1,0 +1,4 @@
+external_ref,answer_text
+e2e-001,A linked list stores each element in a node that points to the next node in the sequence.
+e2e-002,Unit tests check one small piece of code in isolation so that failures point straight at the cause.
+e2e-003,A race condition happens when two threads touch shared state and the result depends on their timing.

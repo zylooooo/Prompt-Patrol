@@ -260,3 +260,6 @@ mlruns/
 ml-training/reports/
 
 mlflow
+
+# Allow e2e test environment files
+!apps/e2e/.env
