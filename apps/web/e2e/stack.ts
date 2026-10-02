@@ -4,8 +4,9 @@ import { execSync } from "node:child_process";
 const COMPOSE = "docker compose -f ../e2e/docker-compose.yml";
 
 export function up() {
-  // CI pre-builds the images with bake, so only local runs build here.
-  const build = process.env.CI ? "" : " --build";
+  // CI pre-builds the images with bake. --no-build there, because without it a
+  // tag bake didn't produce is silently rebuilt uncached instead of failing.
+  const build = process.env.CI ? " --no-build" : " --build";
   execSync(`${COMPOSE} up -d --wait${build}`, {
     stdio: "inherit",
     timeout: 10 * 60 * 1000,
