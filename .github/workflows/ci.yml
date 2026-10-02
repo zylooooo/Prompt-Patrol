@@ -106,12 +106,14 @@ jobs:
         run: npm test
 
   # Full stack in compose, torn down after - there is no staging environment
-  # (docs/superpowers/specs/2026-10-01-playwright-smoke-suite-design.md). Gated
-  # like docker-build: too heavy for every branch push.
+  # (docs/superpowers/specs/2026-10-01-playwright-smoke-suite-design.md). Runs
+  # on main only, where it will gate the deploy once there is one.
+  # TEMPORARY: e2e-test is allowed too, to prove the job on a real runner before
+  # merging. Remove that clause before merging into main.
   e2e-frontend:
     runs-on: ubuntu-latest
     needs: [unit-tests-frontend, unit-tests]
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/e2e-test')
     defaults:
       run:
         working-directory: apps/web

@@ -132,8 +132,8 @@ Set `E2E_KEEP_STACK=1` to leave the stack up after a run, for poking at a failur
 in the browser on <http://localhost:5173> or with `docker compose -f
 ../e2e/docker-compose.yml logs`. The next run tears it down first either way.
 
-In CI the `e2e-frontend` job runs the same suite on PRs into `main` and pushes to
-`main` — it's too heavy for every branch push, same as `docker-build`. The images
+In CI the `e2e-frontend` job runs the same suite on pushes to `main` only — it's
+too heavy for every branch push, and it's meant to gate the deploy. The images
 are built beforehand with `docker/bake-action`, so `CI=true` makes the suite start
 the stack with `--no-build`. A missing image then fails the job outright rather
 than being quietly rebuilt without cache. On failure the job uploads the
