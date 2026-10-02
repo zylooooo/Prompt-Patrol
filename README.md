@@ -4,10 +4,10 @@
 
 SMU CS480 Capstone Project building an web application based triage tool for university instructors to detect AI-generated short answers.
 
-| Package                          | What it is                                                  |
-| -------------------------------- | ----------------------------------------------------------- |
-| [`apps/api`](apps/api/README.md) | FastAPI + SQLAlchemy + Postgres, Auth0 sign-in              |
-| [`apps/web`](apps/web/README.md) | React 19 + TypeScript + Vite frontend                       |
+| Package                                              | What it is                                                                                     |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [`apps/api`](apps/api/README.md)                     | FastAPI + SQLAlchemy + Postgres, Auth0 sign-in                                                 |
+| [`apps/web`](apps/web/README.md)                     | React 19 + TypeScript + Vite frontend                                                          |
 | [`apps/data-pipeline`](apps/data-pipeline/README.md) | Corpus tooling: dataset ingest and cleaning, the AI-answer generation harness, and the splicer |
 
 ## Local dev
@@ -17,3 +17,7 @@ SMU CS480 Capstone Project building an web application based triage tool for uni
 3. `cd apps/web && nvm use && npm install && npm run dev` — starts the frontend on <http://localhost:5173>. `nvm use` picks up `apps/web/.nvmrc`; run it from `apps/web` (or below), since nvm searches upwards and there's no `.nvmrc` at the repo root. Without a matching Node, `npm install` stops with an `EBADENGINE` error rather than failing later mid-build — see [the frontend README](apps/web/README.md#node-version).
 
 To apply a migration you have just written without restarting anything, `docker exec prompt-patrol-api alembic upgrade head` still works — it runs inside the container, so it uses the container's `DB_URL` and there is no host/`localhost` hostname mismatch to worry about.
+
+## End-to-end tests
+
+`cd apps/web && npm run test:e2e` — runs the Playwright smoke suite against its own throwaway stack (`apps/e2e/docker-compose.yml`), built, seeded and torn down by that one command. Stop the dev stack first, since both bind the same ports. Auth0 and the detector are stubbed — see [the frontend README](apps/web/README.md#end-to-end-tests) for what that covers and why.
