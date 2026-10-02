@@ -160,6 +160,8 @@ jobs:
         run: npm run test:e2e
         env:
           CI: "true"
+          # Leave the stack for the log dump below; the last step tears it down.
+          E2E_KEEP_STACK: "1"
 
       - name: Upload Playwright report
         if: failure()
@@ -174,7 +176,6 @@ jobs:
         working-directory: apps/e2e
         run: docker compose logs --no-color
 
-      # global-teardown does this too, but not when global-setup itself throws.
       - name: Tear down stack
         if: always()
         working-directory: apps/e2e
