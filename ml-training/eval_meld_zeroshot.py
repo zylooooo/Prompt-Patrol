@@ -36,6 +36,17 @@ MLFLOW_EXPERIMENT = "zeroshot-baselines"
 DATA_MD5 = "851b80f0a9325a11af2126e2cc3b1b25"
 
 
+def default_device() -> str:
+    """Prefer the accelerator supported by the installed PyTorch build."""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def load_meld_scorer(device: str = "cuda"):
     """Download (or reuse the cached) MELD weights and load its own Scorer
     class. MELD ships a standalone meld.py, not a pip package, so it's
@@ -77,7 +88,8 @@ def main() -> None:
     parser.add_argument("--target-fpr", type=float, default=0.01,
                         help="FPR budget to fit the threshold at - matches "
                              "metrics.py's fixed project-wide HEADLINE_FPR")
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default=None,
+                        help="device override; defaults to cuda, mps, or cpu")
     parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
     args = parser.parse_args()
 
@@ -91,7 +103,9 @@ def main() -> None:
     print(f"test: {len(test)} rows ({test['label'].mean():.1%} AI)")
 
     print("\nLoading MELD (downloads ~4.1GB on first run, cached after)...")
-    scorer = load_meld_scorer(device=args.device)
+    device = args.device or default_device()
+    print(f"Using device: {device}")
+    scorer = load_meld_scorer(device=device)
 
     setup_mlflow(MLFLOW_EXPERIMENT)
     with mlflow.start_run(run_name="meld-zeroshot"):
@@ -102,6 +116,7 @@ def main() -> None:
             "val_n": len(val),
             "test_n": len(test),
             "data_md5": DATA_MD5,
+            "device": device,
         })
 
         print("\nScoring val...")
