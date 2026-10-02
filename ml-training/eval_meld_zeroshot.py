@@ -27,12 +27,13 @@ import numpy as np
 import pandas as pd
 
 from metrics import evaluate, threshold_at_fpr
-from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
+from tracking import log_dict_artifact, log_predictions, log_split_metrics, setup_mlflow
 
 MELD_REPO = "anon-review-meld-2026/meld"
 SPLITS_PATH = Path(__file__).parent / "data" / "splits" / "v0.1.parquet"
 OUT_PATH = Path(__file__).parent / "outputs" / "meld_zeroshot_results.json"
 MLFLOW_EXPERIMENT = "zeroshot-baselines"
+DATA_MD5 = "851b80f0a9325a11af2126e2cc3b1b25"
 
 
 def load_meld_scorer(device: str = "cuda"):
@@ -100,6 +101,7 @@ def main() -> None:
             "target_fpr": args.target_fpr,
             "val_n": len(val),
             "test_n": len(test),
+            "data_md5": DATA_MD5,
         })
 
         print("\nScoring val...")
@@ -122,6 +124,11 @@ def main() -> None:
             headline_fpr=args.target_fpr,
         )
         log_split_metrics(results, "test")
+
+        test_predictions = test.loc[test_ok, ["answer_id", "question_id", "label", "generator"]].copy()
+        test_predictions = test_predictions.rename(columns={"label": "y_true"})
+        test_predictions["y_prob"] = test_probs[test_ok]
+        log_predictions(test_predictions, "test")
 
         print("\n=== MELD zero-shot, test split ===")
         for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
