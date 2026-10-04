@@ -25,19 +25,27 @@ question.
 | ai_positions | list of int | positions of the AI sentences, zero-based |
 
 Field notes:
-- The first seven columns follow the load_splits() column contract. The
-  file holds only the configured partitions, test by default, so
-  ml-training scores it as an extra test-only file rather than loading it
-  with load_splits(), which expects train, val and test.
-- label is always 1. The file measures how often a detector flags
-  answers that are partly AI, band by band. The false-positive rate still
-  comes from the student answers in the corpus version.
+- The first seven columns follow the load_splits() column contract.
+  load_splits() reads only the corpus version, so the spliced rows reach
+  a run only when ml-training appends the train and val rows to training
+  and validation and scores the test rows as their own slice. The file
+  holds every partition but only label 1, so load_splits() accepts it
+  alone without error. Never point data.splits at it on its own.
+- label is always 1, since any AI use counts as AI. The test rows
+  measure how often a detector flags answers that are partly AI, band by
+  band. The false-positive rate still comes from the student answers in
+  the corpus version.
+- In v0.1, train and val hold about a third as many spliced answers as
+  raw AI answers, so once merged, spliced answers are about a quarter of
+  the AI-labelled rows in train and val. Test holds 90 per dataset and
+  band. answers_per_band
+  in `app/splicer/config.yaml` sets the counts.
 - ai_fraction counts words with `count_words`, the corpus word rule.
   style names the band it falls in: spliced-25 (0.15 to 0.35), spliced-50
   (0.40 to 0.60) or spliced-75 (0.65 to 0.85).
-- Each configured partition is spliced only from its own rows, test by
-  default, so no sentence the detector trained on reaches a spliced
-  answer.
+- Each partition is spliced only from its own rows, so a spliced test
+  answer holds no sentence the detector trained on, and no student or
+  AI answer is used in more than one partition.
 - A student answer is a base only if it passes `is_eligible` in
   `app/splicer/splice.py`: at least `min_sentences` sentences (2 by
   default), prose, no code fragments, few ellipses and mostly
@@ -48,10 +56,11 @@ Field notes:
 
 ## Reporting
 
-The rows are not independent. Spliced answers built from the same
-question, student answer or AI answer tend to be caught or missed
-together, so the rows carry much less evidence than the same number of
-unrelated answers. In the v0.1 build, per band:
+This section is about the test rows, which measure detection. They are
+not independent. Spliced answers built from the same question, student
+answer or AI answer tend to be caught or missed together, so the rows
+carry much less evidence than the same number of unrelated answers. For
+the v0.1 test rows, per band:
 
 | Dataset | Questions | Effective questions | Fewest AI answers behind one model |
 |---|---|---|---|
@@ -129,8 +138,9 @@ To report the detection rate:
 `<version>-spliced_manifest.json` records the version, built_at, the
 source corpus path and sha256, text_cleaning, the segmenter (the spaCy
 version, the model and its version), the seed and the settings used
-(partitions, bands, answers_per_band, answers_per_model, max_base_uses
-and min_sentences), and these statistics. eligible gives, per
+(partitions, bands, answers_per_band as written in the config,
+answers_per_model per partition and dataset, max_base_uses and
+min_sentences), and these statistics. eligible gives, per
 partition and dataset, the bases that pass the rule and the donors,
 which counts every AI answer in that partition and dataset. candidates
 gives, per partition, dataset and band, the number of base and donor

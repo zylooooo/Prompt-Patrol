@@ -153,10 +153,68 @@ def test_build_gives_every_model_its_count_in_every_band(plain_segment):
     spliced, stats = build_spliced.build(corpus, manifest, CONFIG)
     counts = spliced.groupby(["style", "generator"]).size().to_dict()
     assert counts == {(f"spliced-{b}", m): 4 for b in (25, 50, 75) for m in ("m1", "m2")}
-    assert stats["answers_per_model"] == 4
+    assert stats["answers_per_model"] == {"test": {"d": 4}}
 
 
-def test_build_splices_test_rows_only_by_default(plain_segment):
+def two_datasets():
+    """tiny_corpus with a second dataset e, a copy of d under its own ids."""
+    corpus, manifest = tiny_corpus()
+    copy = corpus.assign(dataset="e")
+    for column in ("question_id", "answer_id"):
+        copy[column] = copy[column].str.replace(r"^d/", "e/", regex=True)
+    partitions = manifest["question_partitions"]
+    partitions = partitions | {"e/" + q.removeprefix("d/"): p for q, p in partitions.items()}
+    return pd.concat([corpus, copy], ignore_index=True), manifest | {"question_partitions": partitions}
+
+
+def test_counts_can_differ_by_partition(plain_segment):
+    corpus, manifest = tiny_corpus()
+    config = CONFIG | {"partitions": ["train", "test"], "answers_per_band": {"train": 4, "test": 8}}
+    spliced, stats = build_spliced.build(corpus, manifest, config)
+    counts = spliced.groupby(["partition", "style", "generator"]).size()
+    assert set(counts["train"]) == {2} and set(counts["test"]) == {4}
+    assert stats["answers_per_model"] == {"train": {"d": 2}, "test": {"d": 4}}
+
+
+def test_counts_can_differ_by_dataset(plain_segment):
+    corpus, manifest = two_datasets()
+    config = CONFIG | {"answers_per_band": {"test": {"d": 8, "e": 4}}}
+    spliced, stats = build_spliced.build(corpus, manifest, config)
+    counts = spliced.groupby(["dataset", "style", "generator"]).size()
+    assert set(counts["d"]) == {4} and set(counts["e"]) == {2}
+    assert stats["answers_per_model"] == {"test": {"d": 4, "e": 2}}
+    assert set(stats["eligible"]["test"]) == set(stats["candidates"]["test"]) == {"d", "e"}
+    assert spliced["answer_id"].str.startswith("spliced/test/e/").sum() == 12
+
+
+def test_a_dataset_missing_from_a_partition_is_skipped(plain_segment):
+    corpus, manifest = two_datasets()
+    corpus = corpus[~((corpus["dataset"] == "e") & (corpus["partition"] == "train"))]
+    config = CONFIG | {"partitions": ["train", "test"], "answers_per_band": 8}
+    spliced, stats = build_spliced.build(corpus, manifest, config)
+    assert stats["answers_per_model"] == {"train": {"d": 4}, "test": {"d": 4, "e": 4}}
+    assert set(spliced.loc[spliced["partition"] == "train", "dataset"]) == {"d"}
+
+
+def test_the_selection_is_pinned(plain_segment):
+    # a change to how answers are drawn changes this hash, and with it the published test rows
+    corpus, manifest = tiny_corpus()
+    spliced, _ = build_spliced.build(corpus, manifest, CONFIG)
+    key = spliced[["answer_id", "human_answer_id", "ai_answer_id", "ai_fraction"]].to_csv(index=False)
+    pinned = "06da1663bf5f4096f2453006ff0fd574f06d1f57b3810578c1ce909c50deb2b1"
+    assert hashlib.sha256(key.encode()).hexdigest() == pinned
+
+
+def test_adding_partitions_leaves_the_test_rows_unchanged(plain_segment):
+    corpus, manifest = tiny_corpus()
+    alone, _ = build_spliced.build(corpus, manifest, CONFIG)
+    config = CONFIG | {"partitions": ["train", "val", "test"], "answers_per_band": {"train": 4, "val": 2, "test": 8}}
+    every, _ = build_spliced.build(corpus, manifest, config)
+    assert set(every["partition"]) == {"train", "val", "test"}
+    pd.testing.assert_frame_equal(every[every["partition"] == "test"].reset_index(drop=True), alone)
+
+
+def test_listing_test_splices_test_only_from_test_rows(plain_segment):
     corpus, manifest = tiny_corpus()
     spliced, _ = build_spliced.build(corpus, manifest, CONFIG)
     assert set(spliced["partition"]) == {"test"}
@@ -315,6 +373,16 @@ def test_a_group_that_cannot_be_filled_stops_the_build_naming_it(plain_segment):
     ({"bands": {25: [0.35, 0.15]}}, "inside 0 to 1"),
     ({"bands": {25: [0.5, 1.2]}}, "inside 0 to 1"),
     ({"answers_per_band": 7}, "does not divide"),
+    ({"answers_per_band": {"test": 0}}, "0 for test d does not divide"),
+    ({"answers_per_band": {"test": {"d": 7}}}, "7 for test d does not divide"),
+    ({"answers_per_band": {"test": {"d": -8}}}, "-8 for test d does not divide"),
+    ({"answers_per_band": 8.0}, "8.0 for test d does not divide"),
+    ({"answers_per_band": True}, "True for test d does not divide"),
+    ({"answers_per_band": {"train": 8}}, r"missing \['test'\], not configured \['train'\]"),
+    ({"answers_per_band": {"test": 8, "train": 8}}, r"missing \[\], not configured \['train'\]"),
+    ({"partitions": ["train", "test"], "answers_per_band": {"test": 8}}, r"missing \['train'\]"),
+    ({"answers_per_band": {"test": {"x": 8}}}, r"for test names \['x'\], the corpus has \['d'\]"),
+    ({"answers_per_band": {"test": {"d": 8, "x": 8}}}, r"for test names \['d', 'x'\], the corpus has \['d'\]"),
     ({"partitions": ["holdout"]}, r"no \['holdout'\] partition"),
 ])
 def test_settings_the_build_cannot_honour_stop_it(change, message, plain_segment):
@@ -415,9 +483,14 @@ def test_check_stops_a_spliced_id_that_collides_with_a_corpus_id(plain_segment):
 def test_the_shipped_config_passes_its_own_checks():
     with open(build_spliced.DEFAULT_CONFIG, encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    corpus = pd.DataFrame({"partition": ["test"] * 7, "generator": ["human"] + [f"m{i}" for i in range(6)]})
+    corpus = pd.DataFrame([{"partition": p, "dataset": d, "generator": g}
+                           for p in ("train", "val", "test") for d in ("engsaf", "mohler", "sprag")
+                           for g in ["human"] + [f"m{i}" for i in range(6)]])
     bands, _, per_model = build_spliced.check_config(config, corpus)
-    assert sorted(bands) == [25, 50, 75] and per_model == 15
+    assert sorted(bands) == [25, 50, 75] and config["partitions"] == ["train", "val", "test"]
+    assert per_model == {("train", "engsaf"): 5, ("train", "mohler"): 23, ("train", "sprag"): 17,
+                         ("val", "engsaf"): 1, ("val", "mohler"): 4, ("val", "sprag"): 3,
+                         ("test", "engsaf"): 15, ("test", "mohler"): 15, ("test", "sprag"): 15}
 
 
 def write_corpus(tmp_path, corpus, manifest):
@@ -447,7 +520,7 @@ def test_main_writes_the_pair_next_to_the_corpus(tmp_path, monkeypatch, plain_se
     assert saved["version"] == "v9-spliced"
     assert saved["source"]["sha256"] == hashlib.sha256((folder / "v9.parquet").read_bytes()).hexdigest()
     assert saved["rows"]["test"]["d"]["25"] == {"m1": 4, "m2": 4}
-    assert saved["text_cleaning"] == "clean_v2" and saved["answers_per_model"] == 4
+    assert saved["text_cleaning"] == "clean_v2" and saved["answers_per_model"] == {"test": {"d": 4}}
 
 
 def test_the_manifest_records_the_settings_and_the_statistics(tmp_path, monkeypatch, plain_segment):
@@ -467,7 +540,7 @@ def test_the_manifest_records_the_settings_and_the_statistics(tmp_path, monkeypa
     assert saved["segmenter"] == {"spacy": spacy.__version__, "model": "en_core_web_sm",
                                   "model_version": spacy.util.get_package_version("en_core_web_sm")}
     assert saved["bands"] == {"25": [0.15, 0.35], "50": [0.4, 0.6], "75": [0.65, 0.85]}
-    assert (saved["answers_per_band"], saved["answers_per_model"]) == (8, 4)
+    assert (saved["answers_per_band"], saved["answers_per_model"]) == (8, {"test": {"d": 4}})
     assert (saved["max_base_uses"], saved["min_sentences"]) == (2, 2)
     assert saved["eligible"] == {"test": {"d": {"bases": 12, "donors": 18}}}
     # every base meets every donor of the band's tier: 12 bases and 2 models

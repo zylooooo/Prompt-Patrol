@@ -3,11 +3,12 @@
 A spliced answer is a student answer with some of its sentences
 replaced, in place, by the first sentences of an AI answer to the same
 question. Each configured partition is spliced only from its own rows, so
-no sentence the detector trained on reaches a spliced answer. Spliced
+a spliced test answer holds no sentence the detector trained on. Spliced
 answers are grouped into bands by the share of their words that are AI,
-and every band holds the same number per model. Output is a parquet in
-the corpus column shape plus a manifest, written next to the corpus. The
-columns are documented in docs/spliced-schema.md.
+and within a partition and dataset every band holds the same number per
+model. Output is a parquet in the corpus column shape plus a manifest,
+written next to the corpus. The columns are documented in
+docs/spliced-schema.md.
 """
 
 import argparse
@@ -53,7 +54,8 @@ def load_corpus(path):
 
 def check_config(config, corpus):
     """Stop on settings the build cannot honour, before any splicing.
-    Returns the bands, the models and the count per model."""
+    Returns the bands, the models and the count per model for each
+    partition and dataset."""
     missing = sorted(set(config["partitions"]) - set(corpus["partition"]))
     if missing:
         raise SystemExit(f"the corpus has no {missing} partition")
@@ -64,10 +66,37 @@ def check_config(config, corpus):
     if any(later[0] <= earlier[1] for earlier, later in zip(ranges, ranges[1:])):
         raise SystemExit(f"band ranges overlap, got {bands}")
     models = sorted(set(corpus["generator"]) - {"human"})
-    per_model, extra = divmod(config["answers_per_band"], len(models))
-    if extra or not per_model:
-        raise SystemExit(f"answers_per_band {config['answers_per_band']} does not divide across {len(models)} models")
-    return bands, models, per_model
+    return bands, models, counts_per_model(config, corpus, models)
+
+
+def counts_per_model(config, corpus, models):
+    """answers_per_band as a count per model for each partition and
+    dataset. The setting is one number for every partition and dataset, a
+    number per partition, or a number per partition and dataset."""
+    setting = config["answers_per_band"]
+    if not isinstance(setting, dict):
+        setting = {partition: setting for partition in config["partitions"]}
+    unset = sorted(set(config["partitions"]) - set(setting))
+    unread = sorted(set(setting) - set(config["partitions"]))
+    if unset or unread:
+        raise SystemExit(f"answers_per_band must give a count for each configured partition, "
+                         f"missing {unset}, not configured {unread}")
+    per_model = {}
+    for partition in config["partitions"]:
+        datasets = sorted(set(corpus.loc[corpus["partition"] == partition, "dataset"]))
+        counts = setting[partition]
+        if not isinstance(counts, dict):
+            counts = dict.fromkeys(datasets, counts)
+        if sorted(counts) != datasets:
+            raise SystemExit(f"answers_per_band for {partition} names {sorted(counts)}, the corpus has {datasets}")
+        for dataset in datasets:
+            count = counts[dataset]
+            # type() and not isinstance(), so a bool is refused too
+            if type(count) is not int or count < len(models) or count % len(models):
+                raise SystemExit(f"answers_per_band {count} for {partition} {dataset} "
+                                 f"does not divide across {len(models)} models")
+            per_model[(partition, dataset)] = count // len(models)
+    return per_model
 
 
 def band_pool(part, sentences, bands, seed, min_sentences):
@@ -135,32 +164,31 @@ def build(corpus, manifest, config):
     seed = config["seed"]
     rows = corpus[corpus["partition"].isin(config["partitions"])]
     sentences = {answer_id: segment(text) for answer_id, text in zip(rows["answer_id"], rows["answer"], strict=True)}
-    records, eligible, candidates = [], {}, {}
-    for partition in config["partitions"]:
-        for dataset in sorted(set(rows["dataset"])):
-            part = rows[(rows["partition"] == partition) & (rows["dataset"] == dataset)]
-            pool, bases, donors = band_pool(part, sentences, bands, seed, config["min_sentences"])
-            eligible.setdefault(partition, {})[dataset] = {"bases": bases, "donors": donors}
-            candidates.setdefault(partition, {})[dataset] = {str(b): len(pool[b]) for b in sorted(bands)}
-            for band in sorted(bands):
-                draw = random.Random(f"{seed}/select/{partition}/{dataset}/{band}")
-                chosen, counts = select(pool[band], models, per_model, config["max_base_uses"], draw)
-                short = {model: n for model, n in counts.items() if n < per_model}
-                if short:
-                    raise SystemExit(f"{partition} {dataset} band {band} cannot reach {per_model} per model, "
-                                     f"found {short}")
-                chosen.sort(key=lambda c: (c["model"], c["base_id"], c["donor_id"]))
-                for number, c in enumerate(chosen):
-                    text = " ".join(s["text"] for s in c["labelled"])
-                    records.append({
-                        "answer": text, "label": AI, "partition": partition, "question_id": c["question_id"],
-                        "answer_id": f"spliced/{partition}/{dataset}/b{band}/{number:04d}",
-                        "generator": c["model"], "n_words": count_words(text), "dataset": dataset,
-                        "tier": c["tier"], "style": f"spliced-{band}", "ai_fraction": round(ai_share(c["labelled"]), 4),
-                        "human_answer_id": c["base_id"], "ai_answer_id": c["donor_id"],
-                        "n_sentences": len(c["labelled"]),
-                        "ai_positions": [i for i, s in enumerate(c["labelled"]) if s["label"] == "ai"],
-                    })
+    records, eligible, candidates, answers_per_model = [], {}, {}, {}
+    for (partition, dataset), wanted in per_model.items():
+        part = rows[(rows["partition"] == partition) & (rows["dataset"] == dataset)]
+        pool, bases, donors = band_pool(part, sentences, bands, seed, config["min_sentences"])
+        answers_per_model.setdefault(partition, {})[dataset] = wanted
+        eligible.setdefault(partition, {})[dataset] = {"bases": bases, "donors": donors}
+        candidates.setdefault(partition, {})[dataset] = {str(b): len(pool[b]) for b in sorted(bands)}
+        for band in sorted(bands):
+            draw = random.Random(f"{seed}/select/{partition}/{dataset}/{band}")
+            chosen, counts = select(pool[band], models, wanted, config["max_base_uses"], draw)
+            short = {model: n for model, n in counts.items() if n < wanted}
+            if short:
+                raise SystemExit(f"{partition} {dataset} band {band} cannot reach {wanted} per model, found {short}")
+            chosen.sort(key=lambda c: (c["model"], c["base_id"], c["donor_id"]))
+            for number, c in enumerate(chosen):
+                text = " ".join(s["text"] for s in c["labelled"])
+                records.append({
+                    "answer": text, "label": AI, "partition": partition, "question_id": c["question_id"],
+                    "answer_id": f"spliced/{partition}/{dataset}/b{band}/{number:04d}",
+                    "generator": c["model"], "n_words": count_words(text), "dataset": dataset,
+                    "tier": c["tier"], "style": f"spliced-{band}", "ai_fraction": round(ai_share(c["labelled"]), 4),
+                    "human_answer_id": c["base_id"], "ai_answer_id": c["donor_id"],
+                    "n_sentences": len(c["labelled"]),
+                    "ai_positions": [i for i, s in enumerate(c["labelled"]) if s["label"] == "ai"],
+                })
     spliced = pd.DataFrame(records, columns=COLUMNS)
     check(spliced, corpus, manifest, config, bands)
 
@@ -179,7 +207,7 @@ def build(corpus, manifest, config):
         "partitions": list(config["partitions"]),
         "bands": {str(b): list(r) for b, r in sorted(bands.items())},
         "answers_per_band": config["answers_per_band"],
-        "answers_per_model": per_model,
+        "answers_per_model": answers_per_model,
         "max_base_uses": config["max_base_uses"],
         "min_sentences": config["min_sentences"],
         "eligible": eligible,

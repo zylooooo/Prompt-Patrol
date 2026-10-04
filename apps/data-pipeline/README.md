@@ -258,18 +258,20 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id>
 
 Builds spliced answers: a student answer with some of its sentences
 replaced, in place, by the first sentences of an AI answer to the same
-question. They test whether a detector trained on whole answers catches
-answers that are only partly AI. No model calls, it only recombines
-answers a corpus version already holds.
+question. Any AI use counts as AI, so every spliced answer is labelled 1.
+The train and val rows teach the detector to flag answers that are only
+partly AI, and the test rows measure how well it catches them. No model
+calls, it only recombines answers a corpus version already holds.
 
 The splicer reads a built corpus version, so its cleanup, wrong-tier
-trim and partitions carry over. Each configured partition is spliced
-only from its own rows, test by default, so no sentence the detector
-trained on reaches a spliced answer. Spliced answers are grouped by the
-share of their words that are AI into bands 25, 50 and 75, and each
-partition, dataset and band holds `answers_per_band` of them, split
-evenly across the models, with one student answer starting at most
-`max_base_uses` of them per band. Every spliced answer is labelled 1.
+trim and partitions carry over. Train, val and test are each spliced
+only from their own rows, so a spliced test answer holds no sentence the
+detector trained on. Spliced answers are grouped by the share of their
+words that are AI into bands 25, 50 and 75, and `answers_per_band` sets
+how many each partition, dataset and band holds, split evenly across the
+models, with one student answer starting at most `max_base_uses` of them
+per band. In v0.1, train and val get about a third as many spliced
+answers as raw AI answers, and test gets 90 per dataset and band.
 `app/splicer/config.yaml` holds these settings. From inside `app/`:
 
 ```
@@ -284,11 +286,18 @@ Output goes to `data/corpus/<version>-spliced.parquet` and
 `<version>-spliced_manifest.json`, next to the corpus. The build stops if
 a partition, dataset and band cannot be filled, naming it, and a failed
 build keeps the previous files. Publish the pair to
-`ml-training/data/splits/` the same way as the corpus version. The
-columns are documented in `docs/spliced-schema.md`, and the segmenter
-validation evidence lives in `docs/segmentation_review_v1.md` to `v3`.
-The spliced answers cluster heavily by question, so read the Reporting
-section of `docs/spliced-schema.md` before quoting detection rates.
+`ml-training/data/splits/` the same way as the corpus version.
+`load_splits()` reads only the corpus version, so a run sees spliced
+answers only once ml-training merges them: append the train and val rows
+to the matching corpus partitions, and score the test rows as their own
+slice, apart from the corpus test set. Merging moves v0.1 train from 51%
+to 58% AI-labelled rows and val from 36% to 42%. The spliced file holds
+only label 1 but passes the `load_splits()` checks on its own, so never
+point `data.splits` at it alone. The columns are documented in `docs/spliced-schema.md`, and the
+segmenter validation evidence lives in `docs/segmentation_review_v1.md`
+to `v3`. The spliced test answers cluster heavily by question, so read
+the Reporting section of `docs/spliced-schema.md` before quoting
+detection rates.
 
 ## Corpus build
 
