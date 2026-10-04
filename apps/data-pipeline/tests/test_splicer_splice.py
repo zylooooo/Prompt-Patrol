@@ -200,8 +200,9 @@ def test_the_selection_is_pinned(plain_segment):
     # a change to how answers are drawn changes this hash, and with it the published test rows
     corpus, manifest = tiny_corpus()
     spliced, _ = build_spliced.build(corpus, manifest, CONFIG)
-    key = spliced[["answer_id", "human_answer_id", "ai_answer_id", "ai_fraction"]].to_csv(index=False)
-    pinned = "06da1663bf5f4096f2453006ff0fd574f06d1f57b3810578c1ce909c50deb2b1"
+    # a fixed line ending, since to_csv defaults to the platform's
+    key = spliced[["answer_id", "human_answer_id", "ai_answer_id", "ai_fraction"]].to_csv(index=False, lineterminator="\n")
+    pinned = "a59b0de5818e63568473d6d4806a4ee5666107075cc70220957c14f941dd828f"
     assert hashlib.sha256(key.encode()).hexdigest() == pinned
 
 
