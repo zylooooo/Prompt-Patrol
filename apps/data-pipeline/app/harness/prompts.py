@@ -91,7 +91,7 @@ REWRITE_TIERS = {tier for tier, name in TIER_TO_TEMPLATE.items() if "{student_an
 
 def is_rewrite(record):
     """True for a rewrite, or anything made from one, since paraphrase and
-    human-edit records keep their source's tier. The splicer, paraphrase
-    and human-edit passes all skip these, so they only take answers the
-    model wrote itself."""
+    human-edit records keep their source's tier. The corpus build,
+    paraphrase and human-edit passes all skip these, so they only take
+    answers the model wrote itself."""
     return record.get("tier") in REWRITE_TIERS
