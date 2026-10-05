@@ -26,11 +26,11 @@ import mlflow
 import numpy as np
 import pandas as pd
 
+from combined_data import load_combined, slice_flag_rates
 from metrics import evaluate, threshold_at_fpr
 from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
 
 MELD_REPO = "anon-review-meld-2026/meld"
-SPLITS_PATH = Path(__file__).parent / "data" / "splits" / "v0.1.parquet"
 OUT_PATH = Path(__file__).parent / "outputs" / "meld_zeroshot_results.json"
 MLFLOW_EXPERIMENT = "zeroshot-baselines"
 
@@ -78,14 +78,16 @@ def main() -> None:
                              "metrics.py's fixed project-wide HEADLINE_FPR")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
+    parser.add_argument("--no-spliced", action="store_true",
+                        help="score the raw v0.1 corpus only (the original baseline), "
+                             "without the spliced answers")
     args = parser.parse_args()
 
-    if not SPLITS_PATH.exists():
-        raise SystemExit(f"{SPLITS_PATH} not found - run `dvc pull` in ml-training/ first")
-
-    df = pd.read_parquet(SPLITS_PATH)
-    val = df[df["partition"] == "val"].reset_index(drop=True)
-    test = df[df["partition"] == "test"].reset_index(drop=True)
+    frames = load_combined(include_spliced=not args.no_spliced)
+    val, test = frames["val"], frames["test"]
+    data_version = "v0.1" if args.no_spliced else "v0.1+spliced"
+    run_suffix = "" if args.no_spliced else "-combined"
+    print(f"data: {data_version}")
     print(f"val: {len(val)} rows ({val['label'].mean():.1%} AI)")
     print(f"test: {len(test)} rows ({test['label'].mean():.1%} AI)")
 
@@ -93,11 +95,12 @@ def main() -> None:
     scorer = load_meld_scorer(device=args.device)
 
     setup_mlflow(MLFLOW_EXPERIMENT)
-    with mlflow.start_run(run_name="meld-zeroshot"):
+    with mlflow.start_run(run_name=f"meld-zeroshot{run_suffix}"):
         mlflow.set_tags({"owner": args.owner, "run_role": "eval", "tuning_method": "zeroshot"})
         mlflow.log_params({
             "model": MELD_REPO,
             "target_fpr": args.target_fpr,
+            "data": data_version,
             "val_n": len(val),
             "test_n": len(test),
         })
@@ -127,19 +130,28 @@ def main() -> None:
         for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
             print(f"  {key}: {results[key]:.4f}")
 
+        slices = slice_flag_rates(test, test_probs, threshold)
+        print("\n  per slice (flag rate at the frozen threshold; human = FPR, rest = TPR):")
+        for row in slices:
+            print(f"    {row['slice']:<11} n={row['n']:<5} {row['kind']}={row['flag_rate']:.3f}")
+            mlflow.log_metric(f"test/slice_{row['slice'].replace('-', '_')}_flag_rate", row["flag_rate"])
+
         payload = {
             "model": "MELD (zero-shot, anon-review-meld-2026/meld)",
+            "data": data_version,
             "target_fpr": args.target_fpr,
             "threshold": threshold,
             "val_n": int(val_ok.sum()),
             "test_n": int(test_ok.sum()),
             "results": {k: float(v) for k, v in results.items()},
+            "slices": slices,
         }
         log_dict_artifact(payload, "zeroshot_results.json")
 
-        OUT_PATH.parent.mkdir(exist_ok=True)
-        OUT_PATH.write_text(json.dumps(payload, indent=2))
-        print(f"\nWrote {OUT_PATH}")
+        out_path = OUT_PATH.with_name(f"{OUT_PATH.stem}{run_suffix.replace('-', '_')}.json")
+        out_path.parent.mkdir(exist_ok=True)
+        out_path.write_text(json.dumps(payload, indent=2))
+        print(f"\nWrote {out_path}")
         print(f"MLflow run: {mlflow.active_run().info.run_id}")
 
 
