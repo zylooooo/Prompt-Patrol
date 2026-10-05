@@ -258,6 +258,8 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--owner", default="malcolm")
     ap.add_argument("--run-name", default="")
+    ap.add_argument("--run-role", default="train", choices=["train", "sweep"],
+                    help="sweep runs are excluded from headline tables; pick the config by VAL, never test")
     args = ap.parse_args()
 
     train_on = [d for d in args.train_on.split(",") if d]
@@ -289,7 +291,7 @@ def main() -> None:
     with mlflow.start_run(run_name=run_name):
         # reporting.py drops run_role="smoke" from every table, so a pipeline check
         # (capped train rows) can never be mistaken for a result
-        mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else "train",
+        mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
                          "tuning_method": "lora",
                          "model_family": "deberta", "data_mode": mode})
         mlflow.log_params({
@@ -320,7 +322,9 @@ def main() -> None:
         print("\nTraining...")
         best_epoch, best_auc = train_lora(model, tokenizer, train, val, args, device,
                                           lambda k, v, s: mlflow.log_metric(k, v, step=s))
+        # the number a sweep is ranked by: validation only, so test is never used to choose
         mlflow.log_params({"best_epoch": best_epoch})
+        mlflow.log_metric("val/best_auroc", best_auc)
 
         val_logits = predict_logits(model, tokenizer, val["answer"], device)
         test_logits = predict_logits(model, tokenizer, test["answer"], device)
@@ -337,7 +341,7 @@ def main() -> None:
         payload["tuned"] = jsonable(tuned) | {"best_epoch": best_epoch, "best_val_auroc": best_auc}
 
         OUT_DIR.mkdir(exist_ok=True)
-        stem = OUT_DIR / f"desklib_lora_{mode}"
+        stem = OUT_DIR / run_name  # per-run files, so a sweep does not overwrite itself
         test.assign(logit=test_logits, prob=test_p)[
             ["answer_id", "dataset", "slice", "label", "question_id", "generator", "n_words", "logit", "prob"]
         ].to_csv(f"{stem}_test_predictions.csv", index=False)
