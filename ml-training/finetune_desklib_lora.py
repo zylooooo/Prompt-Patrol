@@ -287,7 +287,10 @@ def main() -> None:
 
     setup_mlflow(MLFLOW_EXPERIMENT)
     with mlflow.start_run(run_name=run_name):
-        mlflow.set_tags({"owner": args.owner, "run_role": "train", "tuning_method": "lora",
+        # reporting.py drops run_role="smoke" from every table, so a pipeline check
+        # (capped train rows) can never be mistaken for a result
+        mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else "train",
+                         "tuning_method": "lora",
                          "model_family": "deberta", "data_mode": mode})
         mlflow.log_params({
             "base_model": "desklib/ai-text-detector-academic-v1.01", "data": "v0.1+spliced",
