@@ -8,9 +8,6 @@ since it's fine-tuned on academic writing - a closer domain match to short
 exam answers than a RAID-leaderboard-general model.
 
     python eval_desklib_zeroshot.py
-
-Needs the model weights (public, ~1.7GB) - downloaded automatically via
-huggingface_hub on first run, cached after that.
 """
 
 from __future__ import annotations

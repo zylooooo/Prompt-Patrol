@@ -8,9 +8,6 @@ uses for fine-tuned runs, reusing the same metrics.py functions.
 
     python eval_meld_zeroshot.py
     python eval_meld_zeroshot.py --target-fpr 0.05
-
-Needs the MELD repo weights (public, ~4.1GB) - downloaded automatically via
-huggingface_hub on first run, cached after that.
 """
 
 from __future__ import annotations
