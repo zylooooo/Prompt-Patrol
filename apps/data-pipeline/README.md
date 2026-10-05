@@ -4,7 +4,7 @@ Assembles the labelled corpus the detector is trained and evaluated on.
 Covers dataset ingest, profiling and cleaning for Mohler, SPRAG and
 EngSAF, question-level splits, the generation harness that produces the
 raw AI answers, the paraphrase and human-edit passes, the splicer that
-builds mixed-authorship documents, and the corpus build that turns
+builds spliced answers from a corpus version, and the corpus build that turns
 cleaned answers and harness runs into fine-tuning corpus versions.
 
 ## Setup
@@ -81,10 +81,10 @@ the question while the question has enough of them, taken in an order
 fixed by the question id. A rerun or resume polishes the same ones as
 long as the question file, the rewrite count and the order of the
 generator list stay the same. All three configs leave `rewrite`
-commented out, and the corpus build, splicer, paraphrase and
-human-edit passes all skip rewrites through `is_rewrite` in
-`app/harness/prompts.py`, so they only build on answers the model
-wrote itself.
+commented out, and the corpus build, paraphrase and human-edit passes
+all skip rewrites through `is_rewrite` in `app/harness/prompts.py`, so
+they only build on answers the model wrote itself. The splicer reads a
+corpus version, which holds no rewrites.
 
 ### Running it
 
@@ -159,7 +159,7 @@ Notes:
 - a generator that fails three calls in a row is abandoned for the rest
   of the run, so a dead endpoint or bad key cannot stall every remaining
   call. The run report then shows fewer requested calls than the plan.
-- The splicer links spliced documents to answer_id and question_id.
+- Spliced answers record both source answer ids and their question_id.
   Each question goes wholly to train, val or test, and every record
   follows its question there through question_id. Ids asking the same
   question, by identical text or as the twins listed in
@@ -256,31 +256,48 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id>
 
 ## Splicer
 
-Builds the mixed-authorship documents for the partial-AI class. Each
-document starts from an eligible human answer, and k of its n sentences
-are replaced, at their original positions, with sentences from one AI
-answer to the same question. Every sentence carries a human or ai label.
-No model calls, it only recombines answers that already exist.
+Builds spliced answers: a student answer with some of its sentences
+replaced, in place, by the first sentences of an AI answer to the same
+question. Any AI use counts as AI, so every spliced answer is labelled 1.
+The train and val rows teach the detector to flag answers that are only
+partly AI, and the test rows measure how well it catches them. No model
+calls, it only recombines answers a corpus version already holds.
 
-`app/splicer/config.yaml` sets the dataset and its human corpus, the
-harness output to draw from, the target AI fractions and the seed. Each
-build covers one dataset, so a SPRAG or EngSAF build also changes
-`dataset` and `human_corpus`. `ai_answers` holds a placeholder, so first
-point it at a run, such as `data/ai_runs/mohler-v3-20260930/answers.jsonl`,
-or pass it directly. Paths in the config and in `--ai-answers` are
-relative to `apps/data-pipeline`, though the splicer runs from inside
-`app/`:
+The splicer reads a built corpus version, so its cleanup, wrong-tier
+trim and partitions carry over. Train, val and test are each spliced
+only from their own rows, so a spliced test answer holds no sentence the
+detector trained on. Spliced answers are grouped by the share of their
+words that are AI into bands 25, 50 and 75, and `answers_per_band` sets
+how many each partition, dataset and band holds, split evenly across the
+models, with one student answer starting at most `max_base_uses` of them
+per band. In v0.1, train and val get about a third as many spliced
+answers as raw AI answers, and test gets 90 per dataset and band.
+`app/splicer/config.yaml` holds these settings. From inside `app/`:
 
 ```
-python -m splicer.build_spliced                # reads ai_answers from config.yaml
-python -m splicer.build_spliced --ai-answers data/ai_runs/mohler-v3-20260930/answers.jsonl   # or override it for one run
+python -m splicer.build_spliced                                    # reads corpus from config.yaml
+python -m splicer.build_spliced --corpus data/corpus/v0.1.parquet  # or name a version
 ```
 
-Output goes to `data/spliced/spliced_<dataset>.jsonl`, one record per
-document.
-The record schema is documented in `docs/spliced-schema.md`, and the
+Paths in `config.yaml` and in `--corpus` are relative to
+`apps/data-pipeline`, even though the command runs from inside `app/`.
+
+Output goes to `data/corpus/<version>-spliced.parquet` and
+`<version>-spliced_manifest.json`, next to the corpus. The build stops if
+a partition, dataset and band cannot be filled, naming it, and a failed
+build keeps the previous files. Publish the pair to
+`ml-training/data/splits/` the same way as the corpus version.
+`load_splits()` reads only the corpus version, so a run sees spliced
+answers only once ml-training merges them: append the train and val rows
+to the matching corpus partitions, and score the test rows as their own
+slice, apart from the corpus test set. Merging moves v0.1 train from 51%
+to 58% AI-labelled rows and val from 36% to 42%. The spliced file holds
+only label 1 but passes the `load_splits()` checks on its own, so never
+point `data.splits` at it alone. The columns are documented in `docs/spliced-schema.md`, and the
 segmenter validation evidence lives in `docs/segmentation_review_v1.md`
-to `v3`.
+to `v3`. The spliced test answers cluster heavily by question, so read
+the Reporting section of `docs/spliced-schema.md` before quoting
+detection rates.
 
 ## Corpus build
 
@@ -303,9 +320,10 @@ ml-training's `load_splits()` reads. No model calls.
   detector could learn that instead of the writing. Thinning also
   raises the ai share at full marks, which at half is already 1.1 to 1.3
   times the students', so going further trades one skew for another.
-  The paraphrase, human-edit and splicer passes read a run's
-  answers.jsonl, so a set meant to match a corpus version should keep
-  only the ai answer_ids found in that version's parquet.
+  The paraphrase and human-edit passes read a run's answers.jsonl, so a
+  set meant to match a corpus version should keep only the ai
+  answer_ids found in that version's parquet. The splicer reads the
+  corpus version itself.
 - Balance: in train, each question keeps at most as many human answers
   as it has ai answers, so no dataset is mostly human. Val and test keep every
   human answer, since they set and measure the false-positive rate.
