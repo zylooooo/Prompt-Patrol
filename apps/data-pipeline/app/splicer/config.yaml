@@ -1,9 +1,20 @@
-# Splicer config, pairs the human corpus with harness output
-human_corpus: data/cleaned/mohler_cleaned.parquet
-dataset: mohler        # id namespace, run once per dataset
-ai_answers: data/generated/REPLACE-WITH-RUN-ID/answers.jsonl   # the run to splice, set its run id or pass --ai-answers
-out_dir: data/spliced
+# Splicer config: spliced answers built from a built corpus version.
+# Paths are relative to apps/data-pipeline
+corpus: data/corpus/v0.1.parquet
+partitions: [train, val, test]   # each partition is spliced only from its own rows
 seed: 480
-target_fractions: [0.25, 0.5, 0.75]
-docs_per_fraction: 100
+# ranges of the AI word share, a spliced answer outside every range is not used
+bands:
+  25: [0.15, 0.35]
+  50: [0.40, 0.60]
+  75: [0.65, 0.85]
+# spliced answers per band, per partition and dataset, split evenly across the models
+# one number for every partition and dataset, a number per partition, or a number per partition and dataset
+# train and val hold about a third as many as their raw AI answers, spread over the three bands
+# and rounded to a multiple of six, one per model
+answers_per_band:
+  train: {engsaf: 30, mohler: 138, sprag: 102}
+  val: {engsaf: 6, mohler: 24, sprag: 18}
+  test: 90
+max_base_uses: 2                 # spliced answers one student answer may start, per band
 min_sentences: 2

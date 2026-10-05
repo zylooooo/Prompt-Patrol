@@ -1,14 +1,18 @@
-"""Build mixed-authorship documents from human and AI answers.
+"""Splice primitives for spliced answers: base eligibility, replacement, AI share and bands.
 
-Each document starts from an eligible human answer. k of its n sentences
-are replaced, at their original positions, with sentences from one AI
-answer to the same question. Every sentence carries a human or ai label,
-the document records both source answer ids, and the target and actual
-AI fractions. Deterministic for a fixed config and seed.
+A spliced answer starts from an eligible student answer. Sentences at
+chosen positions are replaced, in order, by the first sentences of an AI
+answer to the same question. Every sentence keeps its author, and the AI
+share counts words with the corpus word rule. Deterministic for a fixed
+seed.
 """
 
+import itertools
+import math
 import random
 import re
+
+from harness.generate import count_words
 
 # signals from docs/segmentation_review_v3.md: code fragments, notation
 # lists and ellipsis-heavy answers make bad splice bases
@@ -31,32 +35,67 @@ def is_eligible(sentences: list[str], min_sentences: int) -> bool:
     return True
 
 
-def splice_pair(human_sentences, ai_sentences, target_fraction, rng):
-    """Replace positions in the human answer with AI sentences.
+def splice_at(human_sentences, ai_sentences, positions):
+    """The human sentences with those at positions replaced, in order, by
+    the first len(positions) AI sentences. A prefix rather than a sample,
+    shuffled sentences read incoherently."""
+    chosen = set(positions)
+    donor = iter(ai_sentences[:len(chosen)])
+    return [
+        {"text": next(donor), "label": "ai"} if i in chosen else {"text": sentence, "label": "human"}
+        for i, sentence in enumerate(human_sentences)
+    ]
 
-    Returns (labelled_sentences, actual_fraction). k is clamped so the
-    result always mixes both authors. Returns None when the human answer
-    is too short to mix or the AI answer has too few sentences to fill
-    the chosen positions.
-    """
-    n = len(human_sentences)
-    if n < 2:
-        return None
-    k = max(1, min(n - 1, round(target_fraction * n)))
-    if len(ai_sentences) < k:
-        return None
-    positions = sorted(rng.sample(range(n), k))
-    # a prefix rather than a sample, shuffled sentences read incoherently
-    replacements = ai_sentences[:k]
-    labelled = []
-    replaced = 0
-    for i, sentence in enumerate(human_sentences):
-        if i in positions:
-            labelled.append({"text": replacements[replaced], "label": "ai"})
-            replaced += 1
-        else:
-            labelled.append({"text": sentence, "label": "human"})
-    return labelled, k / n
+
+def ai_share(labelled):
+    """Share of the words that are AI, by the corpus word rule."""
+    ai = sum(count_words(s["text"]) for s in labelled if s["label"] == "ai")
+    total = sum(count_words(s["text"]) for s in labelled)
+    return ai / total if total else 0.0
+
+
+def band_of(share, bands):
+    """The band whose closed range holds share, or None between bands."""
+    for band, (low, high) in sorted(bands.items()):
+        if low <= share <= high:
+            return band
+    return None
+
+
+def position_sets(n, k, rng, cap):
+    """Every set of k positions out of n, or cap distinct sets drawn with
+    rng when there are more, so a long answer stays cheap."""
+    if math.comb(n, k) <= cap:
+        return list(itertools.combinations(range(n), k))
+    drawn = set()
+    while len(drawn) < cap:
+        drawn.add(tuple(sorted(rng.sample(range(n), k))))
+    return sorted(drawn)
+
+
+def band_candidates(base_id, base_sentences, donor_id, donor_sentences, bands, seed, cap):
+    """One splice per band this base and donor can reach, as band to
+    (positions, labelled sentences, share). Position draws are seeded per
+    pair and the pick within a band per pair and band, so the result does
+    not depend on the order pairs are visited."""
+    n = len(base_sentences)
+    human_words = [count_words(s) for s in base_sentences]
+    ai_words = [count_words(s) for s in donor_sentences]
+    total = sum(human_words)
+    draw = random.Random(f"{seed}/positions/{base_id}/{donor_id}")
+    reached = {}
+    for k in range(1, min(n - 1, len(donor_sentences)) + 1):
+        added = sum(ai_words[:k])
+        for positions in position_sets(n, k, draw, cap):
+            share = added / (added + total - sum(human_words[p] for p in positions))
+            band = band_of(share, bands)
+            if band is not None:
+                reached.setdefault(band, []).append((positions, share))
+    picked = {}
+    for band, options in sorted(reached.items()):
+        positions, share = random.Random(f"{seed}/{band}/{base_id}/{donor_id}").choice(options)
+        picked[band] = (positions, splice_at(base_sentences, donor_sentences, positions), share)
+    return picked
 
 
 def make_rng(seed: int) -> random.Random:

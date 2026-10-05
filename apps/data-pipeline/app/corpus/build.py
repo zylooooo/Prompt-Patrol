@@ -317,7 +317,7 @@ def build(sources, seed=SPLIT_SEED, ratios=SPLIT_RATIOS, same_question=None, kee
         "prompt_templates": prompt_templates,
         "questions_without_ai_answers": uncovered,
         "same_question": twins_used,
-        # kept so the splicer can splice test questions only
+        # kept so the splicer can check each spliced question stays in its partition
         "question_partitions": dict(sorted(question_partitions.items())),
     }
     return corpus[COLUMNS], manifest
