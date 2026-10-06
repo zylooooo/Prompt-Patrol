@@ -8,9 +8,6 @@ since it's fine-tuned on academic writing - a closer domain match to short
 exam answers than a RAID-leaderboard-general model.
 
     python eval_desklib_zeroshot.py
-
-Needs the model weights (public, ~1.7GB) - downloaded automatically via
-huggingface_hub on first run, cached after that.
 """
 
 from __future__ import annotations
@@ -27,12 +24,12 @@ import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel, AutoTokenizer, PreTrainedModel
 
+from combined_data import load_combined, slice_flag_rates
 from metrics import evaluate, threshold_at_fpr
 from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
 
 DESKLIB_REPO = "desklib/ai-text-detector-academic-v1.01"
 MAX_LEN = 768  # desklib's own documented max_len
-SPLITS_PATH = Path(__file__).parent / "data" / "splits" / "v0.1.parquet"
 OUT_PATH = Path(__file__).parent / "outputs" / "desklib_zeroshot_results.json"
 MLFLOW_EXPERIMENT = "zeroshot-baselines"
 
@@ -125,14 +122,16 @@ def main() -> None:
                              "metrics.py's fixed project-wide HEADLINE_FPR")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
+    parser.add_argument("--no-spliced", action="store_true",
+                        help="score the raw v0.1 corpus only (the original baseline), "
+                             "without the spliced answers")
     args = parser.parse_args()
 
-    if not SPLITS_PATH.exists():
-        raise SystemExit(f"{SPLITS_PATH} not found - run `dvc pull` in ml-training/ first")
-
-    df = pd.read_parquet(SPLITS_PATH)
-    val = df[df["partition"] == "val"].reset_index(drop=True)
-    test = df[df["partition"] == "test"].reset_index(drop=True)
+    frames = load_combined(include_spliced=not args.no_spliced)
+    val, test = frames["val"], frames["test"]
+    data_version = "v0.1" if args.no_spliced else "v0.1+spliced"
+    run_suffix = "" if args.no_spliced else "-combined"
+    print(f"data: {data_version}")
     print(f"val: {len(val)} rows ({val['label'].mean():.1%} AI)")
     print(f"test: {len(test)} rows ({test['label'].mean():.1%} AI)")
 
@@ -140,11 +139,12 @@ def main() -> None:
     scorer = Scorer(device=args.device)
 
     setup_mlflow(MLFLOW_EXPERIMENT)
-    with mlflow.start_run(run_name="desklib-academic-zeroshot"):
+    with mlflow.start_run(run_name=f"desklib-academic-zeroshot{run_suffix}"):
         mlflow.set_tags({"owner": args.owner, "run_role": "eval", "tuning_method": "zeroshot"})
         mlflow.log_params({
             "model": DESKLIB_REPO,
             "target_fpr": args.target_fpr,
+            "data": data_version,
             "val_n": len(val),
             "test_n": len(test),
         })
@@ -165,19 +165,28 @@ def main() -> None:
         for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
             print(f"  {key}: {results[key]:.4f}")
 
+        slices = slice_flag_rates(test, test_probs, threshold)
+        print("\n  per slice (flag rate at the frozen threshold; human = FPR, rest = TPR):")
+        for row in slices:
+            print(f"    {row['slice']:<11} n={row['n']:<5} {row['kind']}={row['flag_rate']:.3f}")
+            mlflow.log_metric(f"test/slice_{row['slice'].replace('-', '_')}_flag_rate", row["flag_rate"])
+
         payload = {
             "model": f"desklib academic (zero-shot, {DESKLIB_REPO})",
+            "data": data_version,
             "target_fpr": args.target_fpr,
             "threshold": threshold,
             "val_n": len(val),
             "test_n": len(test),
             "results": {k: float(v) for k, v in results.items()},
+            "slices": slices,
         }
         log_dict_artifact(payload, "zeroshot_results.json")
 
-        OUT_PATH.parent.mkdir(exist_ok=True)
-        OUT_PATH.write_text(json.dumps(payload, indent=2))
-        print(f"\nWrote {OUT_PATH}")
+        out_path = OUT_PATH.with_name(f"{OUT_PATH.stem}{run_suffix.replace('-', '_')}.json")
+        out_path.parent.mkdir(exist_ok=True)
+        out_path.write_text(json.dumps(payload, indent=2))
+        print(f"\nWrote {out_path}")
         print(f"MLflow run: {mlflow.active_run().info.run_id}")
 
 
