@@ -254,6 +254,34 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id>
    `build_report.json`. That repo is not the team store. Shared data
    lives in DVC on DagsHub, see Corpus build.
 
+## Attaching styles to a corpus version
+
+`app/corpus/attach_styles.py` turns the paraphrase and human-edit output
+into rows ml-training can read. Both passes read a harness run, so they hold
+answers the corpus version dropped (keep, floor, train cap). The script
+keeps only records whose `source_answer_id` is an AI answer in the corpus
+version, gives each the partition, question_id, dataset and tier of that
+source, so a rewrite of a test answer stays in test, and cleans the text
+with `clean_text`. Answers under the word floor are dropped. From inside
+`app/`:
+
+```
+python -m corpus.attach_styles --style paraphrased --corpus ../../../ml-training/data/splits/v0.1.parquet \
+    --source ../data/paraphrased/<mohler run>/paraphrased.jsonl \
+    --source ../data/paraphrased/<sprag run>/paraphrased.jsonl \
+    --source ../data/paraphrased/<engsaf run>/paraphrased.jsonl
+python -m corpus.attach_styles --style human_edited --corpus ../../../ml-training/data/splits/v0.1.parquet \
+    --source ../data/human_edit/simulated/<run>/human_edited.jsonl
+```
+
+Output goes next to the corpus as `<version>-paraphrased.parquet` or
+`<version>-human_edited.parquet` with a manifest. Rows follow the corpus
+column contract plus `style` (`paraphrased-light`, `paraphrased-heavy`,
+`human_edited-genuine`, `human_edited-simulated`), `source_answer_id` and the
+style's own fields. Like the spliced file they hold only label 1, so
+ml-training appends them to a corpus version and never reads them alone.
+Publish them the same way as the corpus version.
+
 ## Splicer
 
 Builds spliced answers: a student answer with some of its sentences
