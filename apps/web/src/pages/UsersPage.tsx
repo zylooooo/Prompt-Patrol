@@ -177,8 +177,11 @@ export default function UsersPage() {
       );
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
+        // Only an active or deactivated row blocks a create, so "all" shows it.
+        setQuery(email.trim());
+        setFilter("all");
         setEmailError(
-          "That email already has an account. Find them in the list below.",
+          "That email already has an account. It's shown in the list below.",
         );
         return;
       }
