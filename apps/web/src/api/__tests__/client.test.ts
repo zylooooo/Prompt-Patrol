@@ -20,37 +20,10 @@ beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("apiRequest — reading the server's account of a failure", () => {
-  it("lifts the code out of a structured FastAPI detail", async () => {
-    vi.stubGlobal(
-      "fetch",
-      respondWith(401, {
-        detail: { code: "session_expired", message: "Idle limit passed." },
-      }),
-    );
-
-    const error = await apiRequest("/api/auth/me").catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).status).toBe(401);
-    expect((error as ApiError).code).toBe("session_expired");
-    expect((error as ApiError).message).toBe("Idle limit passed.");
-  });
-
-  it("reads a plain string detail", async () => {
-    vi.stubGlobal("fetch", respondWith(403, { detail: "Insufficient role" }));
-
-    const error = (await apiRequest("/api/users").catch(
-      (e: unknown) => e,
-    )) as ApiError;
-
-    expect(error.message).toBe("Insufficient role");
-    expect(error.code).toBeNull();
-  });
-
-  it("reads the flat error shape the checks routes return", async () => {
-    // That shape calls its code `error`, not `code`. This test used to assert
-    // only the message, so the code arriving as null went unnoticed until the
-    // check form needed it to tell a timeout from an outage.
+  it("reads the code and message from the Error body", async () => {
+    // Every route answers with this shape (contract 0.23.0). The code is
+    // called `error`; asserting only the message once let it arrive as null
+    // unnoticed until the check form needed it to tell a timeout from an outage.
     vi.stubGlobal(
       "fetch",
       respondWith(503, {
@@ -64,8 +37,39 @@ describe("apiRequest — reading the server's account of a failure", () => {
       (e: unknown) => e,
     )) as ApiError;
 
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(503);
     expect(error.message).toBe("The detector is temporarily unavailable.");
     expect(error.code).toBe("detector_unavailable");
+  });
+
+  it("carries a 401's session code, which picks the signed-out reason", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith(401, {
+        error: "session_expired",
+        message: "This session passed its inactivity limit.",
+        request_id: "req-2",
+      }),
+    );
+
+    const error = (await apiRequest("/api/auth/me").catch(
+      (e: unknown) => e,
+    )) as ApiError;
+
+    expect(error.code).toBe("session_expired");
+  });
+
+  it("falls back to a generic message for a body that is not an Error", async () => {
+    // e.g. FastAPI's old `{detail}` shape, or a proxy's own JSON error page.
+    vi.stubGlobal("fetch", respondWith(403, { detail: "Insufficient role" }));
+
+    const error = (await apiRequest("/api/users").catch(
+      (e: unknown) => e,
+    )) as ApiError;
+
+    expect(error.message).toBe("Request failed with status 403");
+    expect(error.code).toBeNull();
   });
 
   it("survives a body that is not JSON at all", async () => {

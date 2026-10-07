@@ -147,7 +147,10 @@ describe("getCapabilities", () => {
   it("raises rather than inventing a capability document", async () => {
     // The badge decides what to show from whether this resolved. Returning a
     // default here would state a model version nobody served.
-    route(() => ({ detail: "Insufficient role" }), 403);
+    route(
+      () => ({ error: "forbidden", message: "Insufficient role", request_id: "r" }),
+      403,
+    );
 
     await expect(getCapabilities()).rejects.toBeInstanceOf(ApiError);
   });
