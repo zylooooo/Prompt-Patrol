@@ -89,14 +89,6 @@ async def create_batch_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Nothing was uploaded for this upload_key. Upload the file again.",
         )
-    if batch.row_total == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "no_valid_rows",
-                "message": "Every row in the file failed validation. Nothing was submitted.",
-            },
-        )
     return BatchResponse.of(batch)
 
 

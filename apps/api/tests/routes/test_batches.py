@@ -128,6 +128,26 @@ async def test_get_progress_includes_failure_reasons(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_a_file_with_no_valid_rows_is_still_accepted_with_its_reasons(client, db_session):
+    # A 400 here would replace every per-row reason with one message. DECISION LOG [0.24.0].
+    user = await _signed_in_instructor(client, db_session)
+
+    with (
+        patch("services.batches_service.download_object", return_value="external_ref,answer_text\nstu-1,too short\n"),
+        patch("services.batches_service.enqueue_row") as enqueue,
+    ):
+        create_response = await client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
+        )
+
+    assert create_response.status_code == 202
+    enqueue.assert_not_called()
+    progress = (await client.get(f"/api/batches/{create_response.json()['batch_id']}")).json()
+    assert progress["row_total"] == progress["failed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_get_progress_for_unknown_batch_returns_404(client, db_session):
     await _signed_in_instructor(client, db_session)
     response = await client.get(f"/api/batches/{uuid.uuid4()}")
