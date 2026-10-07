@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.23.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.24.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,16 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.24.0 Three sections brought in line with the code, which is right in
+#          each case. GET /api/users: an instructor asking for a `role`
+#          outside their scope gets `403`, not an empty page, and a bad
+#          `cursor` is `400`. POST /api/batches: a file whose every row
+#          fails validation is still `202` with one `batch_row_failures` row
+#          per row; `no_valid_rows` is removed from `Error.error`, since no
+#          route returned it. /api/auth/callback: every outcome is a `303`
+#          redirect (`/login?error=<code>` on failure), never a `403`/`502`
+#          body; `returnTo` is removed from /api/auth/login, which never
+#          implemented it. See DECISION LOG [0.24.0].
 #   0.23.0 Every error response is now the `Error` schema, from every route.
 #          Previously only POST /api/checks returned it; other routes returned
 #          FastAPI's `{"detail": ...}`, and 401s `{"detail": {code, message}}`.
@@ -632,26 +642,11 @@ paths:
 
         Scopes requested: `openid profile email`. Deliberately **not**
         `offline_access` — no refresh token is wanted or stored.
-      parameters:
-        - name: returnTo
-          in: query
-          required: false
-          description: |
-            Path to return to after successful login, for deep links.
-
-            **MUST** be validated server-side as a site-relative path: it has
-            to begin with a single `/`, must not begin with `//`, and must not
-            contain a scheme. Anything else is rejected with 400.
-
-            The regex below is documentation, not enforcement. Unvalidated,
-            this parameter is an open redirect on an authentication endpoint —
-            a credible phishing primitive against instructors, and the most
-            likely security defect in this module.
-          schema:
-            type: string
-            pattern: '^\/(?!\/).*$'
-            maxLength: 512
-            example: /history?page=2
+        There is no `returnTo` deep-link parameter: login always lands on
+        `/`. If one is added, it must be validated server-side as a
+        site-relative path (one leading `/`, not `//`, no scheme) — unchecked,
+        it is an open redirect on an authentication endpoint. See DECISION LOG
+        [0.24.0].
       responses:
         "302":
           description: Redirect to the Auth0 authorization endpoint.
@@ -678,7 +673,8 @@ paths:
         a confidential client.
 
         Server-side sequence:
-        1. Validate `state` against the stored transaction. Mismatch → 403.
+        1. Validate `state` against the stored transaction. Mismatch →
+           `/login?error=sign_in_failed` (see responses).
         2. Exchange `code` + `code_verifier` + client secret at Auth0's
            `/oauth/token` endpoint. *(egress required)*
         3. Fetch JWKS on cache miss or `kid` rotation. *(egress required)*
@@ -712,8 +708,8 @@ paths:
         | Unprovisioned | no row for the email at all | **Reject** — `not_provisioned` |
 
         On rejection: **no user row is created/modified and no session is
-        issued.** Redirect to the SPA's `not_provisioned`, `deactivated` or
-        `deleted` route accordingly — these are deliberately distinguishable
+        issued.** Redirect to `/login?error=not_provisioned`, `deactivated` or
+        `deleted` accordingly — these are deliberately distinguishable
         in the response and in the audit log (never had access, vs. access
         was paused, vs. the account was removed), even if you choose to show
         the end user the same generic front-end copy for all. Repeated
@@ -740,17 +736,29 @@ paths:
           in: query
           schema: { type: string }
       responses:
-        "302":
+        "303":
           description: |
-            On success: session cookie set, redirect to the SPA (to `returnTo`
-            if supplied and validated, else `/`).
+            Every outcome is a redirect, never an error body: this is a
+            top-level browser navigation, so a JSON `403`/`502` would strand
+            the user on a raw error page instead of the login screen that can
+            explain it. `Location` by outcome:
 
-            On rejected provisioning: **no cookie**, redirect to the SPA
-            `not_provisioned` route.
+            | Outcome | Cookie | `Location` |
+            |---------|--------|------------|
+            | Success | set | the SPA root, `/` |
+            | User cancelled at Auth0 (`error=access_denied`) | none | `/login?error=sign_in_cancelled` |
+            | Any other Auth0 error, a `state` mismatch/missing/expired, or a failed code exchange | none | `/login?error=sign_in_failed` |
+            | Rejected provisioning (Step 6) | none | Auth0's `/v2/logout`, with `returnTo` = `/login?error=not_provisioned`, `deactivated` or `deleted` |
 
-            On an Auth0-side error: redirect to the SPA error route with a
-            safe, non-reflected error code. Never render `error_description`
-            back to the browser unescaped.
+            A rejected login goes through Auth0's logout so the next attempt
+            is not silently re-admitted on Auth0's own session. The `error`
+            values are fixed codes, never reflected from Auth0: Auth0's
+            `error_description` is logged, never sent to the browser.
+
+            Known gap: if Auth0's token endpoint is *unreachable* (a network
+            failure, not an error response), the exception is unhandled and
+            the browser gets `500 internal_error` as JSON instead of a
+            `sign_in_failed` redirect.
           headers:
             Set-Cookie:
               schema:
@@ -758,18 +766,6 @@ paths:
                 example: __Host-pp_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400
             Location:
               schema: { type: string, format: uri }
-        "403":
-          description: |
-            `state` mismatch, missing, or expired. Indicates CSRF against the
-            redirect URI or a stale browser tab. Logged as a security event.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "502":
-          description: Auth0 token endpoint unreachable or returned an error.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------------------------------------------------------------------
   /api/auth/session:
@@ -1106,14 +1102,17 @@ paths:
           - `teaching_assistant` gets `403` — this is a role-level floor
             gate for TAs, not an object-level scoping question.
 
-        `role` is a *filter* on an already-scoped result set, not an
-        authorization input — same filter-vs-create asymmetry as elsewhere
-        in this contract. For an `instructor` caller, the effective scope is
-        always `role=teaching_assistant AND supervised by <caller>`
-        regardless of what `role` value is passed; requesting a `role` value
-        outside that scope silently returns an empty page rather than
-        `403`, so there's nothing to enumerate about whether e.g. another
-        instructor's account exists.
+        `role` narrows an already-scoped result set. For an `instructor`
+        caller the scope is always `role=teaching_assistant AND supervised
+        by <caller>`; `role=teaching_assistant` or no `role` returns it, and
+        any other `role` value is `403`. This is **not** the silent-override
+        rule that `actor_id` follows on `GET /api/checks`: that rule exists
+        because an id names a record, and refusing it would confirm the
+        record exists. A `role` value names no record — the `403` depends
+        only on the caller's role and the value asked for, never on what is
+        in the table, so it reveals nothing. An empty page would instead
+        read as "you have no such users" when the truth is "you may not ask
+        that". See DECISION LOG [0.24.0].
       parameters:
         - name: role
           in: query
@@ -1157,10 +1156,17 @@ paths:
                   next_cursor:
                     type: string
                     nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            A `teaching_assistant` caller, or an `instructor` passing a
+            `role` other than `teaching_assistant`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/users/teaching-assistants:
     post:
@@ -2042,6 +2048,12 @@ paths:
         Returns `202` immediately; `Batch.row_total` reflects the file's
         actual row count, not yet how many have been scored. Poll
         `GET /api/batches/{id}` for progress.
+
+        A file in which no row is valid is still `202`, not `400`: the batch
+        is created with every row in `batch_row_failures` and nothing
+        enqueued, so the instructor sees the reason for each row. An empty
+        file or a missing required column is recorded the same way, as a
+        single failure with `row_number` 0. See DECISION LOG [0.24.0].
       requestBody:
         required: true
         content:
@@ -2055,11 +2067,10 @@ paths:
               schema: { $ref: "#/components/schemas/Batch" }
         "400":
           description: |
-            Malformed body, unknown field, `upload_key` not found in S3, or
-            every row in the file failed validation (`no_valid_rows`) — the
-            one case where a bad file is rejected outright rather than
-            producing `batch_row_failures` rows, since there would be nothing
-            to have created a batch for.
+            Malformed body, unknown field, an unknown `strictness`, an
+            `upload_key` not issued to this caller, or nothing uploaded to
+            `upload_key` (the browser's PUT to S3 failed or expired). Never
+            for the file's contents — see the description.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2982,8 +2993,6 @@ components:
             - question_text_required # 400 — served detector scores on
               # (question, answer) pairs and question_text
               # was omitted. See GET /api/detector. (checks)
-            - no_valid_rows # 400 — every row in an uploaded batch CSV
-              # failed validation (batches)
             - upstream_idp_error # 502 — an Auth0 Management API call
               # failed; nothing was saved (users)
             - detector_unavailable # 503 — detector service down (checks)
@@ -3050,6 +3059,53 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.24.0] Three places where the code was right and the contract was not.
+#
+#   PROBLEM. An audit of the contract against the code found three
+#   sections that described behaviour the code had deliberately not built.
+#   In each, the code's behaviour holds up better than the text.
+#
+#   1. GET /api/users, instructor `role` filter. The contract said a `role`
+#      outside an instructor's scope returns an empty page, citing the
+#      filter-vs-create asymmetry. The code returns `403`, deliberately
+#      (`test_instructor_role_filter_outside_scope_is_refused`). The
+#      asymmetry exists to stop a filter confirming that a *record*
+#      exists — `actor_id` names one. A `role` value names none: the `403`
+#      is a function of the caller's role and the value asked for, so
+#      nothing is enumerable. The empty page had a real cost: it reads as
+#      "no such users" and hides a scoping mistake.
+#      DECISION: document the `403`. The silent override stays the rule
+#      for id-valued filters; it is not a rule for every filter.
+#
+#   2. POST /api/batches with no valid row. The contract said `400
+#      no_valid_rows`. The code returns `202` with one `batch_row_failures`
+#      row per row; its `no_valid_rows` branch tested `row_total == 0`,
+#      which never happens — an empty file or missing column is itself
+#      recorded as a row-0 failure. A `400` would replace every per-row
+#      reason with one message, which is the information the instructor
+#      needs to fix the file. DECISION: document the `202`, delete the dead
+#      branch, remove `no_valid_rows` from `Error.error`.
+#
+#   3. /api/auth/callback. The contract said `302`, `403` on a `state`
+#      mismatch and `502` when Auth0 fails, and offered a `returnTo` deep
+#      link on /api/auth/login. The code answers every outcome with a
+#      `303` to the SPA, `/login?error=<code>` on failure, and has no
+#      `returnTo`. A JSON error on a top-level navigation strands the user
+#      on a raw page; the login screen can explain the failure. `returnTo`
+#      was never implemented and nothing sends it; documenting an
+#      unvalidated redirect parameter invites building it carelessly.
+#      DECISION: document the redirects and their codes; remove `returnTo`,
+#      keeping its validation rule in the login description for whoever
+#      adds it.
+#
+#   OPTIONS REJECTED. Changing the code to match the text in each case —
+#   for (1) and (2) it makes the product worse, for (3) it adds an open-
+#   redirect surface no screen needs.
+#
+#   KNOWN GAP, not fixed here: an *unreachable* Auth0 token endpoint raises
+#   a network exception the callback does not catch, so the browser gets a
+#   `500` JSON body instead of a `sign_in_failed` redirect.
 #
 # [0.23.0] One error shape; validation is 400, not 422.
 #
