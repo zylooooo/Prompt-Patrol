@@ -145,19 +145,6 @@ openapi: 3.0.3
 #          branch on the Change Password template, instead of a second
 #          endpoint. No wire-format change. See DECISION LOG [0.10.0].
 #   0.9.0  BREAKING. POST /api/users no longer returns `activation_url` -
-#          static server-declared config (requires_question_text, length
-#          limits, strictness levels) and has no live-detector-dependent
-#          failure mode to report. Detector reachability is already
-#          GET /api/detector/status's job, and that endpoint is deliberately
-#          always 200. See DECISION LOG [0.5.9].
-#   0.5.8  CheckSummary (the GET /api/checks list row) widened: added
-#          raw_score, strictness_applied (flattened out of detector, same as
-#          model_version already was), and batch_file_name. Reverted the
-#          answer_preview truncation back to full answer_text. All of these
-#          exist so the SPA's history table doesn't regress on reload
-#          relative to what it shows right after a submission. See DECISION
-#          LOG [0.5.8].
-#   0.9.0  BREAKING. POST /api/users no longer returns `activation_url` -
 #          `UserProvisionResponse` is retired and the endpoint returns a
 #          plain `User`. Auth0 now emails the invitee their own
 #          password-set link directly instead of handing one back for the
@@ -208,6 +195,19 @@ openapi: 3.0.3
 #          claim-replay mechanism is dropped — Auth0's logout endpoint
 #          (`/v2/logout?client_id=...&returnTo=...`) takes no per-user hint,
 #          unlike Entra's `end_session_endpoint`. See DECISION LOG [0.6.0].
+#   0.5.9  Removed the 503 response from GET /api/detector. It answers with
+#          static server-declared config (requires_question_text, length
+#          limits, strictness levels) and has no live-detector-dependent
+#          failure mode to report. Detector reachability is already
+#          GET /api/detector/status's job, and that endpoint is deliberately
+#          always 200. See DECISION LOG [0.5.9].
+#   0.5.8  CheckSummary (the GET /api/checks list row) widened: added
+#          raw_score, strictness_applied (flattened out of detector, same as
+#          model_version already was), and batch_file_name. Reverted the
+#          answer_preview truncation back to full answer_text. All of these
+#          exist so the SPA's history table doesn't regress on reload
+#          relative to what it shows right after a submission. See DECISION
+#          LOG [0.5.8].
 #   0.5.7  POST /api/checks refuses a teaching_assistant with no supervisor
 #          (`403`). The refusal existed only in the SPA, which decides it from
 #          the session payload it already holds — so the rule was a courtesy,
@@ -318,7 +318,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.8.0
+  version: 0.25.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -3600,6 +3600,7 @@ components:
 #   equal to `failures.length`) rather than removed, since existing callers
 #   read it as a plain integer. No new endpoint, no new polling.
 #
+# [0.15.0] Batch cancellation now actively drains the queue too.
 #
 #   PROBLEM. [0.14.0] deliberately chose not to touch SQS on cancel, relying
 #   on the Worker's one-at-a-time poll loop to eventually reach and skip a
@@ -3658,6 +3659,9 @@ components:
 #   loop doesn't delete is simply left as-is.
 #
 # [0.14.0] Batch cancellation: a flag the Worker checks, not a queue purge.
+#
+#   SUPERSEDED by [0.15.0]: cancel now also drains the batch's own queued
+#   messages. The Worker's `cancelled_at` check below remains the backstop.
 #
 #   PROBLEM. There was no way to stop a batch mid-run — noticed while
 #   fixing the SPA not being able to find/resume an in-progress batch across
@@ -3832,6 +3836,9 @@ components:
 #
 # [0.8.0] Provisioning now also creates the Auth0 credential.
 #
+#   SUPERSEDED in part by [0.9.0]: the credential is still created here, but
+#   Auth0 emails the invitee directly; `activation_url` is no longer returned.
+#
 #   PROBLEM. [0.7.0] closed self-service signup (Disable Sign Ups), which was
 #   the right call for security but had an unnoticed side effect:
 #   provisioning a `users` row used to be sufficient because the *other*
@@ -3978,6 +3985,9 @@ components:
 #
 # [0.6.0] Identity provider swapped from Entra ID to Auth0.
 #
+#   SUPERSEDED in part by [0.7.0]: Auth0 stays, but the Microsoft social
+#   connection was replaced by a Database (email/password) connection.
+#
 #   PROBLEM. The Entra ID integration required registering the app in the
 #   university's own Entra tenant (app registration + admin consent). The
 #   sponsor could not get that approval — a capstone project has no path to
@@ -4088,6 +4098,9 @@ components:
 #
 # [0.5.6] `provisioned_by` is the supervision edge, and it is settable.
 #
+#   SUPERSEDED by [0.21.0]: supervision is the many-to-many `supervisions`
+#   table; `provisioned_by` only records who created the account.
+#
 #   PROBLEM. The SPA held "who supervises whom" in a localStorage table of
 #   instructor->assistant links, and every screen that asked the question read
 #   it from there. The database's only supervision edge is `provisioned_by` on
@@ -4136,6 +4149,72 @@ components:
 #   Unassigning revokes sessions (see the endpoint). Assigning is admin-only,
 #   releasing-your-own is not — an instructor releasing an assistant can only
 #   ever give access away, never take it, so it needs no admin.
+#
+# [0.5.5] GET /api/users (list) widened from root_admin-only to
+#   instructor-delegated (own TAs only).
+#
+#   SUPERSEDED by [0.21.0] and [0.24.0]: an instructor sees the TAs they
+#   currently supervise, not those they provisioned, and any other `role`
+#   filter is `403`, not an empty page.
+#
+#   [0.4.0]'s original text explicitly rejected this: "an instructor
+#   enumerating other instructors' accounts is a privilege-escalation-
+#   adjacent surface... even though instructors have narrow delegation
+#   authority over TA provisioning." That reasoning is still correct as far
+#   as it goes — it's about instructors seeing *other instructors*. But it
+#   conflated that with instructors seeing *their own provisioned TAs*,
+#   which is a strictly narrower ask: an instructor can already list any one
+#   of their own TAs individually via `GET /api/users/{id}` (object-level
+#   visibility, [0.5.2]) and can already act on them via `POST /api/users`,
+#   `DELETE /api/users/{id}`, and `POST /api/users/{id}/restore` ([0.5.4]).
+#   Blocking the *list* view of exactly the same rows an instructor can
+#   already see one-by-one and already has delegated authority over doesn't
+#   add a real privacy boundary, it just forces an instructor-facing UI to
+#   fan out N individual `GET /api/users/{id}` calls to reconstruct a list
+#   the API could return directly. The original privilege-escalation concern
+#   is preserved in full: instructors still cannot see other instructors,
+#   root_admin rows, or TAs provisioned by someone else, at any granularity.
+#
+#   `role` filter is force-scoped rather than rejected for instructor
+#   callers, consistent with the filter-vs-create asymmetry already
+#   established for `actor_id` on `GET /api/checks` ([0.3.0] family) — a
+#   `403` on an out-of-scope `role` value would confirm to the caller that
+#   rows of that role/owner exist, which is exactly the enumeration oracle
+#   the asymmetry rule exists to avoid.
+#
+# [0.5.4] DELETE /api/users/{id} and POST /api/users/{id}/restore widened
+#   from root_admin-only to instructor delegation.
+#
+#   SUPERSEDED by [0.18.0]: accounts have a three-state `status`, with
+#   deactivate/reactivate replacing `restore`, and deletion is root_admin-only.
+#
+#   Both endpoints originally inherited root_admin-only from the same
+#   copy-paste lineage flagged in DECISION LOG [0.5.2] (see that entry for
+#   the analogous GET /api/users/{id} history). In practice the
+#   already-implemented soft_delete_user service enforced instructor
+#   delegation over the instructor's own teaching_assistant rows from the
+#   start — the root_admin-only text here was already stale against the
+#   shipped code, not a deliberate restriction. Restore is documented as the
+#   mirror of delete (see the module summary in the CHANGELOG), so the two
+#   should not diverge in delegation scope: an instructor who can delete
+#   their own TA can also undo that action. Widening both to the same
+#   delegation chain as POST /api/users keeps create/delete/restore
+#   internally consistent instead of restore/delete being stricter than
+#   provisioning for no stated reason.
+#
+#   A `root_admin` target is rejected on restore regardless of actor. There
+#   is exactly one `root_admin` row (seed-migration-only, per POST
+#   /api/users's existing rule), and DELETE was never restricted from
+#   targeting it — closing that gap here rather than leaving a
+#   theoretically-reachable "restore the one root_admin" path unguarded.
+#
+#   POST, not PATCH: restore has no client-supplied representation to
+#   partially apply — it's a state-transition command ("reactivate"), audited
+#   as its own action the same way DELETE and POST /api/users are, not a
+#   field edit like PATCH .../role's `{new_role}` body. There is no generic
+#   PATCH /api/users/{id} in this contract for arbitrary field updates;
+#   PATCH is reserved for the one endpoint that actually receives a partial
+#   representation to apply.
 #
 # [0.5.3] In-app session resolution moves from middleware to Depends().
 #
@@ -4336,66 +4415,9 @@ components:
 #   the frontend can disable the button. Revisit only if batch retry semantics
 #   force it. Noted so it is a decision, not an oversight.
 #
-# [0.5.5] GET /api/users (list) widened from root_admin-only to
-#   instructor-delegated (own TAs only).
-#
-#   [0.4.0]'s original text explicitly rejected this: "an instructor
-#   enumerating other instructors' accounts is a privilege-escalation-
-#   adjacent surface... even though instructors have narrow delegation
-#   authority over TA provisioning." That reasoning is still correct as far
-#   as it goes — it's about instructors seeing *other instructors*. But it
-#   conflated that with instructors seeing *their own provisioned TAs*,
-#   which is a strictly narrower ask: an instructor can already list any one
-#   of their own TAs individually via `GET /api/users/{id}` (object-level
-#   visibility, [0.5.2]) and can already act on them via `POST /api/users`,
-#   `DELETE /api/users/{id}`, and `POST /api/users/{id}/restore` ([0.5.4]).
-#   Blocking the *list* view of exactly the same rows an instructor can
-#   already see one-by-one and already has delegated authority over doesn't
-#   add a real privacy boundary, it just forces an instructor-facing UI to
-#   fan out N individual `GET /api/users/{id}` calls to reconstruct a list
-#   the API could return directly. The original privilege-escalation concern
-#   is preserved in full: instructors still cannot see other instructors,
-#   root_admin rows, or TAs provisioned by someone else, at any granularity.
-#
-#   `role` filter is force-scoped rather than rejected for instructor
-#   callers, consistent with the filter-vs-create asymmetry already
-#   established for `actor_id` on `GET /api/checks` ([0.3.0] family) — a
-#   `403` on an out-of-scope `role` value would confirm to the caller that
-#   rows of that role/owner exist, which is exactly the enumeration oracle
-#   the asymmetry rule exists to avoid.
-#
-# [0.5.4] DELETE /api/users/{id} and POST /api/users/{id}/restore widened
-#   from root_admin-only to instructor delegation.
-#
-#   Both endpoints originally inherited root_admin-only from the same
-#   copy-paste lineage flagged in DECISION LOG [0.5.2] (see that entry for
-#   the analogous GET /api/users/{id} history). In practice the
-#   already-implemented soft_delete_user service enforced instructor
-#   delegation over the instructor's own teaching_assistant rows from the
-#   start — the root_admin-only text here was already stale against the
-#   shipped code, not a deliberate restriction. Restore is documented as the
-#   mirror of delete (see the module summary in the CHANGELOG), so the two
-#   should not diverge in delegation scope: an instructor who can delete
-#   their own TA can also undo that action. Widening both to the same
-#   delegation chain as POST /api/users keeps create/delete/restore
-#   internally consistent instead of restore/delete being stricter than
-#   provisioning for no stated reason.
-#
-#   A `root_admin` target is rejected on restore regardless of actor. There
-#   is exactly one `root_admin` row (seed-migration-only, per POST
-#   /api/users's existing rule), and DELETE was never restricted from
-#   targeting it — closing that gap here rather than leaving a
-#   theoretically-reachable "restore the one root_admin" path unguarded.
-#
-#   POST, not PATCH: restore has no client-supplied representation to
-#   partially apply — it's a state-transition command ("reactivate"), audited
-#   as its own action the same way DELETE and POST /api/users are, not a
-#   field edit like PATCH .../role's `{new_role}` body. There is no generic
-#   PATCH /api/users/{id} in this contract for arbitrary field updates;
-#   PATCH is reserved for the one endpoint that actually receives a partial
-#   representation to apply.
-#
 # [0.4.0] Deletion is a timestamp, not a status enum.
+#
+#   SUPERSEDED by [0.18.0]: `users` now has a three-state `status`.
 #
 #   Considered a `status: pending | active | deactivated` field on `users`.
 #   Rejected in favour of the existing `deleted_at` + `first_login_at NULL`
@@ -4409,6 +4431,10 @@ components:
 # [0.4.0] DELETE /api/users/{id} revokes ALL sessions, immediately, via an
 #   internal call.
 #
+#   SUPERSEDED in part by [0.25.0]: revocation is immediate because the app
+#   checks the session on every request, not because of a gateway's
+#   `result_ttl_seconds`. There is no gateway yet.
+#
 #   sessions.revoke_all_for_user(user_id) is a cross-module call, not a REST
 #   endpoint — mirrors resolve_or_reject's existing precedent of the two
 #   modules calling each other in-process rather than over HTTP. Immediate
@@ -4417,6 +4443,10 @@ components:
 #
 # [0.4.0] OPEN — delegation authority for instructor -> teaching_assistant
 #   provisioning.
+#
+#   RESOLVED by [0.21.0]: delegation is live. Instructors add teaching
+#   assistants by email (`POST /api/users/teaching-assistants`), which creates
+#   or links the account and the supervision.
 #
 #   POST /api/users encodes the full delegation chain from [0.3.0]'s
 #   provisioning model, including instructor's authority to provision
@@ -4475,6 +4505,9 @@ components:
 #   for a tool that adjudicates academic integrity.
 #
 # [0.3.0] Tenant-scoped authority, not /common.
+#   SUPERSEDED by [0.6.0]: there is no Entra tenant. Sign-in is Auth0's
+#   invite-only Database connection, and login matches on `auth0_sub`.
+#
 #   Provisioning matches on email at first login. Under `/common`, a personal
 #   Microsoft account with a colliding address could claim a provisioned slot
 #   before the intended user's first login. Tenant-scoping closes this;
@@ -4499,6 +4532,7 @@ components:
 #        already-bounded risk is a bad trade.
 #     4. Hidden-iframe delivery degrades under third-party cookie blocking.
 #
+#   SUPERSEDED by [0.6.0]: the column was dropped with Entra.
 #   `sessions.entra_sid` is RETAINED — it costs nothing, enables correlation
 #   with Entra sign-in logs during an investigation, and makes reinstating the
 #   endpoint a ~20-line change if the sponsor asks for SSO behaviour.
