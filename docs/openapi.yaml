@@ -26,7 +26,8 @@ openapi: 3.0.3
 #          per row; `no_valid_rows` is removed from `Error.error`, since no
 #          route returned it. /api/auth/callback: every outcome is a `303`
 #          redirect (`/login?error=<code>` on failure), never a `403`/`502`
-#          body; `returnTo` is removed from /api/auth/login, which never
+#          body, and an unreachable Auth0 now redirects too instead of
+#          failing `500`; `returnTo` is removed from /api/auth/login, which never
 #          implemented it. See DECISION LOG [0.24.0].
 #   0.23.0 Every error response is now the `Error` schema, from every route.
 #          Previously only POST /api/checks returned it; other routes returned
@@ -747,18 +748,13 @@ paths:
             |---------|--------|------------|
             | Success | set | the SPA root, `/` |
             | User cancelled at Auth0 (`error=access_denied`) | none | `/login?error=sign_in_cancelled` |
-            | Any other Auth0 error, a `state` mismatch/missing/expired, or a failed code exchange | none | `/login?error=sign_in_failed` |
+            | Any other Auth0 error, a `state` mismatch/missing/expired, a failed code exchange, or Auth0 unreachable / answering `5xx` | none | `/login?error=sign_in_failed` |
             | Rejected provisioning (Step 6) | none | Auth0's `/v2/logout`, with `returnTo` = `/login?error=not_provisioned`, `deactivated` or `deleted` |
 
             A rejected login goes through Auth0's logout so the next attempt
             is not silently re-admitted on Auth0's own session. The `error`
             values are fixed codes, never reflected from Auth0: Auth0's
             `error_description` is logged, never sent to the browser.
-
-            Known gap: if Auth0's token endpoint is *unreachable* (a network
-            failure, not an error response), the exception is unhandled and
-            the browser gets `500 internal_error` as JSON instead of a
-            `sign_in_failed` redirect.
           headers:
             Set-Cookie:
               schema:
@@ -3103,9 +3099,11 @@ components:
 #   for (1) and (2) it makes the product worse, for (3) it adds an open-
 #   redirect surface no screen needs.
 #
-#   KNOWN GAP, not fixed here: an *unreachable* Auth0 token endpoint raises
-#   a network exception the callback does not catch, so the browser gets a
-#   `500` JSON body instead of a `sign_in_failed` redirect.
+#   Found while documenting (3), and fixed in the same version: an
+#   unreachable Auth0, or one answering a `5xx` page rather than an OAuth
+#   error, raised an `httpx.HTTPError` the callback did not catch, so the
+#   browser landed on a `500` JSON body. It now gets the
+#   `sign_in_failed` redirect like every other failure.
 #
 # [0.23.0] One error shape; validation is 400, not 422.
 #
