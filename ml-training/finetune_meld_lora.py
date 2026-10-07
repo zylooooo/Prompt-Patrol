@@ -250,7 +250,7 @@ def curve_rows(labels, probabilities, model_name):
     # precision_recall_curve has one extra endpoint without a threshold.
     rows.extend(
         {"model": model_name, "curve": "precision_recall", "x": float(x), "y": float(y),
-         "threshold": float(t) if i < len(pr_thresholds) else None}
+         "threshold": float(pr_thresholds[i]) if i < len(pr_thresholds) else None}
         for i, (x, y) in enumerate(zip(recall, precision))
     )
     return rows
