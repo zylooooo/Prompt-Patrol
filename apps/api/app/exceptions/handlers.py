@@ -44,14 +44,15 @@ async def _http_error(_request: Request, exc: Exception) -> JSONResponse:
 async def _validation_error(_request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, RequestValidationError)
     message = "; ".join(
-        f"{'.'.join(str(part) for part in e['loc'][1:]) or e['loc'][0]}: {e['msg']}" for e in exc.errors()
+        f"{'.'.join(str(part) for part in e['loc'][1:]) or e['loc'][0]}: {e['msg'].removeprefix('Value error, ')}"
+        for e in exc.errors()
     )
     return error_response(400, "invalid_request", message)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """400 for every validation failure, and `Error` for every HTTPException. 
-    Unhandled exceptions are caught in RequestIdMiddleware so the 500 
+    """400 for every validation failure, and `Error` for every HTTPException.
+    Unhandled exceptions are caught in RequestIdMiddleware so the 500
     still carries its request id."""
     app.add_exception_handler(StarletteHTTPException, _http_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
