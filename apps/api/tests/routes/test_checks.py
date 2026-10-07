@@ -109,6 +109,16 @@ async def test_create_check_rejects_unknown_field(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_check_rejects_an_over_long_question(client, db_session):
+    await _signed_in(client, db_session, email="ta3q@smu.edu.sg")
+
+    response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE, "question_text": "q" * 2001})
+
+    assert response.status_code == 400
+    assert response.json()["message"].startswith("question_text:")
+
+
+@pytest.mark.asyncio
 async def test_create_check_rejects_client_supplied_batch_id(client, db_session):
     await _signed_in(client, db_session, email="ta3b@smu.edu.sg")
 

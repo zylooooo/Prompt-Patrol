@@ -65,6 +65,20 @@ async def test_create_batch_happy_path(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_batch_with_nothing_uploaded_is_400_not_500(client, db_session):
+    user = await _signed_in_instructor(client, db_session)
+
+    with patch("services.batches_service.download_object", side_effect=FileNotFoundError):
+        response = await client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{user.id}/never-put.csv", "file_name": "a.csv"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+
+
+@pytest.mark.asyncio
 async def test_get_progress_happy_path(client, db_session):
     user = await _signed_in_instructor(client, db_session)
 

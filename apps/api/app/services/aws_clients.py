@@ -53,7 +53,12 @@ def generate_upload_url(file_name: str, actor_id: uuid.UUID) -> tuple[str, str]:
 
 def download_object(key: str) -> str:
     """Pulls the raw CSV bytes back from S3 for server-side csv parsing."""
-    body = _s3_client().get_object(Bucket=S3_BATCHES_BUCKET, Key=key)["Body"]
+    s3 = _s3_client()
+    try:
+        body = s3.get_object(Bucket=S3_BATCHES_BUCKET, Key=key)["Body"]
+    except s3.exceptions.NoSuchKey:
+        # A key we issued but nothing was PUT to (the upload failed or expired).
+        raise FileNotFoundError(key) from None
     return body.read().decode("utf-8")
 
 

@@ -41,7 +41,7 @@ class CheckCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer_text: str
-    question_text: str | None = None
+    question_text: str | None = Field(default=None, max_length=2000)
     external_ref: str | None = Field(default=None, max_length=128)
     strictness: str = "standard"
     retain_answer: bool = True

@@ -2,8 +2,13 @@ import json
 import uuid
 from unittest.mock import MagicMock, patch
 
+import boto3
+import pytest
+from botocore.stub import Stubber
+
 from services.aws_clients import (
     MAX_CANCEL_DRAIN_ITERATIONS,
+    download_object,
     enqueue_row,
     generate_upload_url,
     purge_batch_messages,
@@ -100,3 +105,11 @@ def test_purge_batch_messages_stops_at_the_iteration_cap():
 
     assert removed == 0
     assert fake_sqs.receive_message.call_count == MAX_CANCEL_DRAIN_ITERATIONS
+
+
+def test_download_of_a_key_nothing_was_put_to_is_file_not_found():
+    s3 = boto3.client("s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+    with Stubber(s3) as stub, patch("services.aws_clients._s3_client", return_value=s3):
+        stub.add_client_error("get_object", service_error_code="NoSuchKey", http_status_code=404)
+        with pytest.raises(FileNotFoundError):
+            download_object("batches/never-put.csv")

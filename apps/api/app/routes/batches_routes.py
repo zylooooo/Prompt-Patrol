@@ -73,16 +73,22 @@ async def create_batch_route(
             detail="upload_key was not issued to this actor.",
         )
 
-    batch = await create_batch(
-        db,
-        actor_id=user.id,
-        upload_key=body.upload_key,
-        file_name=body.file_name,
-        strictness=body.strictness,
-        retain_answer=body.retain_answer,
-        column_mapping=body.column_mapping,
-        requires_question_text=DETECTOR_CAPABILITIES["requires_question_text"],
-    )
+    try:
+        batch = await create_batch(
+            db,
+            actor_id=user.id,
+            upload_key=body.upload_key,
+            file_name=body.file_name,
+            strictness=body.strictness,
+            retain_answer=body.retain_answer,
+            column_mapping=body.column_mapping,
+            requires_question_text=DETECTOR_CAPABILITIES["requires_question_text"],
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nothing was uploaded for this upload_key. Upload the file again.",
+        )
     if batch.row_total == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
