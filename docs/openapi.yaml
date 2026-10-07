@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.21.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.23.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,15 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.23.0 Every error response is now the `Error` schema, from every route.
+#          Previously only POST /api/checks returned it; other routes returned
+#          FastAPI's `{"detail": ...}`, and 401s `{"detail": {code, message}}`.
+#          Request-validation failures (unknown field, wrong type, missing
+#          field, out-of-range query parameter) are `400 invalid_request`, not
+#          FastAPI's default `422`, so all input errors share one status.
+#          `Error.error` gains the session failure codes the 401 path already
+#          emitted, and drops codes no response body ever carried. See
+#          DECISION LOG [0.23.0].
 #   0.22.0 A teaching assistant left with no active supervisor is signed
 #          out: deleting, deactivating or changing the role of their last
 #          active instructor now revokes the TA's live sessions in the same
@@ -364,6 +373,13 @@ info:
     integration has no push-based revocation configured (no OIDC back-channel
     logout), so this cap is the primary control, with administrative
     revocation as the compensating control.
+
+    ## Errors
+
+    Every non-2xx response produced by application code is an `Error`.
+    Branch on `error`, display `message`, quote `request_id` in bug reports.
+    All input-validation failures are `400 invalid_request` — this API never
+    returns `422`. See DECISION LOG [0.23.0].
 
     ## Provisioning — invite-first
 
@@ -2944,42 +2960,54 @@ components:
         error:
           type: string
           description: Stable machine-readable code. Safe to branch on.
+          # The login-rejection codes (`not_provisioned`, `deactivated`,
+          # `deleted`) are not here: they only ever travel as
+          # `/login?error=<code>` redirects from `/api/auth/callback`, never
+          # in a response body. See DECISION LOG [0.23.0].
           enum:
-            - invalid_request
-            - unauthenticated # 401 — no valid session (auth, gateway)
-            - session_expired # 401 — session existed, clock fired (auth)
-            - not_provisioned # authenticated at Auth0, no user record (users)
-            - deactivated # authenticated at Auth0, user record exists
-              # but `status = deactivated` (users)
-            - deleted # authenticated at Auth0, user record exists
-              # but `status = deleted` (users)
-            - forbidden # 403 — valid session, insufficient role (users)
-            - not_found
-            - conflict # 409 — duplicate email, or an illegal status
-              # transition e.g. reactivating a deleted user (users)
-            - state_mismatch
-            - upstream_idp_error
+            - invalid_request # 400 — malformed body, unknown/missing field,
+              # wrong type, out-of-range query parameter, bad cursor
+            - not_signed_in # 401 — no session cookie sent (auth)
+            - session_unknown # 401 — cookie matches no session (auth)
+            - session_revoked # 401 — signed out, or revoked by an
+              # admin action or status change (auth)
+            - session_expired # 401 — 30-minute idle limit passed (auth)
+            - session_ended # 401 — 4-hour absolute cap reached (auth)
+            - account_deactivated # 401 — account is no longer `active` (auth)
+            - forbidden # 403 — valid session, function-level refusal (users)
+            - not_found # 404 — absent, or not visible to this caller
+            - conflict # 409 — duplicate email, illegal status transition,
+              # or a teaching assistant that cannot be added (users)
             - payload_too_large # 413 — answer_text over 10,000 chars (checks)
             - question_text_required # 400 — served detector scores on
               # (question, answer) pairs and question_text
               # was omitted. See GET /api/detector. (checks)
-            - detector_unavailable # 503 — detector service down (checks)
-            - detector_timeout # 504 — detector exceeded 10s budget (checks)
             - no_valid_rows # 400 — every row in an uploaded batch CSV
               # failed validation (batches)
-            - internal_error
+            - upstream_idp_error # 502 — an Auth0 Management API call
+              # failed; nothing was saved (users)
+            - detector_unavailable # 503 — detector service down (checks)
+            - detector_timeout # 504 — detector exceeded 10s budget (checks)
+            - internal_error # 500 — unhandled; details only in the logs
         message:
           type: string
           description: |
-            Human-readable. Never interpolates unsanitised upstream input
-            (notably Auth0's `error_description`).
+            Human-readable and safe to show. Never interpolates unsanitised
+            upstream input (notably Auth0's `error_description`) or submitted
+            values: a validation message names the field and the rule, never
+            what was sent, since that may be a student answer.
         request_id:
           type: string
-          description: Correlates with CloudWatch logs and the audit trail.
+          description: Correlates with CloudWatch logs.
 
   responses:
     BadRequest:
-      description: Malformed or invalid request.
+      description: |
+        Malformed or invalid request — `invalid_request`. Includes schema
+        validation (unknown field under `additionalProperties: false`,
+        missing required field, wrong type, enum mismatch, out-of-range
+        query parameter): this API returns `400` for all of them, never
+        `422`. See DECISION LOG [0.23.0].
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -3022,6 +3050,46 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.23.0] One error shape; validation is 400, not 422.
+#
+#   PROBLEM. Three error bodies were in use: `Error` (POST /api/checks only,
+#   hand-built in that route), FastAPI's `{"detail": "..."}` everywhere
+#   else, and `{"detail": {code, message}}` on 401. The contract documented
+#   only `Error`, and the SPA's error parser had to read all three.
+#   Separately, schema validation returned FastAPI's default `422` while
+#   every hand-written input check returned `400` — two statuses for one
+#   class of failure — and the contract's "an unknown field is a hard 400"
+#   (`CheckCreateRequest`, [0.5.0]) was not true on the wire.
+#
+#   DECISION. Exception handlers registered once on the app
+#   (`exceptions/handlers.py`) turn every `HTTPException` and
+#   `RequestValidationError` into an `Error`; `RequestIdMiddleware` does the
+#   same for an unhandled exception (`500 internal_error`), there rather
+#   than in a handler so the response still carries its `request_id`. A
+#   route that needs a specific code raises `HTTPException` with
+#   `detail={"code", "message"}` — the convention the 401 path already
+#   used; otherwise the code follows from the status. Validation is
+#   `400 invalid_request`. Its `message` lists each failing field and rule
+#   and never the submitted value. No per-field array: the SPA validates
+#   before sending, so this layer is defence in depth and a readable
+#   message is enough.
+#
+#   Codes no response body ever carried are removed from the enum:
+#   `unauthenticated` (replaced by the six specific 401 codes the session
+#   check actually returns), `state_mismatch` (the callback redirects on a
+#   state failure; see its own section), and the three login-rejection
+#   codes, which are redirect parameters, not bodies.
+#
+#   OPTIONS REJECTED. (a) Document the three shapes — writes an accident
+#   into the contract, and the future gateway's 401 template would have to
+#   copy it. (b) RFC 9457 Problem Details — the formal standard, but a
+#   format change on both sides with one client and no consumer gaining
+#   anything; mapping `Error` onto it later is mechanical. (c) `422` for all
+#   validation — would move every hand-written check and the contract for
+#   no gain over matching what they already did.
+#
+#   No SPA change was needed: its parser already read `error`/`message`.
 #
 # [0.22.0] No active supervisor, no session.
 #
