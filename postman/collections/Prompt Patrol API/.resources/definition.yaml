@@ -1,5 +1,12 @@
 $kind: collection
 scripts:
+  - type: http:beforeRequest
+    code: |-
+      // What a browser sends from our own page. The API refuses a state-changing
+      // request without it (CSRF, DECISION LOG [0.25.0]). Postman cannot carry
+      // anyone else's cookie, so opting in is harmless.
+      pm.request.headers.upsert({ key: "Sec-Fetch-Site", value: "same-origin" });
+    language: text/javascript
   - type: http:afterResponse
     code: "pm.test(\"not a 5xx\", () => pm.expect(pm.response.code).to.be.below(500));\r
 

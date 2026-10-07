@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.24.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.25.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,25 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.25.0 BREAKING (CSRF) — every POST/PUT/PATCH/DELETE must come from this
+#          application's own origin: `Sec-Fetch-Site: same-origin` (or
+#          `none`), else an `Origin` equal to the SPA's; anything else is
+#          `403 forbidden`. Replaces the `X-PP-Client` header scheme, which
+#          was never enforced. Non-browser clients send
+#          `Sec-Fetch-Site: same-origin`. The rest is the auth, detector and
+#          batches sections catching up with the code: the app checks the
+#          session cookie itself on every request and never trusts a
+#          gateway header (`x-gateway-configuration` is now marked as a
+#          target design); GET /api/auth/session is replaced by the
+#          GET /api/auth/me the SPA actually calls, with its `probe`
+#          parameter; the cookie is `__Host-session`; /api/auth/login's
+#          `login_hint` and `force_account_chooser` are documented;
+#          GET /api/detector/status is defined; /api/admin/sessions is
+#          removed (never built); `auth0_sub` is set at provisioning; the
+#          served abstention rule is documented as provisional; batch
+#          cancel purges queued messages; `row_total` counts rejected rows;
+#          the CSV row rules are listed; the stale data-model block is
+#          replaced by a pointer to the models. See DECISION LOG [0.25.0].
 #   0.24.0 Three sections brought in line with the code, which is right in
 #          each case. GET /api/users: an instructor asking for a `role`
 #          outside their scope gets `403`, not an empty page, and a bad
@@ -340,50 +359,86 @@ info:
 
     ## Authentication vs authorization — module boundary
 
-    Separate concerns, separate modules, enforced at different layers. The
-    split is by **granularity**, not preference: the dividing question is
-    whether a decision requires data the gateway does not have.
+    Separate concerns, separate modules. The split is by **granularity**,
+    not preference: the dividing question is whether a decision needs data
+    beyond the session itself.
 
-    | Decision                            | Depends on      | Layer   | Owns  | Failure |
-    |-------------------------------------|-----------------|---------|-------|---------|
-    | Is there a valid session?           | credential only | Gateway | auth  | `401`   |
-    | May this user call this function?   | user attributes | Service | users | `403`   |
-    | May this user act on *this record*? | domain data     | Service | users | `403`   |
+    | Decision                            | Depends on      | Layer                     | Owns  | Failure |
+    |-------------------------------------|-----------------|---------------------------|-------|---------|
+    | Is there a valid session?           | credential only | App (`Depends()`), every request | auth  | `401`   |
+    | May this user call this function?   | user attributes | Service                   | users | `403`   |
+    | May this user act on *this record*? | domain data     | Service                   | users | `403`   |
 
-    The authorizer resolves **identity only**. It injects `user_id`,
-    `session_id`, and `session_expires_at`, and has no opinion on what that
-    user may do.
+    Authentication resolves **identity only**: a live session and the user
+    it belongs to, with no opinion on what that user may do. It runs in the
+    app on every protected request, whatever sits in front of it — there is
+    no gateway today, and the app trusts no identity a proxy or gateway
+    passes along (see `x-gateway-configuration` and DECISION LOG [0.25.0]).
 
-    Unauthenticated traffic never reaches application code.
-    *Authenticated-yet-unauthorized* traffic does, and receives a `403` from
-    the users module. This is correct — "forbidden" is an application-domain
+    An unauthenticated request to a protected route gets a `401` before any
+    route code runs. *Authenticated-yet-unauthorized* traffic receives a
+    `403` from the users module — "forbidden" is an application-domain
     judgement. See DECISION LOG [0.3.0] for the full rationale.
 
     ### In-app identity resolution: dependency injection, not middleware
 
-    Inside the FastAPI app, identity resolution (`get_current_user_id` ->
-    `get_current_user` -> `require_role`) is a **`Depends()` chain**, not
-    ASGI middleware. `get_current_user` shares the same request-scoped
-    `AsyncSession` as the route handler (both resolve from `get_db`), and is
-    cached per-request by FastAPI so it never re-queries even if depended on
-    twice. `get_current_user_id` is the one seam that differs by
-    environment — see `x-gateway-configuration.context_propagation` below.
-    Protected routers apply `require_role` at the router level
-    (`APIRouter(dependencies=[...])`), not per-endpoint, so a new route is
-    protected by default rather than only if someone remembers to declare
-    it. See DECISION LOG [0.5.3].
+    Inside the FastAPI app, identity resolution (`get_current_session` ->
+    `get_current_user` -> `require_role` / `require_screening_access`) is a
+    **`Depends()` chain**, not ASGI middleware. `get_current_session` reads
+    the `__Host-session` cookie, hashes it, and checks the session row
+    (revoked, idle, absolute cap) and the user's `status` — one query on
+    the same request-scoped `AsyncSession` as the route handler, cached
+    per-request by FastAPI. A missing or failed session is a `401` whose
+    `error` names the reason (`not_signed_in`, `session_unknown`, …). The
+    users router applies `require_role` at the router level
+    (`APIRouter(dependencies=[...])`) so a new users route is protected by
+    default; the checks, detector and batches routes declare theirs per
+    endpoint. `/api/auth/login`, `/api/auth/callback`, `/api/auth/logout`
+    and `/health` are the only routes without one. See DECISION LOG
+    [0.5.3].
 
     ### Session lifetime
     | Rule              | Value  | Behaviour                                |
     |-------------------|--------|------------------------------------------|
-    | Sliding idle      | 30 min | `last_seen_at` bumped on every request   |
+    | Sliding idle      | 30 min | `last_active_at` bumped by an authenticated request, at most once a minute; not by `GET /api/auth/me?probe=1` |
     | Absolute cap      | 4 h    | Set at creation, **never extended**      |
 
     A session dies when either clock fires. The absolute cap bounds the window
     during which a disabled upstream account retains access — this
     integration has no push-based revocation configured (no OIDC back-channel
-    logout), so this cap is the primary control, with administrative
-    revocation as the compensating control.
+    logout). Inside that window, a `root_admin` ends someone's access by
+    deactivating or deleting the account or changing its role, each of which
+    revokes that user's live sessions in the same commit; the session check
+    also refuses any account that is no longer `active`. Signing out
+    (`POST /api/auth/logout`) ends every session the user holds, not just the
+    calling browser's.
+
+    ### CSRF
+
+    Every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) must
+    prove it came from this application's own origin. App middleware checks,
+    before any route runs:
+
+    1. If `Sec-Fetch-Site` is present, it must be `same-origin` or `none`
+       (a user-initiated navigation). `same-site` is **refused**:
+       `SameSite` cookies treat every `*.smu.edu.sg` host as the same site,
+       so a takeover of any university subdomain could otherwise forge
+       requests that carry the session cookie.
+    2. If it is absent, `Origin` must exactly equal the SPA's origin
+       (`FRONTEND_URL`).
+    3. If neither header is present, the request is refused — fail closed.
+
+    A refusal is `403 forbidden` with the message "Cross-site request
+    refused." `GET`, `HEAD` and `OPTIONS` are not checked, so **a `GET`
+    must never change state.** The one state-changing `GET`,
+    `/api/auth/callback`, is protected by the OIDC `state` and PKCE
+    verifier instead.
+
+    Non-browser clients (Postman, scripts) send `Sec-Fetch-Site:
+    same-origin`. That is harmless: they cannot carry a victim's cookie,
+    which is the whole of what CSRF abuses. `SameSite=Strict` and the
+    `__Host-` cookie prefix remain as defence in depth. See DECISION LOG
+    [0.25.0].
 
     ## Errors
 
@@ -401,7 +456,7 @@ info:
     Delegation chain:
 
     ```
-    root_admin  (seeded via migration, keyed on Auth0 `sub`)
+    root_admin  (seeded with the `scripts.provision_user` CLI, keyed on Auth0 `sub`)
         └── provisions ──> instructor
                               └── provisions ──> teaching_assistant
     ```
@@ -410,9 +465,11 @@ info:
     that produces integrity accusations, "who authorised this person" is a
     question worth being able to answer.
 
-    Records are created **before** first login, keyed on email. First login
-    binds the Auth0 `sub` to the pre-provisioned row permanently; thereafter
-    `email` is display data only.
+    Records are created **before** first login, keyed on email. Provisioning
+    also creates the Auth0 credential and stores its id (Auth0's `sub`) in
+    `users.auth0_sub` in the same step, so the row is bound to exactly one
+    Auth0 identity before anyone signs in. Login matches on `auth0_sub`, and
+    the email in the ID token is never used to admit anyone.
 
     ## Detection — service boundary
 
@@ -501,6 +558,13 @@ servers:
 # Gateway configuration (non-OpenAPI; documents Terraform intent)
 # -----------------------------------------------------------------------------
 x-gateway-configuration:
+  status: |
+    TARGET DESIGN, NOT DEPLOYED. There is no API Gateway in front of the app
+    today: nginx (local and e2e) serves the SPA and proxies `/api/*` to it
+    on the same origin. Nothing below is relied on by the running code â€”
+    every guarantee the app needs (a valid session, CSRF), it enforces
+    itself. If a gateway is added, it is an outer filter on top of those
+    checks, never a replacement for them. See DECISION LOG [0.25.0].
   authorizer:
     type: REQUEST
     identity_sources:
@@ -509,65 +573,40 @@ x-gateway-configuration:
       0 # MUST be 0. Caching reintroduces a revocation
       # window and defeats the server-side session store.
     responsibilities:
-      - Parse the `__Host-pp_session` cookie.
+      - Parse the `__Host-session` cookie.
       - Look up the session row; reject if absent, revoked, past absolute
         expiry, or idle beyond 30 minutes.
-      - Reject if the static CSRF header `X-PP-Client` is missing.
-      - Bump `last_seen_at`.
-      - Return an IAM policy plus the context object below.
-    authorizer_context:
-      # IDENTITY ONLY. Do not add `role`, `email`, or any profile field here.
-      # See DECISION LOG [0.3.0] — authorization is not a gateway concern.
-      user_id: uuid
-      session_id: uuid
-      session_expires_at: RFC 3339 timestamp
+      - Return an IAM policy. No identity is forwarded to the app (see
+        `context_propagation`).
     explicitly_out_of_scope:
       - Role resolution
       - Permission evaluation
       - Profile hydration
       - Any route-to-role mapping
+      - CSRF (enforced in the app; see "CSRF" in `info.description`)
   context_propagation:
     note: |
-      How ECS learns the identity the authorizer already resolved, and how
-      the app avoids re-doing the authorizer's own DB work. See DECISION LOG
-      [0.5.3].
-    mechanism: |
-      Integration request parameter mapping copies the authorizer context
-      onto a header for the VPC Link -> ECS hop, e.g.:
-        integration.request.header.X-PP-User-Id = context.authorizer.user_id
-      This header is trustworthy ONLY because of the `network` SG rule below
-      — ECS has no other ingress path, so nothing but the gateway can set it.
-    app_behaviour: |
-      `get_current_user_id` (the innermost link in the `Depends()` chain
-      described in `info.description`) is environment-aware:
-        - Local dev (no gateway in front): parses `__Host-session` itself,
-          hashes it, queries the session table directly. No authorizer
-          exists locally, so the app must do this work itself.
-        - Behind the gateway (staging/prod): trusts `X-PP-User-Id` and skips
-          the cookie parse and session-table lookup entirely — the
-          authorizer already proved the session is valid; redoing that
-          query in-app would be a second, redundant DB round trip per
-          request for no additional guarantee.
-      Either way, `get_current_user` still runs exactly one query — loading
-      the `User` row for role/`provisioned_by` — because that hydration is
-      explicitly out of the authorizer's scope, not because the app doesn't
-      trust the gateway's identity claim.
+      The app trusts no identity passed along by a gateway or proxy. Every
+      protected route resolves the caller from the `__Host-session` cookie
+      through the `Depends()` chain (`get_current_session` ->
+      `get_current_user` -> `require_role`), with or without a gateway in
+      front. An `X-PP-User-Id` header is ignored.
+
+      Trusting a gateway-set `X-PP-User-Id` was the [0.5.3] plan. It shipped
+      as a full authentication bypass: whenever `ENVIRONMENT` was not `dev`,
+      the header alone was accepted as proof of identity, with no cookie and
+      no session lookup, and nginx forwarded it from the client untouched â€”
+      so any user's id was a login as that user. It was removed;
+      `test_identity_header_alone_does_not_authenticate` pins that. The
+      "it saves a query" argument does not survive: the header is only as
+      trustworthy as every hop in front of the app, and the session query is
+      one indexed lookup. See DECISION LOG [0.25.0].
   network:
     note: |
-      Gateway enforcement holds ONLY if ECS is unreachable by any other path.
-      The ECS task security group MUST accept ingress exclusively from the
-      API Gateway VPC Link. This SG rule is a security control, not hygiene.
-  csrf:
-    mechanism: |
-      Defence in depth: `SameSite=Strict` + `__Host-` prefix + a mandatory
-      static request header (`X-PP-Client: 1`), checked by the authorizer.
-
-      SameSite alone is insufficient here. SameSite is evaluated on *site*
-      (eTLD+1), so every other `*.smu.edu.sg` subdomain is same-site with this
-      application. A subdomain takeover anywhere in the university's DNS would
-      enable CSRF. A custom header forces a CORS preflight on any cross-origin
-      attempt, which the gateway will not approve.
-    header: X-PP-Client
+      If a gateway is added, the ECS task security group should accept
+      ingress only from the API Gateway VPC Link. This is hardening, not the
+      authentication boundary â€” the app checks the session itself either
+      way.
 
 tags:
   - name: auth
@@ -579,10 +618,6 @@ tags:
       `/auth/login` and `/auth/callback` are **browser redirect endpoints, not
       JSON APIs**. The SPA must reach them via `window.location.href = ...`,
       never `fetch()`. A `fetch()` against an opaque 302 will fail.
-  - name: auth-admin
-    description: |
-      Administrative session management. Role-gated by
-      `users.require_role('root_admin')`, now that the users module exists.
   - name: users
     description: |
       Provisioning, profile, and roles. **Owns authorization** for the whole
@@ -631,8 +666,9 @@ paths:
       x-auth-enforcement: NONE # API Gateway: authorizationType = NONE
       x-browser-navigation-only: true
       description: |
-        Generates `state`, `nonce`, and a PKCE `code_verifier`, persists them
-        server-side keyed by a short-lived transaction id, and redirects the
+        Generates `state`, `nonce`, and a PKCE `code_verifier`, keeps them in
+        a signed, short-lived `ppauthflow` cookie (10 minutes, `SameSite=Lax`
+        so it survives the redirect back from Auth0), and redirects the
         browser to Auth0's `/authorize` endpoint, which serves Auth0's own
         hosted login page (the Database connection is the only connection
         enabled on this Auth0 application — no federation hop to a third
@@ -643,11 +679,32 @@ paths:
 
         Scopes requested: `openid profile email`. Deliberately **not**
         `offline_access` — no refresh token is wanted or stored.
+
         There is no `returnTo` deep-link parameter: login always lands on
         `/`. If one is added, it must be validated server-side as a
         site-relative path (one leading `/`, not `//`, no scheme) — unchecked,
         it is an open redirect on an authentication endpoint. See DECISION LOG
         [0.24.0].
+      parameters:
+        - name: login_hint
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Pre-fills the email on Auth0's login page. The SPA sends the
+            address typed into its own login form (itself pre-filled with
+            the last address that signed in on this browser). Forwarded to Auth0 as
+            `login_hint`; never used to decide anything here.
+        - name: force_account_chooser
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: |
+            Sends `prompt=login` to Auth0, so Auth0 asks for the password
+            again instead of silently reusing its own session. The SPA sets
+            it on the first login after our own sign-out, so a second person
+            on the same browser is not signed in as the first. `login_hint`
+            is still forwarded alongside it.
       responses:
         "302":
           description: Redirect to the Auth0 authorization endpoint.
@@ -759,39 +816,59 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-                example: __Host-pp_session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400
+                example: __Host-session=<opaque>; Path=/; Secure; HttpOnly; SameSite=Strict
+              description: |
+                No `Max-Age`: a browser-session cookie. Expiry is enforced
+                server-side by the idle and absolute clocks, not by the
+                browser.
             Location:
               schema: { type: string, format: uri }
 
   # ---------------------------------------------------------------------------
-  /api/auth/session:
+  /api/auth/me:
     get:
       tags: [auth]
-      operationId: getSession
-      summary: Return current session state
+      operationId: getMe
+      summary: Return the caller's identity, role and session state
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
+      x-authorization: "any provisioned user â€” require_role('teaching_assistant')"
       description: |
-        The SPA's route guard. Called on application bootstrap; a 401 means
-        "navigate to login".
+        The SPA's route guard and bootstrap call: one request answers "am I
+        signed in, as whom, and until when". A `401` means "navigate to
+        login", and its `error` code (`session_expired`, `session_revoked`,
+        â€¦) picks the message the login page shows.
 
-        **Returns session state only — no profile, no role.** Those are owned
-        by the users module and served by `GET /api/users/me`. The SPA fires
-        both in parallel on bootstrap; there is no additional round-trip in
-        practice.
+        `supervisor_ids` drives the SPA's screening gate: a
+        `teaching_assistant` with none cannot submit checks or batches.
+        `display_name` is null until the person picks one; the SPA prompts
+        for it.
 
-        This handler performs no session lookup — the gateway authorizer
-        already did, and injected the context this response is built from.
-
-        > Replaces `GET /api/auth/me` from v0.1.0, which leaked `email`,
-        > `display_name`, and `role` into the auth module.
+        > Replaces `GET /api/auth/session`, a session-only endpoint the code
+        > does not serve: the SPA would have had to pair it with
+        > `GET /api/users/me` on every bootstrap. `GET /api/users/me` still
+        > exists and returns the full `User` record. See DECISION LOG
+        > [0.25.0].
+      parameters:
+        - name: probe
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: |
+            Answer without counting the request as activity: the idle timer
+            is not bumped. The SPA sets it when its own countdown reaches
+            zero and it asks whether the session is really gone â€” asking the
+            ordinary way would renew the session it is checking, so an
+            abandoned tab would never time out. Accepted on every
+            session-checked route, documented here because this is the only
+            one that uses it.
       responses:
         "200":
           description: Active session.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SessionState" }
+              schema: { $ref: "#/components/schemas/Me" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -811,7 +888,7 @@ paths:
 
         Requires no role check: a user may always terminate their own sessions.
 
-        Sessions are soft-deleted (`revoked_at = now()`), never hard-deleted,
+        Sessions are soft-deleted (`deleted_at = now()`), never hard-deleted,
         preserving referential integrity with audit entries.
 
         Idempotent: repeating it with a token whose session is already revoked
@@ -873,99 +950,6 @@ paths:
                 example: __Host-session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0
 
   # ---------------------------------------------------------------------------
-  # ADMIN — BLOCKED ON USERS MODULE
-  # ---------------------------------------------------------------------------
-  /api/admin/sessions:
-    get:
-      tags: [auth-admin]
-      operationId: listSessions
-      summary: List active sessions across users
-      security:
-        - sessionCookie: []
-      x-auth-enforcement: GATEWAY # authentication only
-      x-authorization: users module — require_role('root_admin')
-      description: |
-        Administrative visibility into active sessions. This is the compensating
-        control for the absence of push-based revocation from Auth0 — the only
-        way to terminate access inside the 4-hour absolute cap.
-
-        Restricted to `root_admin`. **Not** instructors: the ability to
-        enumerate and terminate other instructors' sessions is a privilege
-        escalation path in a tool that produces integrity accusations.
-
-        Bootstrap is resolved — the root admin is seeded by migration, keyed on
-        a hardcoded Auth0 `sub`. Auditable, in version control, reproducible.
-
-        Still to add: `GET /api/auth/sessions`, returning only the caller's
-        own sessions ("sign out my other devices"). Needs no role check and
-        belongs in the auth module.
-      parameters:
-        - name: user_id
-          in: query
-          required: false
-          schema: { type: string, format: uuid }
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
-        - name: cursor
-          in: query
-          schema: { type: string }
-      responses:
-        "200":
-          description: Active sessions.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items: { $ref: "#/components/schemas/SessionSummary" }
-                  next_cursor:
-                    type: string
-                    nullable: true
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/admin/sessions/{session_id}:
-    delete:
-      tags: [auth-admin]
-      operationId: revokeSession
-      summary: Revoke a single session
-      security:
-        - sessionCookie: []
-      x-auth-enforcement: GATEWAY # authentication only
-      x-authorization: users module — require_role('root_admin')
-      description: |
-        Soft-delete. Takes effect on the very next request, because the gateway
-        authorizer runs with `result_ttl_seconds = 0`.
-
-        Writes an audit entry recording actor, target, and timestamp.
-
-        Note the distinction from `DELETE /api/users/{id}`: this revokes ONE
-        session by `session_id`, for the "kick this one device" admin action.
-        `DELETE /api/users/{id}` revokes ALL sessions for a user as a side
-        effect of deactivating the account. Different granularity, different
-        trigger — don't conflate them when implementing.
-      parameters:
-        - name: session_id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        "204":
-          description: Revoked. Idempotent — an already-revoked session returns 204.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  # ---------------------------------------------------------------------------
   # USERS — provisioning, roles, RBAC primitives
   # ---------------------------------------------------------------------------
   /api/users/me:
@@ -977,10 +961,10 @@ paths:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
       description: |
-        Profile and role for the caller identified by the gateway-injected
-        `user_id`. Called alongside `GET /api/auth/session` on SPA bootstrap
-        — see the module boundary table in `info.description`. This is the
-        endpoint that v0.1.0's `GET /api/auth/me` was split into.
+        The caller's own `User` record, resolved from their session cookie.
+        The SPA bootstraps from `GET /api/auth/me` instead, which adds the
+        session state and `supervisor_ids`; this endpoint is the plain
+        `User` view of the same person.
       responses:
         "200":
           description: Current user's profile.
@@ -1000,9 +984,10 @@ paths:
       x-auth-enforcement: GATEWAY # authentication only
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
-        Creates a `users` row keyed on `email`, with `auth0_sub` left NULL —
-        first login binds it (see `/api/auth/callback`). No session is
-        created here; this is invitation, not authentication.
+        Creates a `users` row keyed on `email`, with `auth0_sub` set to the
+        id of the Auth0 credential this call creates — login later matches on
+        it (see `/api/auth/callback`). No session is created here; this is
+        invitation, not authentication.
 
         Also creates the matching Auth0 Database-connection credential via
         the Management API, then has Auth0 email the invitee a one-time
@@ -1018,7 +1003,8 @@ paths:
         teaching assistants through `POST /api/users/teaching-assistants`,
         which can also link an existing account — see DECISION LOG [0.21.0].
         `role` may be `instructor` or `teaching_assistant`; `root_admin` is
-        always `403` (there is exactly one, created by the seed migration).
+        always `403` (a root_admin is only ever seeded with the
+        `scripts.provision_user` CLI).
 
         `provisioned_by` is set to the caller and never changes afterwards.
         It records who issued the invite and **grants nothing**: supervision
@@ -1358,9 +1344,10 @@ paths:
         out in the same commit ([0.22.0]).
 
         **Immediately revokes every active session belonging to this user.**
-        This is why the gateway authorizer's `result_ttl_seconds = 0`
-        matters (see `x-gateway-configuration`): a cached "session valid"
-        decision would outlive this revocation.
+        It takes effect on their very next request: the app checks the
+        session row on every request and caches nothing between requests.
+        (A gateway, if one is added, must keep `result_ttl_seconds = 0` for
+        the same reason — see `x-gateway-configuration`.)
 
         Removes the Auth0 credential after the local change commits. If that
         call fails the row is still `deleted` and the failure is logged;
@@ -1712,8 +1699,7 @@ paths:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
       description: |
-        Fetched once on SPA bootstrap, alongside `GET /api/auth/session` and
-        `GET /api/users/me`.
+        Fetched once on SPA bootstrap, alongside `GET /api/auth/me`.
 
         Exists so that facts about the served model which are **not yet known**
         — and which will change as E2 progresses — do not have to be encoded in
@@ -1741,6 +1727,52 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/detector/status:
+    get:
+      tags: [checks]
+      operationId: getDetectorStatus
+      summary: Whether the detector can score right now
+      security:
+        - sessionCookie: []
+      x-auth-enforcement: GATEWAY
+      x-authorization: "any provisioned user — require_role('teaching_assistant')"
+      description: |
+        Backs the SPA's detector status badge, which polls it. **Always
+        `200`**: a down detector is a state to render, not a failed request —
+        an error would leave the badge with nothing to show at the exact
+        moment it has something worth saying. See DECISION LOG [0.5.9].
+
+        The backend asks the detector's own `/health` with a 2-second budget
+        (short on purpose, so a hung detector reads as `unavailable` quickly;
+        scoring keeps its own 10-second budget):
+
+        | Detector `/health` answers | `status` |
+        |----------------------------|----------|
+        | `200` | `ready` |
+        | non-200 with body `{"status": "loading"}` (model still loading) | `loading` |
+        | anything else, including no answer within 2 s | `unavailable` |
+
+        `loading` is told apart because it resolves itself in a minute;
+        `unavailable` needs someone to go and look.
+      responses:
+        "200":
+          description: Current detector state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, model_version]
+                properties:
+                  status:
+                    type: string
+                    enum: [ready, loading, unavailable]
+                  model_version:
+                    type: string
+                    description: The served model, same as `GET /api/detector`'s.
+                    example: roberta-base-openai-detector-v0
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/checks:
     post:
       tags: [checks]
@@ -1764,8 +1796,8 @@ paths:
         specifically rather than "must have a supervisor", which would lock out
         every instructor and admin.
 
-        `actor_id` on the persisted row is taken from the gateway-injected
-        `user_id`. **There is no `instructor_id` field in this request body,
+        `actor_id` on the persisted row is the caller resolved from the
+        session cookie. **There is no `instructor_id` field in this request body,
         and one supplied will be rejected with 400** (`additionalProperties:
         false`). A client-settable attribution field on a tool that produces
         academic-integrity accusations is a forgery primitive; whoever ran the
@@ -2041,9 +2073,30 @@ paths:
         to every row in the file, never a per-row CSV column (spec
         Decision 3).
 
-        Returns `202` immediately; `Batch.row_total` reflects the file's
-        actual row count, not yet how many have been scored. Poll
-        `GET /api/batches/{id}` for progress.
+        ### Row rules
+        Checked per row after trimming whitespace; a row failing any rule
+        becomes one `batch_row_failures` row with the first reason found:
+
+        | Field | Rule |
+        |-------|------|
+        | `external_ref` | required (unlike on a single check), at most 128 characters |
+        | `answer_text` | required, 10–10,000 characters |
+        | `question_text` | optional, at most 2,000 characters; required when the batch's `requires_question_text` is true |
+
+        The file must have `external_ref` and `answer_text` columns (after
+        `column_mapping`). At most **500 data rows** are processed: every
+        later row becomes a failure ("row not processed") rather than the
+        file being rejected. `row_number` is the line in the file, so the
+        first data row is `2` (the header is line 1). `row_number` `0` means
+        the failure is not tied to a line: a whole-file problem (empty file,
+        missing column, with `external_ref` null), or a valid row that could
+        not be enqueued to SQS (with its `external_ref` set) — recorded as a
+        failure so it never sits as `pending` forever.
+
+        Returns `202` immediately; `Batch.row_total` counts valid plus
+        rejected rows (a whole-file problem counts as one), not yet how many
+        have been scored.
+        Poll `GET /api/batches/{id}` for progress.
 
         A file in which no row is valid is still `202`, not `400`: the batch
         is created with every row in `batch_row_failures` and nothing
@@ -2129,11 +2182,18 @@ paths:
         already-cancelled or already-finished batch just returns current
         progress rather than erroring.
 
-        Does not purge rows already sitting in SQS. The Worker checks
-        `cancelled_at` per-message before scoring and records a
-        `batch_row_failures` row instead once it's set, so `pending` drains
-        to 0 over the next few poll cycles rather than instantly. See
-        DECISION LOG [0.14.0].
+        On the first cancel, also purges this batch's rows still queued in
+        SQS (`purge_batch_messages`): best effort, since SQS has no "delete
+        where batch = X" — it reads up to 2,000 messages and deletes only
+        this batch's, leaving every other message untouched. The Worker's
+        own per-message `cancelled_at` check is the backstop for anything
+        the purge misses: such a row is recorded in `batch_row_failures`
+        instead of scored.
+
+        A purged row never becomes a check or a failure, so **`pending` can
+        stay above 0 on a cancelled batch for good.** Clients must treat
+        `cancelled: true` as terminal and stop polling — the SPA does. See
+        DECISION LOG [0.14.0] and [0.25.0].
       parameters:
         - name: id
           in: path
@@ -2158,13 +2218,14 @@ components:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: __Host-pp_session
+      name: __Host-session
       description: |
         Opaque 256-bit CSPRNG session identifier. Carries no claims and is not
-        a token — it is a primary key into the `sessions` table and is
-        meaningless outside this system.
+        a token â€” the server stores only its SHA-256 hash, as the lookup key
+        into the `sessions` table, so a leaked table row cannot be replayed
+        as a cookie. Meaningless outside this system.
 
-        Attributes (per `draft-ietf-oauth-browser-based-apps` §6.1.3.2):
+        Attributes (per `draft-ietf-oauth-browser-based-apps` Â§6.1.3.2):
         `Secure` and `HttpOnly` are MUST; `SameSite=Strict`, `Path=/`, absent
         `Domain`, and the `__Host-` prefix are SHOULD and all applied.
 
@@ -2172,51 +2233,70 @@ components:
         users module.
 
   schemas:
-    SessionState:
+    Me:
       type: object
-      required: [user_id, session_expires_at, idle_expires_at]
+      required: [id, email, display_name, role, supervisor_ids, session]
       description: |
-        Session state only. Deliberately excludes profile data and role — see
-        the module boundary note in `info.description`. For display name,
-        email, and role, call `GET /api/users/me`.
+        `GET /api/auth/me`. The caller's identity, role and session state in
+        one body, so the SPA bootstraps in one request.
       properties:
-        user_id:
+        id:
           type: string
           format: uuid
           description: |
-            Internal identifier. Never sent to Auth0 — Auth0 has no knowledge
-            of it. Use as the key for `GET /api/users/me`.
-        session_expires_at:
+            Internal identifier. Never sent to Auth0. The SPA uses it to
+            `PATCH /api/users/{id}` its own display name.
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+          description: Null until the person picks one; the SPA prompts for it.
+        role:
+          type: string
+          enum: [root_admin, instructor, teaching_assistant]
+        supervisor_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: Same as `User.supervisor_ids` â€” the SPA's screening gate.
+        session:
+          $ref: "#/components/schemas/SessionInfo"
+
+    SessionInfo:
+      type: object
+      required:
+        [expires_at, idle_expires_at, absolute_expires_at, expires_in_seconds, capped, idle_timeout_seconds]
+      description: |
+        When the caller's session ends, by either clock. The SPA uses it to
+        warn before a forced sign-out. Times are as of this request: a
+        normal request may have just pushed `idle_expires_at` forward; a
+        `?probe=1` request never does.
+      properties:
+        expires_at:
           type: string
           format: date-time
-          description: |
-            Absolute expiry. Never extended. The SPA can use this to warn
-            before forced re-authentication.
+          description: The earlier of `idle_expires_at` and `absolute_expires_at`.
         idle_expires_at:
           type: string
           format: date-time
-          description: Sliding 30-minute deadline; advances on each request.
-
-    SessionSummary:
-      type: object
-      required: [session_id, user_id, created_at, last_seen_at, absolute_expiry]
-      description: Administrative view of a session.
-      properties:
-        session_id: { type: string, format: uuid }
-        user_id: { type: string, format: uuid }
-        created_at: { type: string, format: date-time }
-        last_seen_at: { type: string, format: date-time }
-        absolute_expiry: { type: string, format: date-time }
-        ip:
+          description: Last activity + 30 minutes.
+        absolute_expires_at:
           type: string
-          nullable: true
+          format: date-time
+          description: Creation + 4 hours. Never extended.
+        expires_in_seconds:
+          type: integer
+          minimum: 0
+          description: Seconds from now until `expires_at`, never negative.
+        capped:
+          type: boolean
           description: |
-            Recorded for audit correlation. Deliberately **not** enforced —
-            instructors move between campus WiFi, mobile, and VPN, and pinning
-            would cause spurious logouts. Detective control, not preventive.
-        user_agent:
-          type: string
-          nullable: true
+            True when the absolute cap is what ends the session â€” further
+            activity can no longer extend it.
+        idle_timeout_seconds:
+          type: integer
+          description: The idle window itself (1800), so the SPA need not hard-code it.
 
     User:
       type: object
@@ -2424,6 +2504,23 @@ components:
         > may ship with (a) only. The enum is written to accommodate all three
         > so adding one later is non-breaking.
 
+        **Currently served — PROVISIONAL, pending the ML team's decision
+        above** (`services/checks_service.py`, `_decide`), checked in order:
+
+        | Condition | `verdict` | `abstain_reason` |
+        |-----------|-----------|------------------|
+        | answer has fewer than 10 words | `uncertain` | `answer_too_short` |
+        | `abs(raw_score - threshold) <= 0.08` | `uncertain` | `score_in_abstention_band` |
+        | `raw_score > threshold` | `ai_generated` | null |
+        | otherwise | `human_written` | null |
+
+        `threshold` is the server-side value for the requested `strictness`:
+        `lenient` 0.4, `standard` 0.5, `strict` 0.65. That is a word-count
+        floor plus a fixed-width band — candidates (a) and (b), with the band
+        width a placeholder, not a calibration output. `low_signal` is
+        reserved and never produced today. None of these numbers is part of
+        the contract; clients branch on `verdict` and `abstain_reason` only.
+
     DetectorInfo:
       type: object
       required: [model_version, strictness_applied, used_question_text]
@@ -2595,8 +2692,8 @@ components:
           type: string
           format: uuid
           description: |
-            Who ran the check. Taken from the gateway authorizer context at
-            creation. Never accepted from the client — see `POST /api/checks`.
+            Who ran the check: the caller resolved from the session cookie
+            at creation. Never accepted from the client — see `POST /api/checks`.
         batch_id:
           type: string
           format: uuid
@@ -2825,7 +2922,10 @@ components:
         created_at: { type: string, format: date-time }
         row_total:
           type: integer
-          description: Valid rows accepted at submission time — not yet how many are scored.
+          description: |
+            Valid plus rejected rows at submission time (see `POST
+            /api/batches` "Row rules") — not yet how many are scored. So
+            `completed + failed + pending == row_total`.
         cancelled_at:
           type: string
           format: date-time
@@ -2873,7 +2973,13 @@ components:
       type: object
       required: [row_number, reason]
       properties:
-        row_number: { type: integer }
+        row_number:
+          type: integer
+          description: |
+            Line in the uploaded file (first data row is `2`), or `0` when
+            the failure is not tied to a line: a whole-file problem, a row
+            that could not be enqueued, or a row skipped because the batch
+            was cancelled. See `POST /api/batches`.
         external_ref: { type: string, nullable: true }
         reason: { type: string }
 
@@ -2981,7 +3087,8 @@ components:
             - session_expired # 401 — 30-minute idle limit passed (auth)
             - session_ended # 401 — 4-hour absolute cap reached (auth)
             - account_deactivated # 401 — account is no longer `active` (auth)
-            - forbidden # 403 — valid session, function-level refusal (users)
+            - forbidden # 403 — valid session, function-level refusal (users),
+              # or a cross-site state-changing request (CSRF check)
             - not_found # 404 — absent, or not visible to this caller
             - conflict # 409 — duplicate email, illegal status transition,
               # or a teaching assistant that cannot be added (users)
@@ -3019,14 +3126,17 @@ components:
 
     Unauthorized:
       description: |
-        No session, or the session is expired or revoked. Emitted by the
-        **gateway authorizer**, before application code runs.
+        No session, or the session is unknown, revoked, idle-expired, past
+        its absolute cap, or belongs to an account that is no longer
+        `active`. Emitted by the app's session check (`get_current_session`)
+        before the route body runs; `error` names which (`not_signed_in`,
+        `session_unknown`, `session_revoked`, `session_expired`,
+        `session_ended`, `account_deactivated`) so the login page can say
+        why.
 
-        API Gateway renders these from its own gateway-response templates, not
-        from FastAPI. That template MUST be configured to emit the `Error`
-        schema — otherwise the SPA receives two structurally different 401
-        bodies depending on which layer rejected the request, and the frontend
-        ends up parsing both defensively. Fix in Terraform.
+        If an API Gateway is ever put in front (see
+        `x-gateway-configuration`), its own 401 template MUST emit this same
+        `Error` schema, or the SPA receives two differently shaped 401s.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -3036,6 +3146,10 @@ components:
         Valid session, but the user's role does not permit this operation.
         Emitted by the **users module**, inside application code — never by the
         gateway. See DECISION LOG [0.3.0].
+
+        Any `POST`/`PUT`/`PATCH`/`DELETE` can also get `403 forbidden`
+        ("Cross-site request refused.") from the CSRF check, before
+        authentication — see "CSRF" in `info.description`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -3055,6 +3169,79 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.25.0] The app checks every request itself; CSRF is enforced by origin.
+#
+#   1. SESSION CHECK IN THE APP, ALWAYS.
+#   PROBLEM. `x-gateway-configuration` told the app to trust a
+#   gateway-set `X-PP-User-Id` header and skip the cookie lookup ([0.5.3]).
+#   That shipped as a full authentication bypass: outside `dev`, the header
+#   alone was accepted with no cookie and no session lookup, and nginx
+#   forwarded it from the client untouched, so any user id was a login as
+#   that user. The code removed it
+#   (`test_identity_header_alone_does_not_authenticate`); the contract still
+#   described it, and anyone building the gateway from that text would
+#   have brought the hole back.
+#   DECISION. The session cookie is checked on every protected request by
+#   the `Depends()` chain (`get_current_session` -> `get_current_user` ->
+#   `require_role`), gateway or not, and no identity header is trusted.
+#   `x-gateway-configuration` is marked TARGET DESIGN, NOT DEPLOYED; a
+#   gateway, if built, is an outer filter only. Cost: one indexed session
+#   query per request — accepted.
+#   OPTION REJECTED. Trust the header behind a security-group rule — its
+#   safety depends on every hop in front of the app being configured
+#   right, forever, to save one query.
+#
+#   2. CSRF: FETCH METADATA + ORIGIN, FAIL CLOSED, IN THE APP.
+#   PROBLEM. The contract's CSRF defence was a mandatory `X-PP-Client`
+#   header checked by the gateway authorizer. No gateway exists, the SPA
+#   never sent it and nothing checked it, so `SameSite=Strict` was the only
+#   defence — which the contract itself called insufficient, since every
+#   `*.smu.edu.sg` host is same-site and a subdomain takeover anywhere in
+#   the university's DNS could forge requests carrying the cookie.
+#   DECISION. App middleware checks every POST/PUT/PATCH/DELETE:
+#   `Sec-Fetch-Site` must be `same-origin` or `none`; without it, `Origin`
+#   must equal `FRONTEND_URL`'s origin; with neither, the request is
+#   refused. Refusal is `403 forbidden`. `same-site` is deliberately
+#   refused — it is exactly the subdomain threat. Non-browser clients send
+#   `Sec-Fetch-Site: same-origin`, harmless since they hold no victim's
+#   cookie. The SPA and API share one origin (relative `/api` paths, no
+#   CORS), so every legitimate browser request passes unchanged. This is
+#   the OWASP CSRF Prevention Cheat Sheet's Fetch Metadata defence, which
+#   it lists as a primary defence and for which it recommends failing
+#   closed when the headers are absent on sensitive endpoints. Go 1.25's
+#   `net/http.CrossOriginProtection` uses the same algorithm but lets
+#   header-less requests through; this API does not.
+#   OPTIONS REJECTED. (a) The `X-PP-Client` custom header — a native form
+#   POST cannot set headers, so it breaks `SignOutForm.tsx`'s logout (a
+#   form on purpose: the full navigation discards the query cache); it is
+#   only as strong as the CORS policy stays strict; and it was never
+#   enforced. (b) Synchronizer or double-submit tokens — server state or a
+#   second cookie plus SPA plumbing, for no added protection on a
+#   same-origin SPA; FastAPI has no built-in to lean on.
+#
+#   3. ABSTENTION RULE DOCUMENTED AS PROVISIONAL. `AbstainReason` now
+#   states the rule the code serves (fewer than 10 words; score within
+#   0.08 of the strictness threshold). The OPEN note stays: the ML team
+#   still owns the final rule, and the numbers are not contract.
+#
+#   4. /api/admin/sessions REMOVED. Specified since 0.4.0, never built.
+#   Its case — "the only way to end access inside the 4-hour cap" — no
+#   longer holds: deactivating, deleting or changing the role of a user
+#   revokes their sessions in the same commit, and the session check
+#   refuses any account that is not `active`. A root_admin ends someone's
+#   access from the users screen. Per-device revocation has no use case.
+#
+#   5. CATCH-UP, NO BEHAVIOUR CHANGE. `GET /api/auth/me` (with `probe`)
+#   replaces the unserved `GET /api/auth/session`; the cookie is
+#   `__Host-session`; /api/auth/login's `login_hint` and
+#   `force_account_chooser` are documented; `GET /api/detector/status` is
+#   defined; `auth0_sub` is set at provisioning, not first login; root_admin
+#   is seeded by the `scripts.provision_user` CLI, not a migration; batch
+#   cancel purges queued messages, so `pending` can stay above 0 and
+#   `cancelled` is terminal; `row_total` counts rejected rows; the CSV row
+#   rules and the 500-row cap are listed; the data-model block, still
+#   Entra-era, is replaced by a pointer to the models and migrations.
 #
 # [0.24.0] Three places where the code was right and the contract was not.
 #
@@ -3277,7 +3464,8 @@ components:
 #   `{id, email, display_name, role, supervisor_ids, session}` — `id` so the
 #   SPA can `PATCH /api/users/{id}` its own name, `display_name` for the
 #   first-sign-in prompt, `supervisor_ids` (replacing `provisioned_by`) for
-#   the screening gate. The auth-section rewrite is its own entry.
+#   the screening gate. The auth-section rewrite is its own entry — done in
+#   [0.25.0].
 #
 # [0.20.0] Status-change reasons are normalised; pending accounts are not special-cased.
 #
@@ -3984,7 +4172,10 @@ components:
 #   except `auth`'s intentionally-public `/login` and `/callback` routes,
 #   rather than left as an opt-in per-endpoint dependency.
 #
-#   FORWARD-LOOKING. This is also the shape that lets the app stay correct
+#   FORWARD-LOOKING — SUPERSEDED by [0.25.0]: trusting `X-PP-User-Id` shipped
+#   as an authentication bypass and was removed; the cookie is checked on
+#   every request, gateway or not. Original text kept for the record:
+#   This is also the shape that lets the app stay correct
 #   once `x-gateway-configuration`'s authorizer is real: `get_current_user_id`
 #   is the only function whose implementation differs behind the gateway
 #   (trust `X-PP-User-Id`, skip re-parsing the cookie) vs. local dev (no
@@ -4317,83 +4508,18 @@ components:
 # =============================================================================
 # DATA MODEL REFERENCE (not part of the API surface)
 # =============================================================================
-# Kept here so the contract and schema stay in step during review.
-# `role` and `provisioned_by` are OWNED BY THE USERS MODULE. The auth module
-# reads `users` and never writes or evaluates those columns.
+# The tables are defined in apps/api/app/models/ (SQLAlchemy) and created by
+# the Alembic migrations in apps/api/alembic/versions/. Read those, not a
+# copy here: the copy that used to sit here still described the Entra-era
+# columns (`external_id`, `tenant_id`, `logout_hint`, `entra_sid`) long
+# after they were gone. See DECISION LOG [0.25.0].
 #
-#   CREATE TABLE users (
-#     id              UUID PRIMARY KEY,
-#     email           CITEXT NOT NULL UNIQUE,  -- provisioning key; case-insensitive
-#     role            TEXT NOT NULL,           -- assigned at provisioning. No default.
-#     provisioned_by  UUID REFERENCES users(id),  -- NULL only for seeded root_admin
-#
-#     -- NULL until first login; bound permanently on first successful callback
-#     external_id     TEXT,                    -- Entra `oid`. Immutable once set.
-#     tenant_id       TEXT,                    -- Entra `tid`.
-#     display_name    TEXT,
-#     logout_hint     TEXT,                    -- Entra `login_hint` claim.
-#                                              -- Opaque; NOT a credential,
-#                                              -- NOT users.id, NOT the UPN.
-#     first_login_at  TIMESTAMPTZ,
-#
-#     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-#     deleted_at      TIMESTAMPTZ,             -- soft-delete
-#     UNIQUE (tenant_id, external_id)
-#   );
-#
-#   CREATE TABLE sessions (
-#     id               UUID PRIMARY KEY,    -- CSPRNG. This is the cookie value.
-#     user_id          UUID NOT NULL REFERENCES users(id),
-#     entra_sid        TEXT NOT NULL,       -- `sid` claim. Audit correlation.
-#     ip               INET,
-#     user_agent       TEXT,
-#     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-#     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-#     absolute_expiry  TIMESTAMPTZ NOT NULL,   -- created_at + 4h. Never extended.
-#     revoked_at       TIMESTAMPTZ
-#   );
-#   CREATE INDEX ON sessions (user_id) WHERE revoked_at IS NULL;
-#
-#   CREATE TABLE checks (
-#     id                  UUID PRIMARY KEY,
-#     actor_id            UUID NOT NULL REFERENCES users(id),  -- from authorizer
-#     batch_id            UUID REFERENCES batches(id),         -- NULL = single
-#     external_ref        TEXT,                -- instructor's correlation key
-#
-#     answer_text         TEXT,                -- NULL if retain_answer = false
-#                                              -- or purged by retention job
-#     question_text       TEXT,
-#     answer_char_len     INT NOT NULL,        -- retained after text purge;
-#                                              -- needed for E3 length analysis
-#     retain_answer       BOOLEAN NOT NULL,
-#
-#     verdict             TEXT NOT NULL,       -- ai_generated|human_written|uncertain
-#     raw_score           REAL NOT NULL,       -- normalised [0,1], monotonic in P(AI)
-#     confidence          REAL,                -- calibrated; NULL until E2
-#     abstain_reason      TEXT,
-#     truncated           BOOLEAN,
-#
-#     model_version       TEXT NOT NULL,
-#     calibration_version TEXT,
-#     strictness          TEXT NOT NULL,
-#     threshold_applied   REAL,
-#
-#     latency_ms          INT,
-#     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-#   );
-#   CREATE INDEX ON checks (actor_id, created_at DESC);
-#   CREATE INDEX ON checks (batch_id) WHERE batch_id IS NOT NULL;
-#
-#   -- No soft-delete column. Checks are immutable facts, purged (text only)
-#   -- by the retention job; the row survives for audit, same principle as
-#   -- soft-deleted sessions and users.
-#   --
-#   -- answer_char_len is stored separately and deliberately: purging
-#   -- answer_text must not destroy the length data that E3's reliability-vs-
-#   -- answer-length analysis depends on.
-#
-# Seed migration creates exactly one root_admin, keyed on a hardcoded Auth0
-# `sub`, with provisioned_by = NULL.
-#
-# No table stores an ID token, access token, or refresh token.
+# Invariants worth stating outside the code:
+#   - `role` and `provisioned_by` are owned by the users module; the auth
+#     module never writes or evaluates them.
+#   - root_admin is seeded with the `scripts.provision_user` CLI, which
+#     creates (or finds) the Auth0 credential and stores its `sub`, with
+#     provisioned_by = NULL. No API route can create a root_admin.
+#   - `sessions` stores only the SHA-256 hash of the cookie value.
+#   - No table stores an ID token, access token, or refresh token.
 # =============================================================================
