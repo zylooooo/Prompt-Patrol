@@ -561,7 +561,7 @@ x-gateway-configuration:
   status: |
     TARGET DESIGN, NOT DEPLOYED. There is no API Gateway in front of the app
     today: nginx (local and e2e) serves the SPA and proxies `/api/*` to it
-    on the same origin. Nothing below is relied on by the running code â€”
+    on the same origin. Nothing below is relied on by the running code —
     every guarantee the app needs (a valid session, CSRF), it enforces
     itself. If a gateway is added, it is an outer filter on top of those
     checks, never a replacement for them. See DECISION LOG [0.25.0].
@@ -595,7 +595,7 @@ x-gateway-configuration:
       Trusting a gateway-set `X-PP-User-Id` was the [0.5.3] plan. It shipped
       as a full authentication bypass: whenever `ENVIRONMENT` was not `dev`,
       the header alone was accepted as proof of identity, with no cookie and
-      no session lookup, and nginx forwarded it from the client untouched â€”
+      no session lookup, and nginx forwarded it from the client untouched —
       so any user's id was a login as that user. It was removed;
       `test_identity_header_alone_does_not_authenticate` pins that. The
       "it saves a query" argument does not survive: the header is only as
@@ -605,7 +605,7 @@ x-gateway-configuration:
     note: |
       If a gateway is added, the ECS task security group should accept
       ingress only from the API Gateway VPC Link. This is hardening, not the
-      authentication boundary â€” the app checks the session itself either
+      authentication boundary — the app checks the session itself either
       way.
 
 tags:
@@ -833,12 +833,12 @@ paths:
       security:
         - sessionCookie: []
       x-auth-enforcement: GATEWAY
-      x-authorization: "any provisioned user â€” require_role('teaching_assistant')"
+      x-authorization: "any provisioned user — require_role('teaching_assistant')"
       description: |
         The SPA's route guard and bootstrap call: one request answers "am I
         signed in, as whom, and until when". A `401` means "navigate to
         login", and its `error` code (`session_expired`, `session_revoked`,
-        â€¦) picks the message the login page shows.
+        …) picks the message the login page shows.
 
         `supervisor_ids` drives the SPA's screening gate: a
         `teaching_assistant` with none cannot submit checks or batches.
@@ -858,7 +858,7 @@ paths:
           description: |
             Answer without counting the request as activity: the idle timer
             is not bumped. The SPA sets it when its own countdown reaches
-            zero and it asks whether the session is really gone â€” asking the
+            zero and it asks whether the session is really gone — asking the
             ordinary way would renew the session it is checking, so an
             abandoned tab would never time out. Accepted on every
             session-checked route, documented here because this is the only
@@ -2221,7 +2221,7 @@ components:
       name: __Host-session
       description: |
         Opaque 256-bit CSPRNG session identifier. Carries no claims and is not
-        a token â€” the server stores only its SHA-256 hash, as the lookup key
+        a token — the server stores only its SHA-256 hash, as the lookup key
         into the `sessions` table, so a leaked table row cannot be replayed
         as a cookie. Meaningless outside this system.
 
@@ -2259,7 +2259,7 @@ components:
         supervisor_ids:
           type: array
           items: { type: string, format: uuid }
-          description: Same as `User.supervisor_ids` â€” the SPA's screening gate.
+          description: Same as `User.supervisor_ids` — the SPA's screening gate.
         session:
           $ref: "#/components/schemas/SessionInfo"
 
@@ -2292,7 +2292,7 @@ components:
         capped:
           type: boolean
           description: |
-            True when the absolute cap is what ends the session â€” further
+            True when the absolute cap is what ends the session — further
             activity can no longer extend it.
         idle_timeout_seconds:
           type: integer
