@@ -104,7 +104,8 @@ async def test_create_check_rejects_unknown_field(client, db_session):
         "/api/checks",
         json={"answer_text": HUMAN_LIKE, "instructor_id": str(uuid.uuid4())},
     )
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
 
 
 @pytest.mark.asyncio
@@ -115,7 +116,7 @@ async def test_create_check_rejects_client_supplied_batch_id(client, db_session)
         "/api/checks",
         json={"answer_text": HUMAN_LIKE, "batch_id": str(uuid.uuid4())},
     )
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -427,7 +428,7 @@ async def test_listing_caps_the_page_size(client, db_session):
     await _signed_in(client, db_session)
 
     assert (await client.get("/api/checks?limit=100")).status_code == 200
-    assert (await client.get("/api/checks?limit=101")).status_code == 422
+    assert (await client.get("/api/checks?limit=101")).status_code == 400
 
 
 @pytest.mark.asyncio
@@ -478,7 +479,7 @@ async def test_the_refusal_is_the_reason_not_a_bare_forbidden(client, db_session
 
     response = await client.post("/api/checks", json={"answer_text": HUMAN_LIKE})
 
-    assert "not assigned to an instructor" in response.json()["detail"]
+    assert "not assigned to an instructor" in response.json()["message"]
 
 
 @pytest.mark.asyncio

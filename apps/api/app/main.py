@@ -16,6 +16,7 @@ from config import (
     configure_logging,
 )
 from db import engine
+from exceptions import register_exception_handlers
 from middleware import RequestIdMiddleware
 from routes import auth_router, batches_router, checks_router, users_router
 
@@ -55,6 +56,7 @@ app.add_middleware(
     max_age=600,
 )
 app.add_middleware(RequestIdMiddleware)
+register_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(checks_router)
 app.include_router(batches_router)

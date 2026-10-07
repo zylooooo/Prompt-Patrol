@@ -4,12 +4,10 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_role, require_screening_access
-from config import request_id_ctx_var
 from db import get_db
 from models import User, UserRoleEnum, VerdictEnum
 from schemas import CheckListResponse, CheckResponse, CheckSummary
@@ -49,11 +47,9 @@ class CheckCreateRequest(BaseModel):
     retain_answer: bool = True
 
 
-def _error(status_code: int, error: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": error, "message": message, "request_id": request_id_ctx_var.get()},
-    )
+def _error(status_code: int, code: str, message: str) -> HTTPException:
+    """An HTTPException carrying a specific `Error.error` code."""
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 class DetectorStatusResponse(BaseModel):
@@ -82,13 +78,13 @@ async def create_check_route(
     db: AsyncSession = Depends(get_db),
 ):
     if body.strictness not in THRESHOLDS:
-        return _error(400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}.")
+        raise _error(400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}.")
 
     answer_text = body.answer_text
     if len(answer_text) > 10000:
-        return _error(413, "payload_too_large", "answer_text exceeds 10,000 characters.")
+        raise _error(413, "payload_too_large", "answer_text exceeds 10,000 characters.")
     if len(answer_text) < 10:
-        return _error(400, "invalid_request", "answer_text must be at least 10 characters.")
+        raise _error(400, "invalid_request", "answer_text must be at least 10 characters.")
 
     try:
         check = await create_check(
@@ -101,10 +97,10 @@ async def create_check_route(
             retain_answer=body.retain_answer,
         )
     except DetectorTimeoutError:
-        return _error(504, "detector_timeout", "Detector exceeded the 10s budget.")
+        raise _error(504, "detector_timeout", "Detector exceeded the 10s budget.")
     except DetectorUnavailableError:
         logger.exception("Detector call failed.")
-        return _error(503, "detector_unavailable", "The detector is temporarily unavailable.")
+        raise _error(503, "detector_unavailable", "The detector is temporarily unavailable.")
 
     # Now points at a route that exists.
     response.headers["Location"] = f"/api/checks/{check.id}"
