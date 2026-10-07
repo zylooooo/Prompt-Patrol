@@ -202,10 +202,36 @@ def test_prompt_spec_needs_enough_genuine():
 
 def test_render_prompt_has_examples_types_and_answer():
     spec = simulate.build_prompt_spec([make_genuine(i) for i in range(5)], EDIT_TYPES, examples=2, seed=1)
-    prompt = simulate.render_prompt(spec, "the answer to edit", ["delete", "reword"])
+    prompt = simulate.render_prompt(spec, "the answer to edit", ["delete", "reword"], 0.5)
     assert "the answer to edit" in prompt
     assert "cut a sentence" in prompt and "your own" in prompt
     assert prompt.count("Original:") == 2
+
+
+def test_prompt_spec_records_genuine_edit_sizes():
+    genuine = [make_genuine(i) for i in range(5)]
+    spec = simulate.build_prompt_spec(genuine, EDIT_TYPES, examples=2, seed=1)
+    assert len(spec["edit_sizes"]) == 5 and spec["edit_sizes"] == sorted(spec["edit_sizes"])
+    assert all(0 <= s <= 1 for s in spec["edit_sizes"])
+
+
+def test_draw_target_follows_genuine_sizes_with_a_floor():
+    spec = {"edit_sizes": [0.0, 0.3, 0.6]}
+    rng = random.Random(0)
+    drawn = {simulate.draw_target(spec, rng) for _ in range(200)}
+    assert drawn == {simulate.MIN_TARGET, 0.3, 0.6}
+
+
+def test_asked_share_scales_the_target_and_caps_it():
+    assert simulate.asked_share(0.2, 2.0) == 0.4
+    assert simulate.asked_share(0.7, 2.0) == simulate.MAX_ASKED
+    assert simulate.asked_share(0.3, 1.0) == 0.3
+
+
+def test_render_prompt_states_the_target_size():
+    spec = simulate.build_prompt_spec([make_genuine(i) for i in range(5)], EDIT_TYPES, examples=2, seed=1)
+    prompt = simulate.render_prompt(spec, "one two three four five six seven eight nine ten", ["reword"], 0.4)
+    assert "about 4 of its 10 words" in prompt and "40%" in prompt
 
 
 def test_dry_run_calls_nothing(tmp_path, monkeypatch):
@@ -235,6 +261,20 @@ def test_run_skips_genuine_sources_and_labels_simulated(tmp_path, monkeypatch):
     simulate.run(CONFIG, answers, genuine, tmp_path, go=True)
     assert len(client.prompts) == 3
     assert json.loads((tmp_path / "run_report.json").read_text())["skipped_existing"] == 3
+
+
+def test_run_records_a_target_and_limit_takes_a_trial_batch(tmp_path, monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(simulate, "build_clients", lambda config: {"fake": client})
+    genuine = [make_genuine(i) for i in range(5)]
+    answers = [make_answer(i) for i in range(5, 25)]
+    simulate.run(CONFIG, answers, genuine, tmp_path, go=True, limit=4)
+    records = [json.loads(line) for line in (tmp_path / "simulated.jsonl").read_text().splitlines()]
+    assert len(records) == 4 and len(client.prompts) == 4
+    assert all(r["prompt_template"] == "simulate_v2" for r in records)
+    assert all(r["target_edit_distance"] >= simulate.MIN_TARGET for r in records)
+    assert all(r["asked_share"] == round(r["target_edit_distance"], 4) for r in records)
+    assert all("words" in p and "%" in p for p in client.prompts)
 
 
 def test_a_good_edit_resets_the_failure_streak(tmp_path, monkeypatch):

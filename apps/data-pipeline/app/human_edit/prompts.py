@@ -19,9 +19,15 @@ EDIT_TYPE_TEXT = {
     "fact_tweak": "change a small detail, like a term, a number or an example",
 }
 
-TEMPLATE_NAME = "simulate_v1"
+# simulate_v1 is kept for the records that used it. It asked for "a few
+# quick changes" and to "keep most of the original wording", and the
+# simulated edits came out about five times smaller than the genuine ones
+# (median word edit distance 0.08 against 0.38), with one in five left
+# unchanged. v2 gives every answer a target size drawn from the genuine
+# edits, so the simulation copies how much students change, not only what.
+TEMPLATE_V1_NAME = "simulate_v1"
 
-TEMPLATE = (
+TEMPLATE_V1 = (
     "These are real examples of how students edited AI answers before "
     "submitting them:\n\n{examples}\n\n"
     "Now edit the answer below the same way. Make these kinds of edits: "
@@ -32,3 +38,16 @@ TEMPLATE = (
 )
 
 EXAMPLE = "Original: {source}\nEdited: {edited}"
+
+TEMPLATE_NAME = "simulate_v2"
+
+TEMPLATE = (
+    "These are real examples of how students edited AI answers before "
+    "submitting them:\n\n{examples}\n\n"
+    "Now edit the answer below the same way. Make these kinds of edits: "
+    "{edit_types}. Edit like a student making it their own, not to "
+    "improve it. Change about {target_words} of its {n_words} words "
+    "(roughly {target_pct}%), counting words you reword, cut or move. "
+    "Do not add new ideas, and keep any mistakes unless a small detail "
+    "change touches them.\n\nAnswer: {answer}"
+)

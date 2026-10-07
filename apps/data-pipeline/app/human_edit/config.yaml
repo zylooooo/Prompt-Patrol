@@ -16,6 +16,11 @@ simulated:
   share: 1.0
   # genuine edits shown to the LLM as examples in every prompt
   examples: 6
+  # each answer gets a target size drawn from the genuine edits (word edit
+  # distance). In a 60-answer trial of simulate_v2 the editor changed about
+  # 0.46 of what it was asked (median 0.18 against a 0.375 target), so the
+  # prompt asks for the target times this factor, capped at 0.9
+  target_scale: 2.0
   # same placeholder model as the paraphrase pass, pending team agreement
   editor:
     name: deepseek-v4-pro
