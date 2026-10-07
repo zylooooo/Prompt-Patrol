@@ -21,6 +21,6 @@ scripts:
       pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("409", () => pm.response.to.have.status(409));
-      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("A user with this email already exists."));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("A user with this email already exists."));
     language: text/javascript
 order: 6000

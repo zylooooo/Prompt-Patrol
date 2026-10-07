@@ -14,6 +14,6 @@ scripts:
       pm.test("run with the Prompt Patrol Dev - TA environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
       pm.test("401", () => pm.response.to.have.status(401));
-      pm.test("revoked, not expired", () => pm.expect(pm.response.json().detail.code).to.eql("session_revoked"));
+      pm.test("revoked, not expired", () => pm.expect(pm.response.json().error).to.eql("session_revoked"));
     language: text/javascript
 order: 2000

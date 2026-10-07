@@ -20,6 +20,6 @@ scripts:
       pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("404", () => pm.response.to.have.status(404));
-      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("User not found"));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("User not found"));
     language: text/javascript
 order: 5000
