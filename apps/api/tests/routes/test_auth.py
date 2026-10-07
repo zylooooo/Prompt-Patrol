@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 from urllib.parse import quote
 
+import httpx
 import pytest
 from authlib.integrations.base_client.errors import OAuthError
 from fastapi.responses import RedirectResponse
@@ -229,6 +230,26 @@ async def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
 @pytest.mark.asyncio
 async def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
     error = OAuthError(error="mismatching_state", description="CSRF Warning!")
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = await client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_failed"
+    assert "__Host-session" not in response.cookies
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("unreachable"),
+        httpx.HTTPStatusError(
+            "503", request=httpx.Request("POST", "https://x/oauth/token"), response=httpx.Response(503)
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_callback_sends_an_unreachable_auth0_to_the_spa_login(client, error):
+    # Was an uncaught 500: a JSON page the browser landed on with no way back.
     with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
         response = await client.get("/api/auth/callback", follow_redirects=False)
 
