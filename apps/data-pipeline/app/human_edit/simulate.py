@@ -28,6 +28,8 @@ from human_edit.common import (
     load_config,
     read_jsonl,
     stratified_sample,
+    tokens,
+    word_edit_distance,
 )
 from human_edit.prompts import EDIT_TYPE_TEXT, EXAMPLE, SYSTEM, TEMPLATE, TEMPLATE_NAME
 
@@ -52,6 +54,9 @@ def build_prompt_spec(genuine, edit_types, examples, seed):
         # a type no editor used gets weight zero, so the simulation never
         # does something the genuine subset never did
         "type_weights": {t: type_counts.get(t, 0) for t in edit_types},
+        # how much of each answer the editors changed; every simulated
+        # answer is given one of these as its target size
+        "edit_sizes": sorted(round(word_edit_distance(g["source_answer"], g["answer"]), 4) for g in genuine),
         "types_per_answer": {str(k): v for k, v in sorted(per_answer.items())},
         "example_edit_ids": [g["edit_id"] for g in shown],
         "examples": [{"source": g["source_answer"], "edited": g["answer"]} for g in shown],
@@ -72,10 +77,30 @@ def draw_edit_types(spec, rng):
     return sorted(chosen)
 
 
-def render_prompt(spec, answer, edit_types):
+MIN_TARGET = 0.05
+MAX_ASKED = 0.9
+
+
+def draw_target(spec, rng):
+    """A target share of words to change, drawn from the genuine edit
+    sizes, never below MIN_TARGET so every edit changes something."""
+    return max(MIN_TARGET, rng.choice(spec["edit_sizes"]))
+
+
+def asked_share(target, scale):
+    """The share the prompt asks for. The editor model changes less than it
+    is asked to, so the target is scaled up by the configured factor, and
+    capped so it is never told to rewrite everything."""
+    return min(MAX_ASKED, target * scale)
+
+
+def render_prompt(spec, answer, edit_types, target):
     examples = "\n\n".join(EXAMPLE.format(**e) for e in spec["examples"])
     wanted = "; ".join(EDIT_TYPE_TEXT[t] for t in edit_types)
-    return TEMPLATE.format(examples=examples, edit_types=wanted, answer=answer)
+    n_words = max(1, len(tokens(answer)))
+    target_words = max(1, round(target * n_words))
+    return TEMPLATE.format(examples=examples, edit_types=wanted, answer=answer, n_words=n_words,
+                           target_words=target_words, target_pct=round(target * 100))
 
 
 def existing_ids(path):
@@ -84,19 +109,29 @@ def existing_ids(path):
     return {r["edit_id"] for r in read_jsonl(path)}
 
 
-def run(config, answers, genuine, out_dir, go):
+def run(config, answers, genuine, out_dir, go, limit=None):
     """Edit the selected answers into out_dir: simulated.jsonl,
     prompt_spec.json and run_report.json. Without go, the plan is logged
     and nothing is called."""
     simulated = config["simulated"]
     spec = build_prompt_spec(genuine, config["edit_types"], simulated["examples"], config["seed"])
+    scale = simulated.get("target_scale", 1.0)
+    spec["target_scale"] = scale
     # answers already hand-edited stay out, so one source never carries both
     taken = {g["source_answer_id"] for g in genuine}
     pool = [a for a in answers if a["answer_id"] not in taken]
     selected = stratified_sample(pool, simulated["share"], config["seed"])
+    if limit and limit < len(selected):
+        # a small trial batch spread over every exam, generator and tier,
+        # not the first answers by id, which all come from one exam
+        trial = random.Random(config["seed"]).sample(selected, limit)
+        selected = sorted(trial, key=lambda a: a["answer_id"])
     editor = simulated["editor"]
     logger.info("Plan: %d of %d answers, one call each to %s", len(selected), len(pool), editor["name"])
     logger.info("Derived edit-type weights %s, types per answer %s", spec["type_weights"], spec["types_per_answer"])
+    sizes = spec["edit_sizes"]
+    logger.info("Target edit sizes from %d genuine edits, median %.3f, asked at x%s", len(sizes),
+                sizes[len(sizes) // 2], scale)
     if not go:
         logger.info("Dry run only. Re-run with --go to edit.")
         return
@@ -119,6 +154,7 @@ def run(config, answers, genuine, out_dir, go):
                 # draw before the skip check, so a resumed run gives every
                 # answer the same edit types as the first attempt did
                 edit_types = draw_edit_types(spec, rng)
+                target = draw_target(spec, rng)
                 edit_id = f"{source['answer_id']}/edit-simulated"
                 if edit_id in done:
                     report["skipped_existing"] += 1
@@ -126,7 +162,7 @@ def run(config, answers, genuine, out_dir, go):
                 report["requested"] += 1
                 result = None
                 try:
-                    result = client.generate(SYSTEM, render_prompt(spec, source["answer"], edit_types),
+                    result = client.generate(SYSTEM, render_prompt(spec, source["answer"], edit_types, asked_share(target, scale)),
                                              simulated["decoding"])
                 except Exception:
                     logger.exception("failed: %s", source["answer_id"])
@@ -157,6 +193,8 @@ def run(config, answers, genuine, out_dir, go):
                     "editor_settings": result.params_honoured,
                     "prompt_template": TEMPLATE_NAME,
                     "edit_types": edit_types,
+                    "target_edit_distance": target,
+                    "asked_share": round(asked_share(target, scale), 4),
                     "example_edit_ids": spec["example_edit_ids"],
                     "usage": result.usage,
                     "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -179,6 +217,7 @@ def main():
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--tag", default="run", help="label for the output folder")
     parser.add_argument("--out", default=None, help="existing run folder to resume into")
+    parser.add_argument("--limit", type=int, default=None, help="edit only the first N selected answers, for a trial")
     parser.add_argument("--go", action="store_true", help="actually call the API; default is a dry-run plan")
     args = parser.parse_args()
 
@@ -187,7 +226,7 @@ def main():
         out_dir = Path(args.out)
     else:
         out_dir = DATA_DIR / "simulated" / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + args.tag)
-    run(config, load_answers(Path(args.answers)), read_jsonl(args.genuine), out_dir, args.go)
+    run(config, load_answers(Path(args.answers)), read_jsonl(args.genuine), out_dir, args.go, args.limit)
 
 
 if __name__ == "__main__":
