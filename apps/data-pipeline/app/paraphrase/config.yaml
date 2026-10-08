@@ -4,8 +4,7 @@
 share: 1.0
 seed: 42
 strengths: [light, heavy]
-# PP-95 is still open: which model paraphrases, and whether one model
-# serves all generators' answers. deepseek is the placeholder, it is the
+# PP-95: deepseek paraphrases every generator's answers. It is the
 # cheapest of the API generators and was reliable in the harness pilot
 paraphraser:
   name: deepseek-v4-pro

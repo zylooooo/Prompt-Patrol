@@ -56,7 +56,10 @@ async def client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+    # What a browser sends from our own page; test_csrf.py overrides it.
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", headers={"Sec-Fetch-Site": "same-origin"}
+    ) as ac:
         ac.app = app
         yield ac
     app.dependency_overrides.clear()

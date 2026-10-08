@@ -16,7 +16,8 @@ from config import (
     configure_logging,
 )
 from db import engine
-from middleware import RequestIdMiddleware
+from exceptions import register_exception_handlers
+from middleware import CrossOriginProtectionMiddleware, RequestIdMiddleware
 from routes import auth_router, batches_router, checks_router, users_router
 
 configure_logging()
@@ -54,7 +55,10 @@ app.add_middleware(
     https_only=ENVIRONMENT != "dev",
     max_age=600,
 )
+# Added before RequestIdMiddleware so it runs inside it: a refusal keeps its request id.
+app.add_middleware(CrossOriginProtectionMiddleware)
 app.add_middleware(RequestIdMiddleware)
+register_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(checks_router)
 app.include_router(batches_router)

@@ -11,7 +11,7 @@ cleaned answers and harness runs into fine-tuning corpus versions.
 
 Python 3.13. From inside `apps/data-pipeline`:
 
-```
+```sh
 python -m venv .venv
 .venv\Scripts\activate       # macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
@@ -25,7 +25,7 @@ test tooling. Tests run with `pytest` from this folder.
 Per-dataset steps (loader/profiling/cleaning) live under `app/<dataset>/` and
 run as modules, from inside `app/`:
 
-```
+```sh
 cd app
 python -m mohler.loader        # pull the pinned Mohler revision -> data/raw/
 python -m mohler.profiling     # report duplicates/encoding issues -> data/profile_report.json
@@ -35,7 +35,7 @@ python -m mohler.cleaning      # fix + dedupe -> data/cleaned/, data/cleaning_lo
 Cross-dataset steps stay flat in `app/` and run directly, from inside
 `apps/data-pipeline`:
 
-```
+```sh
 python app/splitting.py     # question-level train/val/test -> data/splits/
 python app/leakage_check.py # verify no question crosses a split boundary
 python app/logo_folds.py    # leave-one-generator-out folds (needs a generator column, which splitting.py does not write)
@@ -92,14 +92,14 @@ Copy `.env.example` to `.env` and fill in the API keys. The local
 generators need Ollama installed and running, with the configured
 models pulled once:
 
-```
+```sh
 ollama pull llama3.1:8b
 ollama pull qwen3:8b
 ```
 
 Then, from inside `app/`:
 
-```
+```sh
 python -m harness.generate --dataset mohler                                 # dry run, prints the call plan
 python -m harness.generate --dataset mohler --questions 1 --tag smoke --go  # one question, real calls
 python -m harness.generate --dataset mohler --tag pilot --go                # full run
@@ -124,6 +124,7 @@ Each run writes `data/generated/<run_id>/answers.jsonl`, one JSON record
 per generated answer, plus `run_report.json` with per-generator success
 counts and token usage. Record shape:
 
+```json
     {
       "answer_id": "mohler/E03.Q03/gpt-5.5/weak/01",
       "question_id": "mohler/E03.Q03",
@@ -138,8 +139,10 @@ counts and token usage. Record shape:
       "timestamp": "2026-09-18T08:51:46+00:00",
       "answer": "..."
     }
+```
 
 Notes:
+
 - answer_id is built from the question id, generator, tier and sequence,
   so re-running the same config reproduces the same ids.
 - params_honoured records the decoding parameters the call actually
@@ -178,7 +181,7 @@ strengths, the paraphraser model and the two filter thresholds.
 
 It runs in two steps, from inside `app/`:
 
-```
+```sh
 python -m paraphrase.generate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl            # dry run
 python -m paraphrase.generate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl --tag pilot --go
 python -m paraphrase.filter --run ../data/paraphrased/<run_id> --spot-check 30
@@ -219,7 +222,7 @@ Two subsets:
 
 Steps, from inside `app/`:
 
-```
+```sh
 python -m human_edit.assign --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl
 python -m human_edit.collect --returned <folder with the edited sheets>
 python -m human_edit.simulate --answers ../data/ai_runs/mohler-v3-20260930/answers.jsonl --tag pilot       # dry run
@@ -254,6 +257,34 @@ python -m human_edit.build --run ../data/human_edit/simulated/<run_id>
    `build_report.json`. That repo is not the team store. Shared data
    lives in DVC on DagsHub, see Corpus build.
 
+## Attaching styles to a corpus version
+
+`app/corpus/attach_styles.py` turns the paraphrase and human-edit output
+into rows ml-training can read. Both passes read a harness run, so they hold
+answers the corpus version dropped (keep, floor, train cap). The script
+keeps only records whose `source_answer_id` is an AI answer in the corpus
+version, gives each the partition, question_id, dataset and tier of that
+source, so a rewrite of a test answer stays in test, and cleans the text
+with `clean_text`. Answers under the word floor are dropped. From inside
+`app/`:
+
+```
+python -m corpus.attach_styles --style paraphrased --corpus ../../../ml-training/data/splits/v0.1.parquet \
+    --source ../data/paraphrased/<mohler run>/paraphrased.jsonl \
+    --source ../data/paraphrased/<sprag run>/paraphrased.jsonl \
+    --source ../data/paraphrased/<engsaf run>/paraphrased.jsonl
+python -m corpus.attach_styles --style human_edited --corpus ../../../ml-training/data/splits/v0.1.parquet \
+    --source ../data/human_edit/simulated/<run>/human_edited.jsonl
+```
+
+Output goes next to the corpus as `<version>-paraphrased.parquet` or
+`<version>-human_edited.parquet` with a manifest. Rows follow the corpus
+column contract plus `style` (`paraphrased-light`, `paraphrased-heavy`,
+`human_edited-genuine`, `human_edited-simulated`), `source_answer_id` and the
+style's own fields. Like the spliced file they hold only label 1, so
+ml-training appends them to a corpus version and never reads them alone.
+Publish them the same way as the corpus version.
+
 ## Splicer
 
 Builds spliced answers: a student answer with some of its sentences
@@ -274,7 +305,7 @@ per band. In v0.1, train and val get about a third as many spliced
 answers as raw AI answers, and test gets 90 per dataset and band.
 `app/splicer/config.yaml` holds these settings. From inside `app/`:
 
-```
+```sh
 python -m splicer.build_spliced                                    # reads corpus from config.yaml
 python -m splicer.build_spliced --corpus data/corpus/v0.1.parquet  # or name a version
 ```
@@ -363,7 +394,7 @@ commit the updated pointer and `dvc push`. `dvc add`
 records only what is in the folder, so adding from a clone without the
 other runs would publish a folder without them. Then from inside `app/`:
 
-```
+```sh
 python -m corpus.build                     # every dataset in the config
 python -m corpus.build --datasets mohler   # a check build, written as v0.1-only-mohler
 ```

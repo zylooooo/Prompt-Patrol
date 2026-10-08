@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 from urllib.parse import quote
 
+import httpx
 import pytest
 from authlib.integrations.base_client.errors import OAuthError
 from fastapi.responses import RedirectResponse
@@ -229,6 +230,26 @@ async def test_callback_sends_a_cancelled_sign_in_to_the_spa_login(client):
 @pytest.mark.asyncio
 async def test_callback_sends_any_other_oauth_failure_to_the_spa_login(client):
     error = OAuthError(error="mismatching_state", description="CSRF Warning!")
+    with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
+        response = await client.get("/api/auth/callback", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{FRONTEND_URL}/login?error=sign_in_failed"
+    assert "__Host-session" not in response.cookies
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("unreachable"),
+        httpx.HTTPStatusError(
+            "503", request=httpx.Request("POST", "https://x/oauth/token"), response=httpx.Response(503)
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_callback_sends_an_unreachable_auth0_to_the_spa_login(client, error):
+    # Was an uncaught 500: a JSON page the browser landed on with no way back.
     with patch("routes.auth_routes.oauth.auth0.authorize_access_token", new=AsyncMock(side_effect=error)):
         response = await client.get("/api/auth/callback", follow_redirects=False)
 
@@ -536,7 +557,7 @@ async def test_a_401_with_no_cookie_says_so(client):
     # visitor has not been signed out of anything and must not be told they were.
     body = (await client.get("/api/auth/me")).json()
 
-    assert body["detail"]["code"] == SessionFailure.not_signed_in.value
+    assert body["error"] == SessionFailure.not_signed_in.value
 
 
 @pytest.mark.asyncio
@@ -545,7 +566,7 @@ async def test_a_401_on_an_unrecognised_cookie_says_so(client):
 
     body = (await client.get("/api/auth/me")).json()
 
-    assert body["detail"]["code"] == SessionFailure.session_unknown.value
+    assert body["error"] == SessionFailure.session_unknown.value
 
 
 @pytest.mark.asyncio
@@ -588,7 +609,7 @@ async def test_a_401_names_which_limit_ended_the_session(client, db_session, ove
     response = await client.get("/api/auth/me")
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == expected.value
+    assert response.json()["error"] == expected.value
 
 
 @pytest.mark.asyncio
@@ -609,7 +630,7 @@ async def test_a_401_after_deactivation_blames_the_account_not_the_session(clien
     response = await client.get("/api/auth/me")
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == SessionFailure.account_deactivated.value
+    assert response.json()["error"] == SessionFailure.account_deactivated.value
 
 
 @pytest.mark.asyncio

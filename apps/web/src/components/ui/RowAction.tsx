@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+// inline-flex so the <a> variant boxes its padding like the <button> does —
+// a bare inline <a> ignores vertical padding for layout and sits taller/lower.
 const ROW_ACTION_CLASS =
-  "cursor-pointer rounded-md px-2.5 py-[5px] text-[13px] text-primary transition-colors hover:bg-primary-soft focus-visible:bg-primary-soft disabled:pointer-events-none disabled:opacity-45";
+  "inline-flex cursor-pointer items-center rounded-md px-2.5 py-[5px] text-[13px] text-primary transition-colors hover:bg-primary-soft focus-visible:bg-primary-soft disabled:pointer-events-none disabled:opacity-45";
 
 interface RowActionProps {
   onClick: () => void;

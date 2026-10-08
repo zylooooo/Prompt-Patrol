@@ -1,5 +1,6 @@
 import UsersPage from "../UsersPage";
 import type { AppUser } from "../../types";
+import { ApiError } from "../../api/client";
 import { MemoryRouter } from "react-router-dom";
 import { installDomStubs } from "../../test/dom-stubs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -231,6 +232,34 @@ describe("UsersPage - add account form", () => {
     renderPage();
 
     expect(screen.queryByPlaceholderText("Full name")).toBeNull();
+  });
+
+  it("narrows the roster to the existing account on a duplicate email", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockRejectedValue(new ApiError(409, "Email already exists"));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await rowFor("Assigned Assistant");
+    fireEvent.click(screen.getByRole("radio", { name: "Instructors 1" }));
+
+    fireEvent.change(screen.getByLabelText(/SMU email/), {
+      target: { value: "ta-floating@smu.edu.sg" },
+    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Teaching Assistant" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+
+    await screen.findByText(/already has an account/);
+    expect(screen.getByLabelText("Search accounts")).toHaveProperty(
+      "value",
+      "ta-floating@smu.edu.sg",
+    );
+    // Switched off "Instructors" too, or the TA it just searched for stays hidden.
+    await rowFor("Floating Assistant");
+    expect(screen.queryByText("Assigned Assistant")).toBeNull();
   });
 });
 

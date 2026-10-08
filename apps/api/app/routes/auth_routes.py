@@ -2,6 +2,7 @@ import logging
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
+import httpx
 from authlib.integrations.base_client.errors import OAuthError
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import RedirectResponse
@@ -67,6 +68,11 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
             exc.error,
             exc.description,
         )
+        return _login_redirect("sign_in_failed")
+    except httpx.HTTPError:
+        # Auth0 unreachable, timed out, or answered with a 5xx page instead of
+        # an OAuth error. Still a redirect: a JSON 500 would strand the browser.
+        logger.exception("Could not reach Auth0 to complete sign-in.")
         return _login_redirect("sign_in_failed")
     claims = token["userinfo"]
     email = claims.get("email") or claims["preferred_username"]

@@ -4,14 +4,14 @@ Trains, evaluates and logs the AI-answer detectors. One config object describes 
 run, one script executes it, and everything lands on the shared DagsHub MLflow
 server so the comparison table in the report can be rebuilt from scratch.
 
-| File                                           | What it is                                                                          |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`config.py`](config.py)                       | The schema, and the only place defaults live. One `RunConfig` fully describes a run  |
-| [`experiments.py`](experiments.py)             | The registry — every experiment in the study, as a `RunConfig`                       |
-| [`trial-training.py`](trial-training.py)       | The runner. Takes a `RunConfig` and executes it end to end                           |
-| [`metrics.py`](metrics.py)                     | The official metric set. Every detector is scored through `evaluate()`               |
-| [`tracking.py`](tracking.py)                   | MLflow / DagsHub. Every run is opened with `start_run()`                             |
-| [`reporting.py`](reporting.py)                 | Pulls finished runs back out into the report tables                                  |
+| File                                     | What it is                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`config.py`](config.py)                 | The schema, and the only place defaults live. One `RunConfig` fully describes a run |
+| [`experiments.py`](experiments.py)       | The registry — every experiment in the study, as a `RunConfig`                      |
+| [`trial-training.py`](trial-training.py) | The runner. Takes a `RunConfig` and executes it end to end                          |
+| [`metrics.py`](metrics.py)               | The official metric set. Every detector is scored through `evaluate()`              |
+| [`tracking.py`](tracking.py)             | MLflow / DagsHub. Every run is opened with `start_run()`                            |
+| [`reporting.py`](reporting.py)           | Pulls finished runs back out into the report tables                                 |
 
 ## Setup
 
@@ -187,13 +187,13 @@ MY_RUN = RunConfig(
 
 What each block controls:
 
-| Block         | Controls                                                                 |
-| ------------- | ------------------------------------------------------------------------ |
-| `model`       | which checkpoint, pinned to a commit sha, and **`tuning_method`**         |
-| `data`        | which split file, and the split strategy                                  |
-| `peft`        | adapter rank, alpha, dropout, which modules get an adapter                |
+| Block         | Controls                                                                    |
+| ------------- | --------------------------------------------------------------------------- |
+| `model`       | which checkpoint, pinned to a commit sha, and **`tuning_method`**           |
+| `data`        | which split file, and the split strategy                                    |
+| `peft`        | adapter rank, alpha, dropout, which modules get an adapter                  |
 | `optim`       | learning rate, epochs, batch size, precision, early stopping, class weights |
-| `calibration` | calibrator, the FPR budget, and the abstention band                       |
+| `calibration` | calibrator, the FPR budget, and the abstention band                         |
 
 **`model.tuning_method` is the only switch that changes what runs.** `lora` / `dora`
 build an adapter, `full_ft` trains everything, `zeroshot` / `api` train nothing and
@@ -225,7 +225,7 @@ Before you run, check:
 
 ## What a run produces
 
-```
+```text
 config.resolved.json              every field, after validation and defaults
 env/environment.json              python, torch, platform, GPU
 thresholds.json                   the frozen boundary: threshold, calibrator params,

@@ -23,9 +23,9 @@ const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   deleted:
     "This account has been removed from Prompt Patrol. If you need access again, ask an admin to set you up.",
   session_expired:
-    "You were signed out after 90 minutes without activity. Sign in again to pick up where you left off.",
+    "You were signed out after 30 minutes without activity. Sign in again to pick up where you left off.",
   session_ended:
-    "You were signed out because a session lasts a maximum of 12 hours. Nothing is wrong with your account — sign in again to carry on.",
+    "You were signed out because a session lasts a maximum of 4 hours. Nothing is wrong with your account — sign in again to carry on.",
   session_revoked:
     "This session was ended, either by signing out in another tab or by an administrator. Sign in again to continue.",
   session_unknown:

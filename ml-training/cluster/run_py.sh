@@ -29,5 +29,5 @@ module load Python/3.11.11-GCCcore-13.3.0
 module load CUDA/12.4.0
 source "$HOME/venvs/prompt-patrol/bin/activate"
 
-cd "${PP_DIR:-$HOME/tori/Prompt-Patrol}/ml-training"
+cd "${PP_DIR:-$HOME/malcolm/Prompt-Patrol}/ml-training"
 python "$@"

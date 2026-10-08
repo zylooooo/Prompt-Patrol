@@ -138,7 +138,7 @@ A near-monochrome deep-indigo system: one hue family carries chrome, structure, 
 ### Primary
 - **Deep Indigo** (`#4338ca`): the sidebar's ground, primary CTAs, and the input focus border. This is the one color allowed to dominate a screen (the sidebar), everywhere else it's used sparingly for action.
 - **Deep Indigo Hover** (`#3730a3`): hover/focus-visible state for primary actions.
-- **Indigo Accent** (`#6366f1`): links, the active-nav accent bar, focus rings, and background wash on the page body (`radial-gradient` at low opacity) — a lighter, more energetic step off primary, used for emphasis rather than structure.
+- **Indigo Accent** (`#6366f1`): links, the active-nav accent bar, and background wash on the page body (`radial-gradient` at low opacity) — a lighter, more energetic step off primary, used for emphasis rather than structure.
 
 ### Secondary
 - **Slate** (`#5a6080`): secondary text-bearing surfaces and de-emphasized actions that still need to read as "a button," not a link.

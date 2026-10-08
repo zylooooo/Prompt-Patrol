@@ -65,6 +65,20 @@ async def test_create_batch_happy_path(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_batch_with_nothing_uploaded_is_400_not_500(client, db_session):
+    user = await _signed_in_instructor(client, db_session)
+
+    with patch("services.batches_service.download_object", side_effect=FileNotFoundError):
+        response = await client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{user.id}/never-put.csv", "file_name": "a.csv"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+
+
+@pytest.mark.asyncio
 async def test_get_progress_happy_path(client, db_session):
     user = await _signed_in_instructor(client, db_session)
 
@@ -111,6 +125,26 @@ async def test_get_progress_includes_failure_reasons(client, db_session):
     assert len(body["failures"]) == 1
     assert body["failures"][0]["external_ref"] == "stu-1"
     assert "answer_text" in body["failures"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_with_no_valid_rows_is_still_accepted_with_its_reasons(client, db_session):
+    # A 400 here would replace every per-row reason with one message. DECISION LOG [0.24.0].
+    user = await _signed_in_instructor(client, db_session)
+
+    with (
+        patch("services.batches_service.download_object", return_value="external_ref,answer_text\nstu-1,too short\n"),
+        patch("services.batches_service.enqueue_row") as enqueue,
+    ):
+        create_response = await client.post(
+            "/api/batches",
+            json={"upload_key": f"batches/{user.id}/key-a.csv", "file_name": "a.csv"},
+        )
+
+    assert create_response.status_code == 202
+    enqueue.assert_not_called()
+    progress = (await client.get(f"/api/batches/{create_response.json()['batch_id']}")).json()
+    assert progress["row_total"] == progress["failed"] == 1
 
 
 @pytest.mark.asyncio

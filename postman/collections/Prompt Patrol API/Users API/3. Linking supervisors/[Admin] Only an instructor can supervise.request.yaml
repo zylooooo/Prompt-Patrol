@@ -20,6 +20,6 @@ scripts:
       pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("400", () => pm.response.to.have.status(400));
-      pm.test("detail explains why", () => pm.expect(pm.response.json().detail).to.eql("Only an active instructor can supervise, and only a teaching assistant can be supervised."));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Only an active instructor can supervise, and only a teaching assistant can be supervised."));
     language: text/javascript
 order: 4000

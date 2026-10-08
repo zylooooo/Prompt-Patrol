@@ -30,9 +30,8 @@ export interface RequestOptions {
   timeoutMs?: number;
 }
 
+// The contract's `Error` schema - every API error since contract 0.23.0.
 interface ErrorBody {
-  detail?: string | { code?: string; message?: string };
-  code?: string;
   error?: string;
   message?: string;
 }
@@ -48,15 +47,7 @@ async function describeFailure(
     return { code: null, message: fallback };
   }
 
-  const detail = body.detail;
-  if (detail && typeof detail === "object") {
-    return { code: detail.code ?? null, message: detail.message ?? fallback };
-  }
-  if (typeof detail === "string") return { code: null, message: detail };
-  return {
-    code: body.code ?? body.error ?? null,
-    message: body.message ?? fallback,
-  };
+  return { code: body.error ?? null, message: body.message ?? fallback };
 }
 
 function withTimeout(
