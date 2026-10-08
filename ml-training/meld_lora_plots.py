@@ -129,3 +129,41 @@ def plot_slices(slice_frame, save=None):
     _bars(b, f["name"], f["deployed_fpr"], "#1f77b4", max(0.05, fpr_max * 1.2),
           "FPR (humans wrongly flagged)", "False accusation rate")
     _save(fig, "slice_metrics.png", save)
+
+
+def plot_ppv_prevalence(results, test_prevalence=None, save=None):
+    """Projected PPV at deployment prevalences and the test-set prevalence."""
+    rows = []
+    for key, value in results.items():
+        prefix = "deployed_ppv_at_prevalence_"
+        if key.startswith(prefix) and np.isfinite(value):
+            rows.append((float(key[len(prefix):]), float(value), "deployment"))
+    if test_prevalence is not None and np.isfinite(test_prevalence):
+        test_ppv = results.get("deployed_precision")
+        if test_ppv is not None and np.isfinite(test_ppv):
+            rows.append((float(test_prevalence), float(test_ppv), "test set"))
+    if not rows:
+        return
+
+    rows.sort()
+    prevalence = np.asarray([row[0] for row in rows])
+    ppv = np.asarray([row[1] for row in rows])
+    kind = np.asarray([row[2] for row in rows])
+    fig, ax = plt.subplots(figsize=(5.5, 4.0))
+    deployment = kind == "deployment"
+    if deployment.any():
+        ax.plot(prevalence[deployment] * 100, ppv[deployment] * 100,
+                marker="o", color="#9467bd", label="projected deployment")
+    if (~deployment).any():
+        ax.scatter(prevalence[~deployment] * 100, ppv[~deployment] * 100,
+                   marker="D", color="#ff7f0e", zorder=4, label="test-set prevalence")
+    for x, y, label in zip(prevalence * 100, ppv * 100, kind):
+        ax.annotate(f"{y:.1f}%", (x, y), textcoords="offset points",
+                    xytext=(0, 7), ha="center")
+    ax.set(xlim=(0, max(prevalence) * 100 + 2),
+           ylim=(0, 100), xlabel="AI prevalence among answers (%)",
+           ylabel="precision among flagged answers (%)",
+           title="Projected precision by AI prevalence")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(loc="lower right")
+    _save(fig, "ppv_by_prevalence.png", save)

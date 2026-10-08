@@ -40,7 +40,8 @@ from sklearn.metrics import precision_recall_curve, roc_auc_score, roc_curve
 from combined_data import load_combined, slice_flag_rates
 from metrics import calibration_metrics, evaluate, slice_report, threshold_at_fpr
 from meld_lora_plots import (plot_calibration, plot_pr, plot_roc,
-                            plot_score_hist, plot_slices, plot_training)
+                            plot_ppv_prevalence, plot_score_hist, plot_slices,
+                            plot_training)
 
 MELD_REPO = "anon-review-meld-2026/meld"
 MLFLOW_EXPERIMENT = "E2-finetune"
@@ -448,11 +449,28 @@ def main():
         plot_calibration(calibration_frame)
         plot_score_hist(labels, probs, tuned["threshold"], baseline_prob)
         plot_slices(slice_frame)
+        test_prevalence = float(test["label"].mean())
+        plot_ppv_prevalence(tuned["results"], test_prevalence=test_prevalence)
 
         log_dataframe_artifact(history_frame, OUT_DIR / f"{run_name}_training_history.csv", "charts")
         log_dataframe_artifact(curve_frame, OUT_DIR / f"{run_name}_curves.csv", "charts")
         log_dataframe_artifact(calibration_frame, OUT_DIR / f"{run_name}_calibration_bins.csv", "charts")
         log_dataframe_artifact(slice_frame, OUT_DIR / f"{run_name}_slice_metrics.csv", "charts")
+        ppv_frame = pd.DataFrame([
+            {"ai_prevalence": float(key.rsplit("_", 1)[-1]),
+             "projected_ppv": float(value), "source": "deployment"}
+            for key, value in tuned["results"].items()
+            if key.startswith("deployed_ppv_at_prevalence_") and np.isfinite(value)
+        ])
+        ppv_frame = pd.concat([
+            ppv_frame,
+            pd.DataFrame([{
+                "ai_prevalence": test_prevalence,
+                "projected_ppv": float(tuned["results"]["deployed_precision"]),
+                "source": "test set",
+            }]),
+        ], ignore_index=True).sort_values("ai_prevalence")
+        log_dataframe_artifact(ppv_frame, OUT_DIR / f"{run_name}_ppv_by_prevalence.csv", "charts")
         payload = {"run": run_name, "mode": mode, "args": vars(args),
                    "n": {"train": len(train_frame), "val": len(val), "test": len(test)},
                    "training_history": history,
