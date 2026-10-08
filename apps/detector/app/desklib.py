@@ -63,13 +63,15 @@ def _model_class():
 @lru_cache(maxsize=1)
 def load():
     """Tokenizer and model, adapter merged in, ready for CPU inference."""
+    # first, so a missing adapter is reported as that - not as a missing library, and without
+    # importing anything heavy
+    if not (ADAPTER_DIR / "adapter_config.json").exists():
+        raise FileNotFoundError(f"LoRA adapter not found in {ADAPTER_DIR}")
+
     from huggingface_hub import snapshot_download
     from peft import PeftModel
     from safetensors.torch import load_file
     from transformers import AutoConfig, AutoTokenizer
-
-    if not (ADAPTER_DIR / "adapter_config.json").exists():
-        raise FileNotFoundError(f"LoRA adapter not found in {ADAPTER_DIR}")
 
     logger.info("Loading %s with adapter %s", DESKLIB_REPO, ADAPTER_DIR)
     model_dir = snapshot_download(DESKLIB_REPO)
