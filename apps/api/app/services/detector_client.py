@@ -6,6 +6,7 @@ doesn't have to know anything about HTTP. checks.py owns the *decision*;
 this module owns *reaching the score*.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Literal
 
@@ -13,7 +14,8 @@ import httpx
 
 from config import DETECTOR_URL
 
-MODEL_VERSION = "roberta-base-openai-detector-v0"
+# Overridden by docker-compose.desklib.yml so the API reports the model that is actually running
+MODEL_VERSION = os.getenv("DETECTOR_MODEL_VERSION", "roberta-base-openai-detector-v0")
 
 # Short on purpose: this backs a status badge that polls, so a detector that has
 # stopped answering should read as "unavailable" quickly rather than hold the

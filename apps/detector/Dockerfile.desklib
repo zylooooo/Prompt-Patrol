@@ -1,0 +1,34 @@
+# The detector service with the fine-tuned desklib model (desklib academic + the project's LoRA
+# adapter) instead of the roberta baseline. 
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Healthcheck in docker-compose.yml runs curl inside this container
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 detectoruser \
+    && mkdir -p /home/detectoruser/.cache/huggingface \
+    && chown -R detectoruser:detectoruser /app /home/detectoruser
+USER detectoruser
+ENV PATH="/home/detectoruser/.local/bin:${PATH}"
+
+# CPU-only torch first (see the default Dockerfile for why), then the rest plus peft
+COPY requirements.txt requirements-desklib.txt ./
+RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-desklib.txt
+
+# Bake the ~1.7GB desklib base weights into the image so startup is a local disk read. Keep the
+# name in step with desklib.DESKLIB_REPO. HF_HUB_OFFLINE afterwards turns a cache miss into a loud
+# startup failure instead of a silent download.
+ENV HF_HOME=/home/detectoruser/.cache/huggingface
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('desklib/ai-text-detector-academic-v1.01')"
+ENV HF_HUB_OFFLINE=1
+
+COPY --chown=detectoruser:detectoruser model/ /app/model/
+ENV DETECTOR_BACKEND=desklib
+
+COPY app/ /app/
+
+CMD ["python", "main.py"]
