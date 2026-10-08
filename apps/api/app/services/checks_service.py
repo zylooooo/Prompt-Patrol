@@ -2,6 +2,7 @@ import asyncio
 import base64
 import binascii
 import logging
+import os
 import time
 import uuid
 from datetime import datetime
@@ -22,6 +23,15 @@ DETECTOR_TIMEOUT_SECONDS = 10
 THRESHOLDS: dict[str, float] = {"lenient": 0.4, "standard": 0.5, "strict": 0.65}
 TARGET_FPR: dict[str, float] = {"lenient": 0.05, "standard": 0.01, "strict": 0.001}
 ABSTENTION_BAND = 0.08
+
+# The fine-tuned desklib detector (docker-compose.desklib.yml) scores calibrated probabilities, and
+# only its 1% FPR threshold (0.9608, fitted on validation) has been validated. Until the 5% and 0.1%
+# thresholds are fitted, every strictness level uses that one threshold so no level behaves wildly.
+# Unset, nothing here changes.
+if _desklib_threshold := os.getenv("DETECTOR_THRESHOLD"):
+    THRESHOLDS = dict.fromkeys(THRESHOLDS, float(_desklib_threshold))
+if _band := os.getenv("ABSTENTION_BAND"):
+    ABSTENTION_BAND = float(_band)
 MIN_ANSWER_WORDS = 10
 
 DETECTOR_CAPABILITIES: dict = {
