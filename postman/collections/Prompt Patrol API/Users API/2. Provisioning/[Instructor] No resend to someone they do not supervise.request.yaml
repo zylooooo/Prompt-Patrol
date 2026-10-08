@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Instructor] No resend to someone they do not supervise"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  NEW_INSTRUCTOR_USER_ID exists but is not a TA this instructor supervises.
+  403, not 404, as the contract lists: ids are random UUIDs, not guessable
+  like the emails the add-TA endpoint hides behind one message ([0.21.0]).
+url: "{{BASE_URL}}/api/users/{{NEW_INSTRUCTOR_USER_ID}}/resend-invite"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("generic message", () => pm.expect(pm.response.json().message).to.eql("You are not authorized to re-invite this user."));
+    language: text/javascript
+order: 12000

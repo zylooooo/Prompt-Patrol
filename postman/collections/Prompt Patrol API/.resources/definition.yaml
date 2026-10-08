@@ -2,22 +2,26 @@ $kind: collection
 description: |-
   Prompt Patrol API, contract 0.25.0 (docs/openapi.yaml).
 
+  Run by hand in the Postman app; there is no automated run yet.
+
   SETUP (once per sign-in; sessions last at most 4h)
-  1. Copy postman/environments/Prompt Patrol Dev.environment.yaml to
-     Prompt Patrol Dev.local.environment.yaml (gitignored) in the same folder.
-  2. Sign in at http://localhost:5173 as a root_admin, an instructor and a
+  1. Open the repo's postman/ folder in the Postman app.
+  2. Copy postman/environments/Prompt Patrol Dev.environment.yaml to
+     Prompt Patrol Dev.local.environment.yaml (gitignored) in the same folder
+     and select it as the active environment.
+  3. Sign in at http://localhost:5173 as a root_admin, an instructor and a
      teaching assistant (separate browser profiles) and put each
      __Host-session cookie value in ADMIN_SESSION, INSTRUCTOR_SESSION and
      TA_SESSION in the local copy.
 
-  RUN (from the repo root)
-    postman collection run "postman/collections/Prompt Patrol API"       -e "postman/environments/Prompt Patrol Dev.local.environment.yaml"       --no-report-events
-  --no-report-events keeps the results local; the CLI otherwise sends them
-  to Postman's cloud. Folders run in order: Users API first (its "1. Setup"
-  stores the user ids the rest use), then Auth API, Cross-site protection,
-  Checks API, Batches API. Each folder's description lists what it needs
-  running (detector, S3/SQS). The same works from the Postman app's
-  Collection Runner with the local environment selected.
+  RUN
+  Send the requests one at a time, top to bottom, and check each one's Test
+  Results tab before moving on; later requests read ids the earlier ones
+  store in globals. Folder order: Users API first (its "1. Setup" stores the
+  user ids the rest use), then Auth API, Cross-site protection, Checks API,
+  Batches API. Each folder's description lists what it needs running
+  (detector, S3/SQS). A failed request usually means the next few will fail
+  too; fix or re-send it before carrying on.
 
   Every request inherits two scripts from here:
   - beforeRequest adds Sec-Fetch-Site: same-origin, which the API requires on

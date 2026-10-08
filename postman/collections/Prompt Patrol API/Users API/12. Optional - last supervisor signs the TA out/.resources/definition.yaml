@@ -3,11 +3,10 @@ description: |-
   Ending a TA's last supervision link revokes their sessions (DECISION LOG [0.22.0]).
 
   Skipped unless RUN_SIGN_OUT_TEST is "true": it revokes TA_SESSION, which
-  every later folder needs. Run it on its own, after everything else:
-
-    postman collection run "postman/collections/Prompt Patrol API"       -i "Users API/12. Optional - last supervisor signs the TA out"       -e <your local environment file> --env-var RUN_SIGN_OUT_TEST=true --no-report-events
-
-  Afterwards sign in as the TA again and put the new cookie in TA_SESSION.
+  every later folder needs. Do it last: set RUN_SIGN_OUT_TEST to true in your
+  local environment, send the three requests in order, then set it back to
+  false. Afterwards sign in as the TA again and put the new cookie in
+  TA_SESSION.
 scripts:
   - type: http:beforeRequest
     code: |-
