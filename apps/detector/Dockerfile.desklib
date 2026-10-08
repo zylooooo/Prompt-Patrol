@@ -1,10 +1,5 @@
 # The detector service with the fine-tuned desklib model (desklib academic + the project's LoRA
-# adapter) instead of the roberta baseline. Built by docker-compose.desklib.yml; the default
-# Dockerfile is unchanged.
-#
-# The trained adapter is committed in apps/detector/model/desklib-lora-adapter/ (adapter_config.json
-# and adapter_model.safetensors, about 25MB, from the cluster run
-# ml-training/outputs/desklib-lora-final-in-distribution_adapter/), so a plain `git pull` is enough.
+# adapter) instead of the roberta baseline. 
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -31,11 +26,9 @@ ENV HF_HOME=/home/detectoruser/.cache/huggingface
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('desklib/ai-text-detector-academic-v1.01')"
 ENV HF_HUB_OFFLINE=1
 
-# The adapter (a few tens of MB). Fails the build if the folder is missing, on purpose.
 COPY --chown=detectoruser:detectoruser model/ /app/model/
 ENV DETECTOR_BACKEND=desklib
 
-# Last, so editing the app does not invalidate the layers above it.
 COPY app/ /app/
 
 CMD ["python", "main.py"]

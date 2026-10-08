@@ -27,7 +27,6 @@ ABSTENTION_BAND = 0.08
 # The fine-tuned desklib detector (docker-compose.desklib.yml) scores calibrated probabilities, and
 # only its 1% FPR threshold (0.9608, fitted on validation) has been validated. Until the 5% and 0.1%
 # thresholds are fitted, every strictness level uses that one threshold so no level behaves wildly.
-# Unset, nothing here changes.
 if _desklib_threshold := os.getenv("DETECTOR_THRESHOLD"):
     THRESHOLDS = dict.fromkeys(THRESHOLDS, float(_desklib_threshold))
 if _band := os.getenv("ABSTENTION_BAND"):
