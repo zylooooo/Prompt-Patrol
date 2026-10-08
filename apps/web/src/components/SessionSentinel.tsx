@@ -96,7 +96,7 @@ export default function SessionSentinel() {
       <p className="text-sm leading-6 text-muted-foreground">
         {capped ? (
           <>
-            For security, a session lasts at most 12 hours, and this one reaches
+            For security, a session lasts at most 4 hours, and this one reaches
             that limit in{" "}
             <strong className="font-semibold text-foreground">
               {countdown}

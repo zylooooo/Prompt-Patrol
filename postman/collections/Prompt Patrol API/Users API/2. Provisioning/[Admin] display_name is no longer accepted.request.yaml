@@ -3,7 +3,7 @@ name: "[Admin] display_name is no longer accepted"
 description: |-
   Environment: Prompt Patrol Dev - Root Admin
 
-  Removed in 0.21.0: people choose their own name. extra=forbid makes the field a loud 422.
+  Removed in 0.21.0: people choose their own name. extra=forbid makes the field a loud 400.
 url: "{{BASE_URL}}/api/users/"
 method: POST
 headers:
@@ -21,8 +21,8 @@ scripts:
     code: |-
       pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
-      pm.test("422", () => pm.response.to.have.status(422));
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
       const body = pm.response.json();
-      pm.test("names the forbidden field", () => pm.expect(JSON.stringify(body.detail)).to.include("display_name"));
+      pm.test("names the forbidden field", () => pm.expect(body.message).to.include("display_name"));
     language: text/javascript
 order: 5000

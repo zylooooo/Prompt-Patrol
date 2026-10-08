@@ -19,6 +19,6 @@ scripts:
     code: |-
       pm.test("run with the Prompt Patrol Dev - TA environment", () =>
         pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
-      pm.test("422", () => pm.response.to.have.status(422));
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
     language: text/javascript
 order: 3000

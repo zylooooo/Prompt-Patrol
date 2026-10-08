@@ -36,8 +36,8 @@ describe("LoginPage — redirect reasons", () => {
   });
 
   it.each([
-    ["?error=session_expired", "90 minutes without activity"],
-    ["?error=session_ended", "maximum of 12 hours"],
+    ["?error=session_expired", "30 minutes without activity"],
+    ["?error=session_ended", "maximum of 4 hours"],
     ["?error=session_revoked", "ended, either by signing out"],
     ["?error=session_unknown", "couldn't recognise your session"],
     ["?error=account_deactivated", "turned off while you were signed in"],

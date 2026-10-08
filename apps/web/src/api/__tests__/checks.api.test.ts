@@ -147,7 +147,14 @@ describe("getCapabilities", () => {
   it("raises rather than inventing a capability document", async () => {
     // The badge decides what to show from whether this resolved. Returning a
     // default here would state a model version nobody served.
-    route(() => ({ detail: "Insufficient role" }), 403);
+    route(
+      () => ({
+        error: "forbidden",
+        message: "Insufficient role",
+        request_id: "r",
+      }),
+      403,
+    );
 
     await expect(getCapabilities()).rejects.toBeInstanceOf(ApiError);
   });
@@ -165,7 +172,7 @@ describe("checkAnswer", () => {
 
   it("sends exactly the keys the request model allows", async () => {
     // CheckCreateRequest is `extra="forbid"`. An extra key, or a camelCase one,
-    // is a 422 the screen has no sentence for.
+    // is a 400 invalid_request the screen has no sentence for.
     const mock = route(() => CHECK);
 
     await checkAnswer(INSTRUCTOR, {
@@ -178,7 +185,7 @@ describe("checkAnswer", () => {
 
     // batch_id/batch_file_name are gone from CheckCreateRequest as of
     // openapi.yaml [0.13.0] - only the Worker may set a check's batch_id now,
-    // so a single check must not send them at all (extra="forbid" 422s on it).
+    // so a single check must not send them at all (extra="forbid" 400s on it).
     expect(bodyOf(mock)).toEqual({
       answer_text: ANSWER,
       question_text: "Explain equilibrium price.",

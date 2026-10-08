@@ -144,7 +144,7 @@ async def test_provisioning_no_longer_takes_a_display_name(client, db_session):
         json={"email": "long@smu.edu.sg", "role": "instructor", "display_name": "Amirah"},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -158,7 +158,7 @@ async def test_provisioning_still_rejects_unknown_fields(client, db_session):
         json={"email": "sneaky@smu.edu.sg", "role": "instructor", "status": "active"},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -184,8 +184,8 @@ async def test_listing_caps_the_page_size(client, db_session):
     await _signed_in(client, db_session, UserRoleEnum.root_admin)
 
     assert (await client.get("/api/users/?limit=100")).status_code == 200
-    assert (await client.get("/api/users/?limit=101")).status_code == 422
-    assert (await client.get("/api/users/?limit=0")).status_code == 422
+    assert (await client.get("/api/users/?limit=101")).status_code == 400
+    assert (await client.get("/api/users/?limit=0")).status_code == 400
 
 
 @pytest.mark.asyncio
@@ -399,7 +399,7 @@ async def test_an_over_long_reason_is_rejected_and_changes_nothing(client, db_se
 
     response = await client.post(f"/api/users/{target.id}/deactivate", json={"reason": "x" * 501})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert await _events(db_session, target.id) == []
 
 
@@ -475,7 +475,7 @@ async def test_linking_maps_bad_input(client, db_session):
         f"/api/users/{assistant.id}/supervisors", json={"instructor_id": str(instructor.id), "role": "root_admin"}
     )
 
-    assert (not_a_ta.status_code, inactive.status_code, unknown.status_code, extra.status_code) == (400, 409, 404, 422)
+    assert (not_a_ta.status_code, inactive.status_code, unknown.status_code, extra.status_code) == (400, 409, 404, 400)
 
 
 @pytest.mark.asyncio
@@ -542,7 +542,7 @@ async def test_add_ta_refusals_are_indistinguishable(client, db_session):
         await client.post("/api/users/teaching-assistants", json={"email": u.email}) for u in (off, gone, peer)
     ]
 
-    assert {(r.status_code, r.json()["detail"]) for r in responses} == {(409, REFUSED)}
+    assert {(r.status_code, r.json()["message"]) for r in responses} == {(409, REFUSED)}
 
 
 @pytest.mark.asyncio
@@ -560,7 +560,7 @@ async def test_add_ta_takes_only_an_email(client, db_session):
 
     response = await client.post("/api/users/teaching-assistants", json={"email": "x@smu.edu.sg", "display_name": "X"})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -580,7 +580,7 @@ async def test_a_bad_name_is_rejected(client, db_session, body):
 
     response = await client.patch(f"/api/users/{me.id}", json=body)
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
