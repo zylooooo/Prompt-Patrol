@@ -1,18 +1,17 @@
 $kind: http-request
 name: "[Admin] A deleted user cannot be reactivated"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   There is no restore: deleted is terminal.
 url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}/reactivate"
 method: POST
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("409", () => pm.response.to.have.status(409));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("cannot move a deleted user to active"));
     language: text/javascript
 order: 8000

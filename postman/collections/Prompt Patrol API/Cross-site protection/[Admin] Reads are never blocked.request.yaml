@@ -1,0 +1,20 @@
+$kind: http-request
+name: "[Admin] Reads are never blocked"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  GET, HEAD and OPTIONS change nothing, so they skip the check.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.request.headers.upsert({ key: "Sec-Fetch-Site", value: "cross-site" });
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 7000

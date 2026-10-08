@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[TA] Remember my current name"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+  Stores TA_ORIGINAL_NAME for the last request.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.globals.set("TA_ORIGINAL_NAME", pm.response.json().display_name || "Postman TA");
+    language: text/javascript
+order: 1000

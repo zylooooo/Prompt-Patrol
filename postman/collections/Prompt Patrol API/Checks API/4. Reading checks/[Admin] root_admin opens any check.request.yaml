@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] root_admin opens any check"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/checks/{{CHECK_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("the instructor's check", () => pm.expect(pm.response.json().actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 11000

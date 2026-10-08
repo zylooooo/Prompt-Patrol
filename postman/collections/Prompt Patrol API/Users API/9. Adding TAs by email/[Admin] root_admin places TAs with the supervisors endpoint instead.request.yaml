@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Admin] root_admin places TAs with the supervisors endpoint instead"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Exactly instructor: root_admin uses POST /api/users/{id}/supervisors.
+url: "{{BASE_URL}}/api/users/teaching-assistants"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-unused@gmail.com"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Only instructors add teaching assistants to a team."));
+    language: text/javascript
+order: 7000

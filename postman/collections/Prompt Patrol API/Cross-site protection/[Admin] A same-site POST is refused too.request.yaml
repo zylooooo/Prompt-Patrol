@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Admin] A same-site POST is refused too"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Every *.smu.edu.sg host is the same site; a takeover of any of them is the threat.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {}
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.request.headers.upsert({ key: "Sec-Fetch-Site", value: "same-site" });
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("error code", () => pm.expect(pm.response.json().error).to.eql("forbidden"));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Cross-site request refused."));
+    language: text/javascript
+order: 2000

@@ -1,0 +1,8 @@
+$kind: collection
+description: |-
+  Session endpoints. Run "Users API/1. Setup" first.
+
+  Not covered here, on purpose: /api/auth/login and /api/auth/callback are
+  browser redirects through Auth0, and POST /api/auth/logout revokes every
+  session the user holds, which would sign out TA_SESSION, INSTRUCTOR_SESSION or ADMIN_SESSION.
+order: 400000000000000

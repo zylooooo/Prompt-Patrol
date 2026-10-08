@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[Instructor] Filtering by someone else is silently ignored"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  actor_id for another user is replaced by my own id: rejecting it would confirm the id exists.
+url: "{{BASE_URL}}/api/checks?actor_id={{TA_USER_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("my checks, not the TA's", () => {
+        pm.expect(items).to.not.be.empty;
+        items.forEach(c => pm.expect(c.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID")));
+      });
+    language: text/javascript
+order: 7000

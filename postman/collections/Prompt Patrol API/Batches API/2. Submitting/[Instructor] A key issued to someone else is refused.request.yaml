@@ -1,0 +1,24 @@
+$kind: http-request
+name: "[Instructor] A key issued to someone else is refused"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Keys are namespaced by actor to stop one user submitting another's upload.
+url: "{{BASE_URL}}/api/batches"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "upload_key": "batches/{{TA_USER_ID}}/postman.csv",
+      "file_name": "postman-answers.csv"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("upload_key was not issued to this actor."));
+    language: text/javascript
+order: 2000

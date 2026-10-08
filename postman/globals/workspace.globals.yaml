@@ -18,3 +18,48 @@ values:
   - key: NEW_TA_USER_ID
     value: ''
     enabled: true
+  - key: ADDED_TA_USER_ID
+    value: ''
+    enabled: true
+  - key: ADDED_TA_EMAIL
+    value: ''
+    enabled: true
+  - key: TA_ORIGINAL_NAME
+    value: ''
+    enabled: true
+  - key: USERS_CURSOR
+    value: ''
+    enabled: true
+  - key: USERS_FIRST_ID
+    value: ''
+    enabled: true
+  - key: SESSION_IDLE_EXPIRES_AT
+    value: ''
+    enabled: true
+  - key: DETECTOR_MODEL_VERSION
+    value: ''
+    enabled: true
+  - key: CHECK_ID
+    value: ''
+    enabled: true
+  - key: UNCERTAIN_CHECK_ID
+    value: ''
+    enabled: true
+  - key: CHECKS_CURSOR
+    value: ''
+    enabled: true
+  - key: CHECKS_FIRST_ID
+    value: ''
+    enabled: true
+  - key: BATCH_UPLOAD_URL
+    value: ''
+    enabled: true
+  - key: BATCH_UPLOAD_KEY
+    value: ''
+    enabled: true
+  - key: BATCH_ID
+    value: ''
+    enabled: true
+  - key: BATCH_CANCELLED_AT
+    value: ''
+    enabled: true

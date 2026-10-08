@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Instructor] Upload the CSV to S3"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  PUT to the presigned URL, not the API. Three rows; the third is too short and fails validation.
+url: "{{BATCH_UPLOAD_URL}}"
+method: PUT
+headers:
+  Content-Type: text/csv
+body:
+  type: text
+  content: |-
+    external_ref,answer_text
+    postman-1,"Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more."
+    postman-2,"Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more. It also clears the dangling reference."
+    postman-3,too short
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 2000

@@ -1,0 +1,28 @@
+$kind: http-request
+name: "[Instructor] A short answer abstains"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Over the 10-character minimum but under 10 words: uncertain is a first-class outcome, not an error. Stores UNCERTAIN_CHECK_ID.
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "answer_text": "It frees the pointer twice."
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("201", () => pm.response.to.have.status(201));
+      const body = pm.response.json();
+      pm.test("uncertain, with the reason", () => {
+        pm.expect(body.verdict).to.eql("uncertain");
+        pm.expect(body.abstain_reason).to.eql("answer_too_short");
+      });
+      pm.globals.set("UNCERTAIN_CHECK_ID", body.check_id);
+    language: text/javascript
+order: 4000

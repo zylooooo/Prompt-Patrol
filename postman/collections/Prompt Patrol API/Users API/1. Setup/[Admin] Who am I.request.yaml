@@ -1,21 +1,19 @@
 $kind: http-request
 name: "[Admin] Who am I"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   Reads the root_admin session and stores its id as ADMIN_USER_ID.
 url: "{{BASE_URL}}/api/auth/me"
 method: GET
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("200", () => pm.response.to.have.status(200));
       const body = pm.response.json();
-      pm.test("session payload shape (0.21.0)", () => {
+      pm.test("session payload shape", () => {
         pm.expect(body).to.include.keys("id", "email", "display_name", "role", "supervisor_ids", "session");
         pm.expect(body.supervisor_ids).to.be.an("array");
         pm.expect(body).to.not.have.property("provisioned_by");

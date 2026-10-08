@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Instructor] Page through with a cursor"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores CHECKS_CURSOR and CHECKS_FIRST_ID.
+url: "{{BASE_URL}}/api/checks?limit=1"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("one item and a cursor", () => {
+        pm.expect(body.items).to.have.lengthOf(1);
+        pm.expect(body.next_cursor).to.be.a("string");
+      });
+      pm.globals.set("CHECKS_CURSOR", body.next_cursor);
+      pm.globals.set("CHECKS_FIRST_ID", body.items[0].check_id);
+    language: text/javascript
+order: 3000

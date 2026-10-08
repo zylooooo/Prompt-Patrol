@@ -1,0 +1,5 @@
+$kind: collection
+description: |-
+  POST /api/users/teaching-assistants (DECISION LOG [0.21.0]). Created, linked and already-on-the-team
+  all answer the same 200; every refusal is the same 409. Sends one real Auth0 invite.
+order: 9000

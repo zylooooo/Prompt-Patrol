@@ -1,4 +1,29 @@
 $kind: collection
+description: |-
+  Prompt Patrol API, contract 0.25.0 (docs/openapi.yaml).
+
+  SETUP (once per sign-in; sessions last at most 4h)
+  1. Copy postman/environments/Prompt Patrol Dev.environment.yaml to
+     Prompt Patrol Dev.local.environment.yaml (gitignored) in the same folder.
+  2. Sign in at http://localhost:5173 as a root_admin, an instructor and a
+     teaching assistant (separate browser profiles) and put each
+     __Host-session cookie value in ADMIN_SESSION, INSTRUCTOR_SESSION and
+     TA_SESSION in the local copy.
+
+  RUN (from the repo root)
+    postman collection run "postman/collections/Prompt Patrol API"       -e "postman/environments/Prompt Patrol Dev.local.environment.yaml"       --no-report-events
+  --no-report-events keeps the results local; the CLI otherwise sends them
+  to Postman's cloud. Folders run in order: Users API first (its "1. Setup"
+  stores the user ids the rest use), then Auth API, Cross-site protection,
+  Checks API, Batches API. Each folder's description lists what it needs
+  running (detector, S3/SQS). The same works from the Postman app's
+  Collection Runner with the local environment selected.
+
+  Every request inherits two scripts from here:
+  - beforeRequest adds Sec-Fetch-Site: same-origin, which the API requires on
+    any state-changing request (CSRF, DECISION LOG [0.25.0]).
+  - afterResponse checks the response is not a 5xx and, for API responses
+    (not the S3 upload in Batches API), has a JSON body.
 scripts:
   - type: http:beforeRequest
     code: |-
@@ -8,7 +33,10 @@ scripts:
       pm.request.headers.upsert({ key: "Sec-Fetch-Site", value: "same-origin" });
     language: text/javascript
   - type: http:afterResponse
-    code: "pm.test(\"not a 5xx\", () => pm.expect(pm.response.code).to.be.below(500));\r
-
-      pm.test(\"json body\", () => pm.response.to.have.jsonBody());\r\n"
+    code: |-
+      pm.test("not a 5xx", () => pm.expect(pm.response.code).to.be.below(500));
+      // The presigned S3 upload answers with an empty body.
+      if (/^\/(api|health)/.test(pm.request.url.getPath())) {
+        pm.test("json body", () => pm.response.to.have.jsonBody());
+      }
     language: text/javascript

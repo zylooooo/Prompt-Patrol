@@ -1,31 +1,24 @@
 $kind: collection
 description: |-
-  Users module walkthrough, contract 0.21.0 (many-to-many TA supervision).
+  Users module walkthrough, contract 0.25.0 (many-to-many TA supervision).
+  Runs first: "1. Setup" stores the user ids every other folder uses.
 
-  Run the folders in their numbered order, and the requests inside each folder
-  top to bottom. Each request name starts with the environment to switch to
-  ([Admin], [Instructor], [TA]); its first test fails if the active environment
-  is wrong.
+  Each request name says whose session it uses: [Admin] = ADMIN_SESSION,
+  [Instructor] = INSTRUCTOR_SESSION, [TA] = TA_SESSION. The instructor must
+  be an instructor, and the TA a teaching assistant who has signed in at
+  least once. See the collection description for how to set them up.
 
-  Before you start, sign in at http://localhost:5173 as each of the three users
-  (separate browser profiles) and paste each __Host-session cookie into
-  SESSION_COOKIE of the matching environment. BASE_URL = http://localhost:8000.
-  The Instructor-environment user must be an instructor, the TA-environment
-  user a teaching assistant who has signed in at least once.
+  Run the folders in numbered order, and the requests in each folder top to
+  bottom; each folder builds on the state the previous one left.
 
-  Ids come from "1. Setup" (/api/auth/me), so they always match the sessions.
-  "2. Provisioning" sends real Auth0 invites to +aliases of ashloozhiyi5@gmail.com.
-  "10. Adding TAs by email" sends one more. Only the accounts these folders
-  create are deactivated, re-roled or deleted; "8. Role change and delete"
-  and "12. Cleanup" remove them, leaving the TA supervised by the instructor.
-  "11. Display names" renames the TA and then restores the name.
-
-  "13. Optional" checks that removing a TA's last supervisor signs the TA out,
-  so afterwards you must sign in as the TA again and update the cookie.
-scripts:
-  - type: http:afterResponse
-    code: |-
-      pm.test("not a 5xx", () => pm.expect(pm.response.code).to.be.below(500));
-      pm.test("json body", () => pm.response.to.have.jsonBody());
-    language: text/javascript
+  SIDE EFFECTS
+  - Real Auth0 invites go to +aliases of ashloozhiyi5@gmail.com: two in
+    "2. Provisioning" plus one resend, one in "9. Adding TAs by email".
+  - Only accounts the run creates are deactivated, re-roled or deleted;
+    "8. Role change and delete" and "11. Cleanup" remove them, leaving the TA
+    supervised by the instructor.
+  - "10. Display names" renames the TA and then restores the name (a TA with
+    no name ends up as "Postman TA").
+  - "12. Optional" is skipped unless RUN_SIGN_OUT_TEST is "true"; it signs
+    the TA out. See its description.
 order: 308419892346879

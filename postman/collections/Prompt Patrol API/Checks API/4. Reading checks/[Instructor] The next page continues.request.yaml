@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Instructor] The next page continues"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/checks?limit=1&cursor={{CHECKS_CURSOR}}"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("a different check", () => pm.expect(pm.response.json().items[0].check_id).to.not.eql(pm.globals.get("CHECKS_FIRST_ID")));
+    language: text/javascript
+order: 4000

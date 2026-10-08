@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] The default list leaves them out"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/?limit=100"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("second instructor not listed", () => pm.expect(pm.response.json().items.map(u => u.id)).to.not.include(pm.globals.get("NEW_INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 3600

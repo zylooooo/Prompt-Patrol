@@ -1,0 +1,16 @@
+$kind: http-request
+name: "[TA] Any signed-in role can read them"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+  No screening gate on capabilities.
+url: "{{BASE_URL}}/api/detector"
+method: GET
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+    language: text/javascript
+order: 2000

@@ -1,0 +1,22 @@
+$kind: http-request
+name: "[Instructor] Cancel the batch"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores BATCH_CANCELLED_AT.
+url: "{{BASE_URL}}/api/batches/{{BATCH_ID}}/cancel"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("cancelled", () => {
+        pm.expect(body.cancelled).to.be.true;
+        pm.expect(body.batch.cancelled_at).to.be.a("string");
+      });
+      pm.globals.set("BATCH_CANCELLED_AT", body.batch.cancelled_at);
+    language: text/javascript
+order: 1000

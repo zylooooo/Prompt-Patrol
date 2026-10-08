@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  A missing or unrecognised cookie is a 401 whose error code says which.
+order: 2000

@@ -1,0 +1,18 @@
+$kind: http-request
+name: "[Instructor] Remove the TA's last supervisor"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Ending a TA's last counting link revokes their sessions in the same commit. After this folder, sign in as the TA again and put the new cookie in TA_SESSION.
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}/supervisors/{{INSTRUCTOR_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("unsupervised", () => pm.expect(body.supervisor_ids).to.eql([]));
+    language: text/javascript
+order: 1000

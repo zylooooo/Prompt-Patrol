@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  POST /api/batches validates the whole file up front and answers 202 with the batch.
+order: 2000

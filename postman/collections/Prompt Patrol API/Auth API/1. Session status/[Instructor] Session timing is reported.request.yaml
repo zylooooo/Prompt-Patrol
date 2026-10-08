@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Instructor] Session timing is reported"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores SESSION_IDLE_EXPIRES_AT for the probe check that follows.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const s = pm.response.json().session;
+      pm.test("session timing shape", () => {
+        pm.expect(s).to.include.keys("expires_at", "idle_expires_at", "absolute_expires_at", "expires_in_seconds", "capped", "idle_timeout_seconds");
+        pm.expect(s.capped).to.be.a("boolean");
+      });
+      pm.test("expires at the earlier of the idle and absolute limits", () => {
+        pm.expect(Date.parse(s.expires_at)).to.eql(Math.min(Date.parse(s.idle_expires_at), Date.parse(s.absolute_expires_at)));
+        pm.expect(s.expires_in_seconds).to.be.within(1, s.idle_timeout_seconds);
+      });
+      pm.globals.set("SESSION_IDLE_EXPIRES_AT", s.idle_expires_at);
+    language: text/javascript
+order: 1000

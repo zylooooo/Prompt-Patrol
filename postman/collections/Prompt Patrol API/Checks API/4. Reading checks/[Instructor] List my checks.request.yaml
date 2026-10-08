@@ -1,0 +1,20 @@
+$kind: http-request
+name: "[Instructor] List my checks"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Newest first.
+url: "{{BASE_URL}}/api/checks"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("only mine", () => items.forEach(c => pm.expect(c.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID"))));
+      pm.test("includes the new check", () => pm.expect(items.map(c => c.check_id)).to.include(pm.globals.get("CHECK_ID")));
+      pm.test("newest first", () => items.slice(1).forEach((c, i) => pm.expect(Date.parse(c.created_at)).to.be.at.most(Date.parse(items[i].created_at))));
+    language: text/javascript
+order: 2000

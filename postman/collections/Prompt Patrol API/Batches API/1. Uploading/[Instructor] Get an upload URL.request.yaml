@@ -1,0 +1,29 @@
+$kind: http-request
+name: "[Instructor] Get an upload URL"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores BATCH_UPLOAD_URL and BATCH_UPLOAD_KEY.
+url: "{{BASE_URL}}/api/batches/upload-url"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "file_name": "postman-answers.csv"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("the key is namespaced to the caller", () => {
+        pm.expect(body.upload_key.startsWith("batches/" + pm.globals.get("INSTRUCTOR_USER_ID") + "/")).to.be.true;
+        pm.expect(body.upload_key.endsWith("-postman-answers.csv")).to.be.true;
+      });
+      pm.globals.set("BATCH_UPLOAD_URL", body.upload_url);
+      pm.globals.set("BATCH_UPLOAD_KEY", body.upload_key);
+    language: text/javascript
+order: 1000

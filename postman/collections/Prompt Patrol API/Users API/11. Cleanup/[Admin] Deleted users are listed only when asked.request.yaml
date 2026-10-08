@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Admin] Deleted users are listed only when asked"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Deleted rows pile up across runs and the list is ordered by id, so this checks the filter, not that this run's rows are on page one.
+url: "{{BASE_URL}}/api/users/?status=deleted"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("some deleted users", () => pm.expect(items).to.not.be.empty);
+      pm.test("only deleted", () => items.forEach(u => pm.expect(u.status).to.eql("deleted")));
+    language: text/javascript
+order: 3000
