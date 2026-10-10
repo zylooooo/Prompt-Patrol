@@ -40,10 +40,12 @@ function stubApi({
   status = "ready",
   statusFails = false,
   capabilitiesFail = false,
+  calibrationVersion = null,
 }: {
   status?: string;
   statusFails?: boolean;
   capabilitiesFail?: boolean;
+  calibrationVersion?: string | null;
 } = {}) {
   vi.stubGlobal("fetch", (path: string) => {
     if (path === STATUS_PATH) {
@@ -53,7 +55,7 @@ function stubApi({
     }
     return capabilitiesFail
       ? Promise.reject(new Error("network down"))
-      : ok(CAPABILITIES);
+      : ok({ ...CAPABILITIES, calibration_version: calibrationVersion });
   });
 }
 
@@ -74,6 +76,30 @@ describe("ModelStatusBadge", () => {
 
     await waitFor(() =>
       expect(screen.getByText(/roberta-base-openai-detector-v0/)).toBeDefined(),
+    );
+  });
+
+  it("says uncalibrated when the detector reports no calibration", async () => {
+    stubApi();
+
+    renderWithProviders(<ModelStatusBadge />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · uncalibrated"),
+      ).toBeDefined(),
+    );
+  });
+
+  it("names the calibration version once the detector reports one", async () => {
+    stubApi({ calibrationVersion: "desklib-temp1.944-v1" });
+
+    renderWithProviders(<ModelStatusBadge />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · desklib-temp1.944-v1"),
+      ).toBeDefined(),
     );
   });
 

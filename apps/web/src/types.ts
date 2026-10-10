@@ -86,6 +86,7 @@ export type DetectorStatus = "ready" | "loading" | "unavailable";
 
 export interface DetectorCapabilities {
   modelVersion: string;
+  calibrationVersion: string | null;
   requiresQuestionText: boolean;
   minAnswerChars: number;
   maxAnswerChars: number;
