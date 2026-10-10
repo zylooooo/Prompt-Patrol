@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exceptions import DetectorTimeoutError, DetectorUnavailableError
 from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 
-from .detector_client import MODEL_VERSION, score_text
+from .detector_client import CALIBRATION_VERSION, MODEL_VERSION, score_text
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ DETECTOR_CAPABILITIES: dict = {
     "max_answer_chars": 10000,
     "max_tokens_scored": 512,
     "strictness_levels": [{"level": level, "target_fpr": fpr} for level, fpr in TARGET_FPR.items()],
-    "calibration_version": None,
+    "calibration_version": CALIBRATION_VERSION,
     "supports_confidence": False,
     "supports_explanation": False,
     "supports_spans": False,
@@ -94,7 +94,7 @@ async def create_check(
         abstain_reason=AbstainReasonEnum(abstain_reason) if abstain_reason else None,
         truncated=result.truncated,
         model_version=MODEL_VERSION,
-        calibration_version=None,
+        calibration_version=CALIBRATION_VERSION,
         strictness_applied=StrictnessEnum(strictness),
         threshold_applied=threshold,
         target_fpr=TARGET_FPR[strictness],
