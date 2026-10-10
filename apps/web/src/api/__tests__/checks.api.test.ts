@@ -99,6 +99,7 @@ describe("getCapabilities", () => {
 
     expect(await getCapabilities()).toEqual({
       modelVersion: "roberta-base-openai-detector-v0",
+      calibrationVersion: null,
       requiresQuestionText: false,
       minAnswerChars: 10,
       maxAnswerChars: 10000,

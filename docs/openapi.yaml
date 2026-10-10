@@ -2802,7 +2802,7 @@ components:
         [check_id, verdict, raw_score, strictness_applied, created_at, actor_id]
       description: |
         History table row. A trimmed `CheckResult` — excludes `question_text`,
-        `abstain_reason`, `truncated`, `calibration_version`,
+        `abstain_reason`, `truncated`,
         `threshold_applied`, `target_fpr`, `used_question_text`, `latency_ms`,
         `explanation`, and `spans`, none of which the history table renders.
         Drill down via `GET /api/checks/{id}` for the full record.
@@ -2840,6 +2840,13 @@ components:
         strictness_applied:
           $ref: "#/components/schemas/Strictness"
         model_version: { type: string }
+        calibration_version:
+          type: string
+          nullable: true
+          description: |
+            Flattened out of `detector` like `model_version`. NULL means the
+            check was scored uncalibrated, and the history and batch tables
+            show the uncalibrated notice for it.
         answer_text:
           type: string
           nullable: true
