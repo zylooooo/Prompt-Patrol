@@ -15,6 +15,7 @@ x-desklib-api-env: &desklib-api-env
   # Chosen from the saved test scores: at +-0.01 about 42% of AI answers are still flagged, 11% come
   # back uncertain, and false flags on student answers drop from 0.95% to 0.53%.
   ABSTENTION_BAND: "0.01"
+  DETECTOR_CALIBRATION_VERSION: desklib-temp1.944-v1
 
 services:
   detector:
