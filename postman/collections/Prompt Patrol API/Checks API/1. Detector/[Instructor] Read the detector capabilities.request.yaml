@@ -1,0 +1,28 @@
+$kind: http-request
+name: "[Instructor] Read the detector capabilities"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores DETECTOR_MODEL_VERSION.
+url: "{{BASE_URL}}/api/detector"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const caps = pm.response.json();
+      pm.test("capability flags", () => {
+        pm.expect(caps).to.include.keys("model_version", "requires_question_text", "min_answer_chars", "max_answer_chars",
+          "strictness_levels", "supports_confidence", "supports_explanation", "supports_spans");
+        ["requires_question_text", "supports_confidence", "supports_explanation", "supports_spans"]
+          .forEach(k => pm.expect(caps[k], k).to.be.a("boolean"));
+      });
+      pm.test("strictness is named levels, never a threshold", () => {
+        pm.expect(caps.strictness_levels.map(l => l.level)).to.eql(["lenient", "standard", "strict"]);
+        caps.strictness_levels.forEach(l => pm.expect(l).to.not.have.property("threshold"));
+      });
+      pm.globals.set("DETECTOR_MODEL_VERSION", caps.model_version);
+    language: text/javascript
+order: 1000

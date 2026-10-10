@@ -1,0 +1,22 @@
+$kind: http-request
+name: "[Admin] Can rename anyone"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+url: "{{BASE_URL}}/api/users/{{ADDED_TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "Renamed by admin"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("renamed", () => pm.expect(pm.response.json().display_name).to.eql("Renamed by admin"));
+    language: text/javascript
+order: 6000

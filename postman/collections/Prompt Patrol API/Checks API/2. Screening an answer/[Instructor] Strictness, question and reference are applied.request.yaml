@@ -1,0 +1,29 @@
+$kind: http-request
+name: "[Instructor] Strictness, question and reference are applied"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "answer_text": "Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more.",
+      "question_text": "Why does the cleanup path no longer crash?",
+      "external_ref": "postman-ref-1",
+      "strictness": "strict"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("201", () => pm.response.to.have.status(201));
+      const body = pm.response.json();
+      pm.test("strict was applied", () => pm.expect(body.detector.strictness_applied).to.eql("strict"));
+      pm.test("question and reference are kept", () => {
+        pm.expect(body.question_text).to.eql("Why does the cleanup path no longer crash?");
+        pm.expect(body.external_ref).to.eql("postman-ref-1");
+      });
+    language: text/javascript
+order: 2000

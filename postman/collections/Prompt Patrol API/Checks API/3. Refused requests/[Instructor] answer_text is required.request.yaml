@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[Instructor] answer_text is required"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "strictness": "standard"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("names answer_text", () => pm.expect(pm.response.json().message).to.include("answer_text"));
+    language: text/javascript
+order: 8000

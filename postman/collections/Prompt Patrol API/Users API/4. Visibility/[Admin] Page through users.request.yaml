@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Admin] Page through users"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Stores USERS_CURSOR and USERS_FIRST_ID.
+url: "{{BASE_URL}}/api/users/?limit=1"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("one item and a cursor", () => {
+        pm.expect(body.items).to.have.lengthOf(1);
+        pm.expect(body.next_cursor).to.be.a("string");
+      });
+      pm.globals.set("USERS_CURSOR", body.next_cursor);
+      pm.globals.set("USERS_FIRST_ID", body.items[0].id);
+    language: text/javascript
+order: 11000

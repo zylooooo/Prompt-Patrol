@@ -1,18 +1,17 @@
 $kind: http-request
 name: "[Instructor] Listing another role is refused"
 description: |-
-  Environment: Prompt Patrol Dev - Instructor
+  Runs as: instructor (INSTRUCTOR_SESSION)
 
   Asking for instructors is outside an instructor's scope.
 url: "{{BASE_URL}}/api/users/?role=instructor"
 method: GET
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
       pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("You are not authorized to list users with that role."));
     language: text/javascript
 order: 3000

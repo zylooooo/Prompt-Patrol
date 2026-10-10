@@ -1,18 +1,16 @@
 $kind: http-request
 name: "[Instructor] Another instructor is hidden"
 description: |-
-  Environment: Prompt Patrol Dev - Instructor
+  Runs as: instructor (INSTRUCTOR_SESSION)
 
   404, not 403: the response must not confirm the account exists.
 url: "{{BASE_URL}}/api/users/{{NEW_INSTRUCTOR_USER_ID}}"
 method: GET
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
       pm.test("404", () => pm.response.to.have.status(404));
       pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("User not found"));
     language: text/javascript

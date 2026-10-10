@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Instructor] Asking for TAs is in scope"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  role=teaching_assistant is the one role filter an instructor may use.
+url: "{{BASE_URL}}/api/users/?role=teaching_assistant"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("only TAs", () => pm.response.json().items.forEach(u => pm.expect(u.role).to.eql("teaching_assistant")));
+    language: text/javascript
+order: 15000

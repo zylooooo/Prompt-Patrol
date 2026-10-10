@@ -1,18 +1,16 @@
 $kind: http-request
 name: "[Instructor] Resend the invite to a pending TA they supervise"
 description: |-
-  Environment: Prompt Patrol Dev - Instructor
+  Runs as: instructor (INSTRUCTOR_SESSION)
 
   Sends a second real invite email for the TA from "Create a TA under the instructor" (still pending: never signed in).
 url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}/resend-invite"
 method: POST
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
       pm.test("200", () => pm.response.to.have.status(200));
       const body = pm.response.json();
       pm.test("still pending", () => pm.expect(body.first_login_at).to.eql(null));

@@ -13,7 +13,11 @@ class InvalidStatusTransitionError(Exception):
 
 class InvalidSupervisorError(Exception):
     """The proposed supervisor cannot hold that role: missing, not an instructor,
-    not active, or the assistant themselves."""
+    not active, or the assistant themselves.
+
+    The message is returned to the caller as-is, so it must be a user-facing
+    sentence. Safe because only root_admin reaches it, and root_admin can
+    already see every user - there is nothing to enumerate."""
 
 
 class CannotAddTeachingAssistantError(Exception):

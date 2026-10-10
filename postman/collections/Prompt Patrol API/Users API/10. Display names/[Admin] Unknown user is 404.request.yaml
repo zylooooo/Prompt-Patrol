@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[Admin] Unknown user is 404"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/00000000-0000-0000-0000-000000000000"
+method: PATCH
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "Nobody"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("404", () => pm.response.to.have.status(404));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("User not found"));
+    language: text/javascript
+order: 9000

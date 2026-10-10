@@ -1,0 +1,22 @@
+$kind: http-request
+name: "[TA] TAs cannot add TAs"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+url: "{{BASE_URL}}/api/users/teaching-assistants"
+method: POST
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-unused@gmail.com"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Insufficient role"));
+    language: text/javascript
+order: 8000

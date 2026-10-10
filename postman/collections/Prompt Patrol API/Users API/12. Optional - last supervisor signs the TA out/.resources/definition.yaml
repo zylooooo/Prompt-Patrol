@@ -1,0 +1,15 @@
+$kind: collection
+description: |-
+  Ending a TA's last supervision link revokes their sessions (DECISION LOG [0.22.0]).
+
+  Skipped unless RUN_SIGN_OUT_TEST is "true": it revokes TA_SESSION, which
+  every later folder needs. Do it last: set RUN_SIGN_OUT_TEST to true in your
+  local environment, send the three requests in order, then set it back to
+  false. Afterwards sign in as the TA again and put the new cookie in
+  TA_SESSION.
+scripts:
+  - type: http:beforeRequest
+    code: |-
+      if (pm.variables.get("RUN_SIGN_OUT_TEST") !== "true") pm.execution.skipRequest();
+    language: text/javascript
+order: 12000

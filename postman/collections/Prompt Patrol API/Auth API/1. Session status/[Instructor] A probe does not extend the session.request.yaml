@@ -1,0 +1,18 @@
+$kind: http-request
+name: "[Instructor] A probe does not extend the session"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  ?probe=true answers without counting as activity, so the idle deadline does not move.
+url: "{{BASE_URL}}/api/auth/me?probe=true"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("idle deadline unchanged", () =>
+        pm.expect(Date.parse(pm.response.json().session.idle_expires_at)).to.eql(Date.parse(pm.globals.get("SESSION_IDLE_EXPIRES_AT"))));
+    language: text/javascript
+order: 2000

@@ -1,0 +1,31 @@
+$kind: http-request
+name: "[Instructor] A new email is invited and joins my team"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Creates a TA, sends the Auth0 invite and links it to the caller in one commit. Stores ADDED_TA_USER_ID and ADDED_TA_EMAIL. Deleted in "11. Cleanup".
+url: "{{BASE_URL}}/api/users/teaching-assistants"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-added-{{$timestamp}}@gmail.com"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("on my team, provisioned by me, no name yet", () => {
+        pm.expect(body.supervisor_ids).to.eql([pm.globals.get("INSTRUCTOR_USER_ID")]);
+        pm.expect(body.provisioned_by).to.eql(pm.globals.get("INSTRUCTOR_USER_ID"));
+        pm.expect(body.role).to.eql("teaching_assistant");
+        pm.expect(body.display_name).to.eql(null);
+      });
+      pm.globals.set("ADDED_TA_USER_ID", body.id);
+      pm.globals.set("ADDED_TA_EMAIL", body.email);
+    language: text/javascript
+order: 1000

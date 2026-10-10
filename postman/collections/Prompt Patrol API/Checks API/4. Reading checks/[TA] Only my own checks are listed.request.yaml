@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[TA] Only my own checks are listed"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+url: "{{BASE_URL}}/api/checks?actor_id={{INSTRUCTOR_USER_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("only mine", () => pm.response.json().items.forEach(c => pm.expect(c.actor_id).to.eql(pm.globals.get("TA_USER_ID"))));
+    language: text/javascript
+order: 10000

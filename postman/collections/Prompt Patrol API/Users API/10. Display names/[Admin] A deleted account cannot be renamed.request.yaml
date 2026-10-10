@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Admin] A deleted account cannot be renamed"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  The throwaway account was deleted in "8. Role change and delete".
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "Ghost"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("409", () => pm.response.to.have.status(409));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("a deleted account cannot be renamed"));
+    language: text/javascript
+order: 7000

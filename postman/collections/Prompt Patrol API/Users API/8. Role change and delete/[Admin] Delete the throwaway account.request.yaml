@@ -1,0 +1,24 @@
+$kind: http-request
+name: "[Admin] Delete the throwaway account"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Terminal. The throwaway TA is an instructor by now (re-roled above). Also removes its Auth0 credential.
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "reason": "Postman cleanup"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("deleted", () => pm.expect(body.status).to.eql("deleted"));
+    language: text/javascript
+order: 7000

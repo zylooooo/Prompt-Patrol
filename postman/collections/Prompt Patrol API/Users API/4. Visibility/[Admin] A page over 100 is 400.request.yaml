@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] A page over 100 is 400"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/?limit=101"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("names limit", () => pm.expect(pm.response.json().message).to.include("limit"));
+    language: text/javascript
+order: 14000

@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Instructor] Unknown batch is 404"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/batches/00000000-0000-0000-0000-000000000000"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("404", () => pm.response.to.have.status(404));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Batch not found"));
+    language: text/javascript
+order: 6000

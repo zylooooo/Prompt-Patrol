@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Admin] Take the added TA off the instructors team"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Sets up the link path: the TA stays active with no supervisors.
+url: "{{BASE_URL}}/api/users/{{ADDED_TA_USER_ID}}/supervisors/{{INSTRUCTOR_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("no supervisors left", () => pm.expect(pm.response.json().supervisor_ids).to.eql([]));
+    language: text/javascript
+order: 3000

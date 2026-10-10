@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  What the served model can do. Thresholds stay server-side: only named strictness levels are exposed.
+order: 1000

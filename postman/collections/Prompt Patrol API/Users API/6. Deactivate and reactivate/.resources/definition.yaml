@@ -1,4 +1,5 @@
 $kind: collection
 description: |-
   root_admin only. Deactivation keeps supervision links; a deactivated instructor stops counting until reactivated.
+  Also deactivates the throwaway TA briefly: a deactivated TA cannot be placed on a team.
 order: 6000

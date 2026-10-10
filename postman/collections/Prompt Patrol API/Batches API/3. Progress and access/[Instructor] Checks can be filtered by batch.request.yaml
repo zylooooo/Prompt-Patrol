@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Instructor] Checks can be filtered by batch"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Empty until the worker has scored the rows.
+url: "{{BASE_URL}}/api/checks?batch_id={{BATCH_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("only this batch", () => pm.response.json().items.forEach(c => pm.expect(c.batch_id).to.eql(pm.globals.get("BATCH_ID"))));
+    language: text/javascript
+order: 2000

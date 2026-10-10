@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[TA] Only display_name can change"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "role": "root_admin"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+    language: text/javascript
+order: 4000

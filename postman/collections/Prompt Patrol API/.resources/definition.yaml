@@ -1,4 +1,33 @@
 $kind: collection
+description: |-
+  Prompt Patrol API, contract 0.25.0 (docs/openapi.yaml).
+
+  Run by hand in the Postman app; there is no automated run yet.
+
+  SETUP (once per sign-in; sessions last at most 4h)
+  1. Open the repo's postman/ folder in the Postman app.
+  2. Copy postman/environments/Prompt Patrol Dev.environment.yaml to
+     Prompt Patrol Dev.local.environment.yaml (gitignored) in the same folder
+     and select it as the active environment.
+  3. Sign in at http://localhost:5173 as a root_admin, an instructor and a
+     teaching assistant (separate browser profiles) and put each
+     __Host-session cookie value in ADMIN_SESSION, INSTRUCTOR_SESSION and
+     TA_SESSION in the local copy.
+
+  RUN
+  Send the requests one at a time, top to bottom, and check each one's Test
+  Results tab before moving on; later requests read ids the earlier ones
+  store in globals. Folder order: Users API first (its "1. Setup" stores the
+  user ids the rest use), then Auth API, Cross-site protection, Checks API,
+  Batches API. Each folder's description lists what it needs running
+  (detector, S3/SQS). A failed request usually means the next few will fail
+  too; fix or re-send it before carrying on.
+
+  Every request inherits two scripts from here:
+  - beforeRequest adds Sec-Fetch-Site: same-origin, which the API requires on
+    any state-changing request (CSRF, DECISION LOG [0.25.0]).
+  - afterResponse checks the response is not a 5xx and, for API responses
+    (not the S3 upload in Batches API), has a JSON body.
 scripts:
   - type: http:beforeRequest
     code: |-
@@ -8,7 +37,10 @@ scripts:
       pm.request.headers.upsert({ key: "Sec-Fetch-Site", value: "same-origin" });
     language: text/javascript
   - type: http:afterResponse
-    code: "pm.test(\"not a 5xx\", () => pm.expect(pm.response.code).to.be.below(500));\r
-
-      pm.test(\"json body\", () => pm.response.to.have.jsonBody());\r\n"
+    code: |-
+      pm.test("not a 5xx", () => pm.expect(pm.response.code).to.be.below(500));
+      // The presigned S3 upload answers with an empty body.
+      if (/^\/(api|health)/.test(pm.request.url.getPath())) {
+        pm.test("json body", () => pm.response.to.have.jsonBody());
+      }
     language: text/javascript

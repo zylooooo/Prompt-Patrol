@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[TA] Supervised by the instructor after cleanup"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+  The deleted instructor's link is ended; the TA can still screen.
+url: "{{BASE_URL}}/api/auth/me"
+method: GET
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("only the instructor remains", () =>
+        pm.expect(body.supervisor_ids).to.eql([pm.globals.get("INSTRUCTOR_USER_ID")]));
+    language: text/javascript
+order: 2000

@@ -1,0 +1,6 @@
+$kind: collection
+description: |-
+  You read the checks you ran; root_admin reads everyone's. Someone else's
+  check is 404, never 403, and an actor_id filter for someone else is
+  silently replaced by your own id rather than refused.
+order: 4000
