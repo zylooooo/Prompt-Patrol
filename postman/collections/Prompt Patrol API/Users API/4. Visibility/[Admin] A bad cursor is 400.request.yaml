@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] A bad cursor is 400"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/?cursor=not-a-cursor"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Invalid cursor"));
+    language: text/javascript
+order: 13000

@@ -251,6 +251,27 @@ async def test_provisioning_rejects_a_supervisor_who_is_not_an_instructor(client
     )
 
     assert response.status_code == 400
+    assert response.json()["message"] == "That supervisor is not an instructor."
+
+
+@pytest.mark.asyncio
+async def test_provisioning_a_supervised_instructor_names_the_real_problem(client, db_session):
+    # The supervisor is valid; the role is what cannot have one. This used to
+    # say "That supervisor is not an active instructor."
+    await _signed_in(client, db_session, UserRoleEnum.root_admin)
+    instructor = await _target(db_session, role=UserRoleEnum.instructor)
+
+    response = await client.post(
+        "/api/users/",
+        json={
+            "email": "supervised-instructor@smu.edu.sg",
+            "role": "instructor",
+            "supervisor_id": str(instructor.id),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Only a teaching assistant can be given a supervisor."
 
 
 @pytest.mark.asyncio

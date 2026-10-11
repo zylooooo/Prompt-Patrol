@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Admin] A POST with neither header is refused"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  No Sec-Fetch-Site and no Origin: nothing shows where it came from.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {}
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.request.headers.remove("Sec-Fetch-Site");
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("403", () => pm.response.to.have.status(403));
+      pm.test("error code", () => pm.expect(pm.response.json().error).to.eql("forbidden"));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Cross-site request refused."));
+    language: text/javascript
+order: 3000

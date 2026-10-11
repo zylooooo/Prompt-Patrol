@@ -1,13 +1,13 @@
 $kind: http-request
 name: "[Admin] Create an instructor"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   Sends a real Auth0 invite to a +alias address. The new instructor never signs in; later steps use them as a second supervisor, and Cleanup deletes them. Stores NEW_INSTRUCTOR_USER_ID and NEW_INSTRUCTOR_EMAIL.
 url: "{{BASE_URL}}/api/users/"
 method: POST
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 body:
   type: json
   content: |-
@@ -18,8 +18,6 @@ body:
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("201", () => pm.response.to.have.status(201));
       const body = pm.response.json();
       pm.test("a fresh account: active, unnamed, pending, unsupervised", () => {

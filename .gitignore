@@ -266,3 +266,6 @@ mlflow
 
 # Do not commit .mailmap
 .mailmap
+
+# Postman environments holding real session cookies
+postman/environments/*.local.environment.yaml

@@ -1,0 +1,12 @@
+name: Prompt Patrol Dev
+values:
+  - key: BASE_URL
+    value: http://localhost:8000
+  - key: ADMIN_SESSION
+    secret: true
+  - key: INSTRUCTOR_SESSION
+    secret: true
+  - key: TA_SESSION
+    secret: true
+  - key: RUN_SIGN_OUT_TEST
+    value: 'false'

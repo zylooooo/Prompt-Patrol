@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[TA] Someone elses check is 404"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+  404, not 403: the response must not confirm the check exists.
+url: "{{BASE_URL}}/api/checks/{{CHECK_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("404", () => pm.response.to.have.status(404));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Check not found"));
+    language: text/javascript
+order: 9000

@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Instructor] Filter by verdict"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/checks?verdict=uncertain"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("only uncertain", () => items.forEach(c => pm.expect(c.verdict).to.eql("uncertain")));
+      pm.test("includes the short answer", () => pm.expect(items.map(c => c.check_id)).to.include(pm.globals.get("UNCERTAIN_CHECK_ID")));
+    language: text/javascript
+order: 8000

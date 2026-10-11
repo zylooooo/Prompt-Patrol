@@ -1,0 +1,26 @@
+$kind: http-request
+name: "[Instructor] retain_answer false keeps the verdict but not the text"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  The judgement is recorded either way; only the answer text is withheld.
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "answer_text": "Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more.",
+      "retain_answer": false
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("201", () => pm.response.to.have.status(201));
+      const body = pm.response.json();
+      pm.test("no answer text stored", () => pm.expect(body.answer_text).to.eql(null));
+      pm.test("still judged", () => pm.expect(["ai_generated", "human_written", "uncertain"]).to.include(body.verdict));
+    language: text/javascript
+order: 3000

@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Admin] Deactivate the throwaway TA"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Sets up the next request; reactivated right after.
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}/deactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("deactivated", () => pm.expect(pm.response.json().status).to.eql("deactivated"));
+    language: text/javascript
+order: 9000

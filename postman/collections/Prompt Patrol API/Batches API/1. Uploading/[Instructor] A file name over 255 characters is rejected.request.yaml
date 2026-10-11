@@ -1,0 +1,25 @@
+$kind: http-request
+name: "[Instructor] A file name over 255 characters is rejected"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/batches/upload-url"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "file_name": "{{LONG_FILE_NAME}}"
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.variables.set("LONG_FILE_NAME", "f".repeat(252) + ".csv");
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("names file_name", () => pm.expect(pm.response.json().message).to.include("file_name"));
+    language: text/javascript
+order: 3000

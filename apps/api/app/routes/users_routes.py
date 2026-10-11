@@ -176,11 +176,9 @@ async def provision_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to create a user with this role.",
         )
-    except InvalidSupervisorError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="That supervisor is not an active instructor.",
-        )
+    except InvalidSupervisorError as exc:
+        # Its message is written for the caller (see the exception class).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except EmailAlreadyExistsError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -236,11 +234,9 @@ async def add_supervisor_route(
         )
     except UserNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    except InvalidSupervisorError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only an active instructor can supervise, and only a teaching assistant can be supervised.",
-        )
+    except InvalidSupervisorError as exc:
+        # Its message is written for the caller (see the exception class).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except InvalidStatusTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 

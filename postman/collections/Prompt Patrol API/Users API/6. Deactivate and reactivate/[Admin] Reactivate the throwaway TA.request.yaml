@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[Admin] Reactivate the throwaway TA"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Deactivation kept its link, so it comes back supervised.
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}/reactivate"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("active and still supervised", () => {
+        pm.expect(body.status).to.eql("active");
+        pm.expect(body.supervisor_ids).to.eql([pm.globals.get("INSTRUCTOR_USER_ID")]);
+      });
+    language: text/javascript
+order: 11000

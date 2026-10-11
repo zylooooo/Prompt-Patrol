@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] root_admin reads any batch"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/batches/{{BATCH_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("the instructor's batch", () => pm.expect(pm.response.json().batch.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 5000

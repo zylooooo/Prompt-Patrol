@@ -433,11 +433,11 @@ async def _assert_supervisor_available(db: AsyncSession, supervisor_id: uuid.UUI
     result = await db.execute(select(User).where(User.id == supervisor_id))
     supervisor = result.scalar_one_or_none()
     if supervisor is None:
-        raise InvalidSupervisorError(f"no user with id {supervisor_id}")
+        raise InvalidSupervisorError("That supervisor does not exist.")
     if supervisor.role != UserRoleEnum.instructor:
-        raise InvalidSupervisorError("a supervisor must be an instructor")
+        raise InvalidSupervisorError("That supervisor is not an instructor.")
     if supervisor.status != UserStatusEnum.active:
-        raise InvalidSupervisorError("a supervisor must be an active account")
+        raise InvalidSupervisorError("That supervisor is not an active account.")
 
 
 async def _link(db: AsyncSession, actor: User, ta: User, instructor_id: uuid.UUID) -> None:
@@ -473,7 +473,7 @@ async def link_supervisor(db: AsyncSession, actor: User, ta_id: uuid.UUID, instr
 
     target = await _load_manageable(db, ta_id)
     if target.role != UserRoleEnum.teaching_assistant:
-        raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+        raise InvalidSupervisorError("Only a teaching assistant can be given a supervisor.")
     if target.status != UserStatusEnum.active:
         raise InvalidStatusTransitionError("only an active teaching assistant can be placed")
     await _assert_supervisor_available(db, instructor_id)
@@ -612,7 +612,7 @@ async def create_user(
 
     if supervisor_id is not None:
         if role != UserRoleEnum.teaching_assistant:
-            raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+            raise InvalidSupervisorError("Only a teaching assistant can be given a supervisor.")
         await _assert_supervisor_available(db, supervisor_id)
 
     email = normalize_email(email)

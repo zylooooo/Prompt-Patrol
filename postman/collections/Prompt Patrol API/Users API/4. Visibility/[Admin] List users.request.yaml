@@ -1,18 +1,16 @@
 $kind: http-request
 name: "[Admin] List users"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   root_admin sees everyone; the default filter is active users only.
 url: "{{BASE_URL}}/api/users/"
 method: GET
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("200", () => pm.response.to.have.status(200));
       const body = pm.response.json();
       const ids = body.items.map(u => u.id);

@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Cancelling stops queued rows; rows already scored stay. Cancelling twice changes nothing.
+order: 4000

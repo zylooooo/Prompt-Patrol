@@ -1,4 +1,0 @@
-$kind: collection
-description: |-
-  Deletes the second instructor and confirms the TA is left supervised by the instructor.
-order: 12000

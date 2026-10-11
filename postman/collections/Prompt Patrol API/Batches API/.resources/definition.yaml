@@ -1,0 +1,9 @@
+$kind: collection
+description: |-
+  CSV batch screening: get a presigned upload URL, PUT the CSV to S3, submit
+  it (202), then poll and cancel. Run "Users API/1. Setup" first.
+
+  Needs S3 and SQS (LocalStack locally). Progress tests hold whether or not
+  the worker has processed the rows yet: completed + failed + pending always
+  equals row_total.
+order: 700000000000000

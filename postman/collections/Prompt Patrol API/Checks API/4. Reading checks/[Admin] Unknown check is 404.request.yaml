@@ -1,0 +1,15 @@
+$kind: http-request
+name: "[Admin] Unknown check is 404"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/checks/00000000-0000-0000-0000-000000000000"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("404", () => pm.response.to.have.status(404));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Check not found"));
+    language: text/javascript
+order: 13000

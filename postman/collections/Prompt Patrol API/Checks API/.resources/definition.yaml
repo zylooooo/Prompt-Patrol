@@ -1,0 +1,9 @@
+$kind: collection
+description: |-
+  Detector capabilities and single-answer screening (POST /api/checks).
+  Run "Users API/1. Setup" first; it stores the ids used here and makes sure
+  the TA is supervised. Needs the detector (or the e2e detector stub) running.
+
+  Run the folders in numbered order: "2. Screening an answer" stores the
+  check ids that "4. Reading checks" reads back.
+order: 600000000000000

@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Instructor] Detector status is always 200"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  A detector that is down is a state to show, not a failed request.
+url: "{{BASE_URL}}/api/detector/status"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("a known state", () => pm.expect(["ready", "loading", "unavailable"]).to.include(body.status));
+      pm.test("same model as the capabilities", () => pm.expect(body.model_version).to.eql(pm.globals.get("DETECTOR_MODEL_VERSION")));
+    language: text/javascript
+order: 3000

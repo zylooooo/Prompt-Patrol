@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  The CSV goes straight to S3 with a presigned URL; the API never receives the file.
+order: 1000

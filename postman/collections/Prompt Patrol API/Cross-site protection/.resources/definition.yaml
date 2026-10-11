@@ -1,0 +1,11 @@
+$kind: collection
+description: |-
+  CrossOriginProtectionMiddleware (CSRF, DECISION LOG [0.25.0]). Every request
+  here is a POST /api/users with an empty body as root_admin: a refusal is
+  403 "Cross-site request refused.", and a request that gets through reaches
+  body validation and is a 400 instead. Nothing is ever created.
+
+  The collection adds Sec-Fetch-Site: same-origin to every request; requests
+  here override or remove it in their own pre-request script. The own-origin
+  check assumes the API's FRONTEND_URL is http://localhost:5173.
+order: 500000000000000

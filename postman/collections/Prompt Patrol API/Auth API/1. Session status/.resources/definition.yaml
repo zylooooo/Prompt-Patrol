@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  GET /api/auth/me reports who the session belongs to and when it expires.
+order: 1000
