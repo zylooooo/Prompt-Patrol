@@ -8,7 +8,12 @@ from auth import SessionFailure
 from models import User, UserRoleEnum, UserStatusEnum
 from models.session import UserSession
 from services import authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
-from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_ACTIVITY_RESOLUTION, SESSION_IDLE_TTL
+from services.sessions import (
+    SESSION_ABSOLUTE_TTL,
+    SESSION_ACTIVITY_RESOLUTION,
+    SESSION_IDLE_TTL,
+    SESSION_RETENTION,
+)
 
 
 async def _user(db_session, email: str, oid: str, **kwargs) -> User:
@@ -42,6 +47,25 @@ async def test_create_then_authenticate_session_roundtrip(db_session):
     resolved = await authenticate_session(db_session, raw_token)
 
     assert resolved.user.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_login_purges_only_this_users_rows_past_retention(db_session):
+    user = await _user(db_session, "p@smu.edu.sg", "oid-p")
+    other = await _user(db_session, "q@smu.edu.sg", "oid-q")
+    long_dead = datetime.now(UTC) - SESSION_RETENTION - timedelta(hours=1)
+    recently_dead = datetime.now(UTC) - SESSION_RETENTION + timedelta(hours=1)
+    stale = await _session_row(db_session, user, absolute_expires_at=long_dead)
+    kept = await _session_row(db_session, user, absolute_expires_at=recently_dead)
+    others = await _session_row(db_session, other, absolute_expires_at=long_dead)
+
+    fresh = await create_session(db_session, user.id)
+
+    from auth.tokens import hash_token
+
+    remaining = set((await db_session.execute(select(UserSession.token_hash))).scalars())
+    assert remaining == {hash_token(kept), hash_token(others), hash_token(fresh)}
+    assert hash_token(stale) not in remaining
 
 
 @pytest.mark.asyncio
