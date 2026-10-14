@@ -68,10 +68,10 @@ def enqueue_row(payload: dict) -> None:
     _sqs_client().send_message(QueueUrl=SQS_BATCHES_QUEUE_URL, MessageBody=json.dumps(payload))
 
 
-def purge_batch_messages(batch_id: str) -> int:
-    """Best-effort drain, run once when a batch is cancelled. SQS has no
+def purge_batch_messages(*batch_ids: str) -> int:
+    """Best-effort drain, run once when batches are cancelled. SQS has no
     server-side "delete where batch_id=X", so this receives 10 at a time and
-    deletes only the ones belonging to this batch.
+    deletes only the ones belonging to these batches.
 
     A non-matching message is left completely alone, not deleted, not
     reset visible. A message with unparsable JSON is skipped the same way - one poison
@@ -91,7 +91,7 @@ def purge_batch_messages(batch_id: str) -> int:
             except json.JSONDecodeError:
                 logger.exception("Skipping unparsable message during batch purge.")
                 continue
-            if payload.get("batch_id") == batch_id:
+            if payload.get("batch_id") in batch_ids:
                 client.delete_message(QueueUrl=SQS_BATCHES_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"])
                 removed += 1
     return removed
