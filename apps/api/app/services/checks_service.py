@@ -150,7 +150,7 @@ async def list_checks(
     would confirm that id exists, so override rather than reject."""
     query = select(Check)
     if not _may_read_any_check(actor):
-        query = query.where(Check.actor_id == actor.id)
+        query = query.where(actor.owned_by_clause(Check))
     elif actor_id is not None:
         query = query.where(Check.actor_id == actor_id)
 
@@ -190,6 +190,6 @@ async def get_check_by_id(db: AsyncSession, actor: User, check_id: uuid.UUID) ->
     check = (await db.execute(select(Check).where(Check.id == check_id))).scalar_one_or_none()
     if check is None:
         return None
-    if not _may_read_any_check(actor) and check.actor_id != actor.id:
+    if not _may_read_any_check(actor) and not actor.owns(check.actor_id, check.created_at):
         return None
     return check

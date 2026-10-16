@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -11,8 +11,21 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import Supervision, User, UserRoleEnum, UserRoleEvent, UserStatusEnum, UserStatusEvent
+from models import (
+    Batch,
+    Check,
+    StrictnessEnum,
+    Supervision,
+    User,
+    UserRoleEnum,
+    UserRoleEvent,
+    UserStatusEnum,
+    UserStatusEvent,
+    VerdictEnum,
+)
 from schemas import UserResponse
+from services.batches_service import cancel_batch, get_batch_progress
+from services.checks_service import get_check_by_id, list_checks
 from services.users_service import (
     LoginRejection,
     _can_view_user,
@@ -1383,3 +1396,96 @@ async def test_a_deleted_account_cannot_be_renamed(db_session):
 
     with pytest.raises(InvalidStatusTransitionError):
         await update_display_name(db_session, admin, gone.id, "Ghost")
+
+
+def _check(actor_id, **kwargs):
+    return Check(
+        actor_id=actor_id,
+        verdict=VerdictEnum.human_written,
+        raw_score=0.1,
+        model_version="m",
+        strictness_applied=StrictnessEnum.standard,
+        threshold_applied=0.5,
+        answer_char_len=10,
+        answer_text="a student's answer",
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reprovisioned_address_does_not_inherit_the_previous_holders_history(db_session):
+    # The row and id are reused, and the address may now be someone else's:
+    # what the previous holder ran stays out of the new holder's reads.
+    admin = _user(UserRoleEnum.root_admin)
+    old = _deleted_user(UserRoleEnum.instructor, email="recycled2@smu.edu.sg")
+    await _seed(db_session, admin, old)
+    before = datetime.now(UTC) - timedelta(days=1)
+    old_check = _check(old.id, created_at=before)
+    old_batch = Batch(
+        actor_id=old.id,
+        batch_file_name="a.csv",
+        strictness=StrictnessEnum.standard,
+        requires_question_text=False,
+        row_total=1,
+        created_at=before,
+    )
+    db_session.add_all([old_check, old_batch])
+    await db_session.commit()
+
+    holder = await create_user(db_session, admin, "recycled2@smu.edu.sg", UserRoleEnum.instructor)
+    assert holder.id == old.id and holder.reprovisioned_at is not None
+    own_check = _check(holder.id)
+    db_session.add(own_check)
+    await db_session.commit()
+
+    listed, _ = await list_checks(db_session, holder)
+    assert [c.id for c in listed] == [own_check.id]
+    assert await get_check_by_id(db_session, holder, old_check.id) is None
+    assert await get_check_by_id(db_session, holder, own_check.id) is not None
+    assert await get_batch_progress(db_session, holder, old_batch.id) is None
+    assert await cancel_batch(db_session, holder, old_batch.id) is None
+    # root_admin still sees the full history.
+    assert await get_check_by_id(db_session, admin, old_check.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_cancels_unfinished_batches_and_leaves_finished_ones(db_session, monkeypatch):
+    purged = []
+
+    def failing_purge(*batch_ids):
+        purged.extend(batch_ids)
+        raise RuntimeError("SQS down")
+
+    monkeypatch.setattr("services.users_service.purge_batch_messages", failing_purge)
+    admin, instructor, other = (
+        _user(UserRoleEnum.root_admin),
+        _user(UserRoleEnum.instructor),
+        _user(UserRoleEnum.instructor),
+    )
+    await _seed(db_session, admin, instructor, other)
+
+    def batch(actor_id):
+        return Batch(
+            actor_id=actor_id,
+            batch_file_name="a.csv",
+            strictness=StrictnessEnum.standard,
+            requires_question_text=False,
+            row_total=2,
+        )
+
+    running, finished, others = batch(instructor.id), batch(instructor.id), batch(other.id)
+    db_session.add_all([running, finished, others])
+    await db_session.flush()
+    # running: 1 of 2 rows done. finished: 2 of 2.
+    db_session.add_all([_check(instructor.id, batch_id=b.id) for b in (running, finished, finished)])
+    await db_session.commit()
+
+    # A failed purge is logged, not raised: the delete has already committed.
+    await delete_user(db_session, admin, instructor.id)
+
+    for row in (running, finished, others):
+        await db_session.refresh(row)
+    assert running.cancelled_at is not None
+    assert finished.cancelled_at is None
+    assert others.cancelled_at is None
+    assert purged == [str(running.id)]
