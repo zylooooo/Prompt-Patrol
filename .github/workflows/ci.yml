@@ -59,6 +59,10 @@ jobs:
           terraform -chdir=infra init -backend=false -input=false
           terraform -chdir=infra validate
 
+      # Mock provider: offline, no credentials.
+      - name: Test
+        run: terraform -chdir=infra test
+
   lint-frontend:
     runs-on: ubuntu-latest
     defaults:
