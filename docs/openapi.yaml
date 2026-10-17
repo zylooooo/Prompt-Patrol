@@ -23,8 +23,8 @@ openapi: 3.0.3
 #          by `x-edge-configuration`; `x-auth-enforcement: GATEWAY` is now
 #          `APP`, which is where it already ran since [0.25.0]. The NAT
 #          justification now names the Management API calls it also
-#          carries. No request or response shape changes. See DECISION LOG
-#          [0.28.0].
+#          carries. Deploy Region recorded: `ap-southeast-1`. No request or
+#          response shape changes. See DECISION LOG [0.28.0].
 #   0.27.0 DELETE /api/users/{id} now cancels the user's unfinished batches
 #          in the same commit (`cancelled_at` set, queued rows purged best
 #          effort), so no check is written for a deleted owner. Finished
@@ -3223,9 +3223,16 @@ components:
 #   validation, throttling, logs) is already done by the app, WAF, ALB or
 #   CloudFront. Revisit if third-party API consumers (API keys, usage
 #   plans) become a requirement.
+#   REGION. Every Regional resource is in `ap-southeast-1` (Singapore), so
+#   stored student answers stay in Singapore. The only exceptions are the
+#   CloudFront-scoped WAF web ACL and CloudFront's ACM certificate, which
+#   AWS requires in `us-east-1`; neither holds student data.
 #   CHECKED. CloudFront (and its VPC-origin API), ELB, ECS, ECR, RDS, VPC
 #   and PrivateLink, WAF, ACM, SQS, Secrets Manager, EventBridge and
-#   CloudWatch are on the project's AWS plan (Free and Paid).
+#   CloudWatch are available to the account. WAF on CloudFront and any
+#   Region other than Sydney were not offered on the new-AWS-experience
+#   plan; both needed the Paid plan with advanced features activated
+#   (done 2026-10-17, account now in AWS Organization `Zhi-Yi-Team`).
 #
 # [0.27.0] Deleting a user cancels their unfinished batches.
 #
