@@ -40,6 +40,25 @@ jobs:
       - name: Lint API contract
         run: npx --yes @redocly/cli@latest lint docs/openapi.yaml
 
+  lint-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.x"
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra
+
+      # -backend=false keeps this job credential-free; it never touches the state bucket.
+      - name: Validate
+        run: |
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+
   lint-frontend:
     runs-on: ubuntu-latest
     defaults:
