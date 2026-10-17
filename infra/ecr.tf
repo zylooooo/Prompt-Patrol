@@ -29,10 +29,13 @@ resource "aws_ecr_lifecycle_policy" "service" {
         selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = 1 }
         action       = { type = "expire" }
       },
+      # Counts tagged images only. Buildx pushes each build as a tagged index
+      # plus two untagged children (image, provenance); "any" would count all
+      # three and keep ~3 deploys. Children of a kept index can't be expired.
       {
         rulePriority = 2
-        description  = "Keep the newest 10 (the detector image is several GB)"
-        selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 10 }
+        description  = "Keep the newest 10 deploys (the detector image is several GB)"
+        selection    = { tagStatus = "tagged", tagPatternList = ["*"], countType = "imageCountMoreThan", countNumber = 10 }
         action       = { type = "expire" }
       },
     ]
