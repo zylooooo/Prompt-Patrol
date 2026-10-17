@@ -18,6 +18,8 @@ One root, one state, files split by area per the
 | `variables.tf` / `terraform.tfvars` | inputs / their committed values |
 | `network.tf` | VPC, subnets, NAT, route tables |
 | `endpoints.tf` | VPC endpoints and their security group |
+| `ecr.tf` | ECR repositories and lifecycle policies |
+| `github-oidc.tf` | GitHub OIDC provider and the deploy role |
 | `tests/` | `terraform test` files (mock provider, run in CI) |
 
 Later steps add one file per area (`database.tf`, `compute.tf`, `edge.tf`).
@@ -68,6 +70,34 @@ groups) stay up either way, so nothing that depends on them is rebuilt.
 - Resuming gets a new NAT IP address. Nothing allowlists it today.
 - New hourly-billed resources must follow the same rule (`count` or `for_each`
   on `var.paused`). Stateful ones (RDS) don't; they need their own plan.
+
+## Images and deploys
+
+```
+push to main ─► CI builds api / worker / detector ─► GHCR (tag = commit SHA)
+                                │
+                 deploy job waits on the `production` environment
+                                │  ◄── a reviewer clicks Approve
+                                ▼
+         OIDC → role prompt-patrol-deploy → copy images GHCR ─► ECR (by digest)
+```
+
+- **Nothing reaches AWS without an approval.** The `deploy` job in
+  `.github/workflows/ci.yml` runs in the GitHub `production` environment, which
+  requires a reviewer. The role trusts only
+  `repo:zylooooo/Prompt-Patrol:environment:production` (`github-oidc.tf`); no
+  AWS keys are stored in GitHub.
+- **Which branches can deploy** is the environment's deployment-branch rule
+  (GitHub → Settings → Environments → production), not the IAM role.
+- **AWS runs only from ECR.** Isolated-tier tasks have no internet route, so
+  they can't pull from `ghcr.io`; ECR is reached through the VPC endpoints.
+- **Copy by digest:** the image in ECR is byte-for-byte the one CI built.
+  ECR tags are immutable; re-running a deploy skips images already copied.
+- **Roll back:** re-run the `deploy` job of an older CI run.
+- GHCR packages are **public** (private storage on the free plan is 500 MB;
+  the detector alone is several GB).
+- ECR keeps the newest 10 images per repo; GHCR keeps every build.
+- The detector image is `apps/detector/Dockerfile.desklib`.
 
 ## The state bucket is not managed here
 
