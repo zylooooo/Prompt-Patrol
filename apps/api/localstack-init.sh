@@ -29,6 +29,6 @@ DLQ_ARN=$(awslocal sqs create-queue --queue-name prompt-patrol-batches-dlq --que
 
 awslocal sqs create-queue \
   --queue-name prompt-patrol-batches \
-  --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
+  --attributes "{\"VisibilityTimeout\":\"600\",\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"}"
 
-echo "LocalStack bootstrap complete: bucket + queue + DLQ (maxReceiveCount=3) ready."
+echo "LocalStack bootstrap complete: bucket + queue (VisibilityTimeout=600) + DLQ (maxReceiveCount=5) ready."

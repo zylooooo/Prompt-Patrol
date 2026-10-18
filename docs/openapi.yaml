@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.28.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.29.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,9 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.29.0 Batch cancel's queue drain hides messages it receives for 30 s, not
+#          the queue default (600 s in AWS). maxReceiveCount 3 → 5. No request
+#          or response shape changes. See DECISION LOG [0.29.0].
 #   0.28.0 No API Gateway. AWS ingress is CloudFront (WAF) → VPC origin →
 #          internal ALB → API service. `x-gateway-configuration` is replaced
 #          by `x-edge-configuration`; `x-auth-enforcement: GATEWAY` is now
@@ -337,7 +340,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.28.0
+  version: 0.29.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -3193,6 +3196,27 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.29.0] Batch cancel's queue drain hides messages for 30 s, not 600 s.
+#
+#   PROBLEM. The AWS batches queue needs a 600 s visibility timeout so the
+#   worker's 10 × 30 s of scoring does not see the message redelivered
+#   mid-processing. The [0.15.0] drain receives other batches' messages to
+#   look at them and leaves them alone; under a 600 s timeout it would hide
+#   those rows for 10 minutes, and each receive also counts toward
+#   `maxReceiveCount` and so toward the redrive to the DLQ.
+#   DECISION. The drain passes `VisibilityTimeout=30` on its own receives,
+#   the behaviour [0.15.0] was verified with. The queue default stays 600 s
+#   for the worker. `maxReceiveCount` is 5 (was 3), and LocalStack is
+#   created with the same 600 s / 5 as AWS.
+#   CEILING. A drain that runs longer than 30 s re-receives other batches'
+#   rows it already saw. The Worker's `cancelled_at` check stays the
+#   correctness backstop for anything the drain misses.
+#   CEILING. With 600 s × `maxReceiveCount` 5, a row whose detector call
+#   keeps failing takes ~50 min to reach the DLQ and show as `failed` (was
+#   ~1.5 min under LocalStack's old 30 s / 3), e.g. during a detector outage.
+#   Accepted for now; upgrade path: the worker calls
+#   `change_message_visibility` with a short timeout on failure.
 #
 # [0.28.0] No API Gateway: CloudFront reaches the app through a VPC origin.
 #
