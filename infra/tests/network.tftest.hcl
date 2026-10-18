@@ -5,6 +5,11 @@ mock_provider "aws" {}
 run "running" {
   command = apply
 
+  # Explicit: `terraform test` also loads terraform.tfvars, which may be paused.
+  variables {
+    paused = false
+  }
+
   assert {
     condition     = length(aws_route_table.isolated.route) == 0
     error_message = "The isolated/database route table must have no routes."
