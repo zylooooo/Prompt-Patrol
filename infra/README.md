@@ -71,6 +71,10 @@ groups, ECS cluster, CloudFront distribution, SPA bucket, log groups) stay up ei
 - Change it in `terraform.tfvars`, never with `-var`: the CD apply reads the
   committed file, so a `-var` pause would be undone by the next deploy.
 - Resuming gets a new NAT IP address. Nothing allowlists it today.
+- Resuming creates a new, empty database. Once the services settle, run the
+  migration and seed the root admin again (steps 5 and 6 of
+  [Compute and edge](#compute-and-edge-step-5)); Auth0 keeps the admin's
+  login, so no new invite is sent.
 - New hourly-billed resources must follow the same rule (`count` or `for_each`
   on `var.paused`). Stateful ones (RDS) don't; they need their own plan.
 
