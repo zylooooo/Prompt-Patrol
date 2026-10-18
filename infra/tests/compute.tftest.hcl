@@ -120,7 +120,8 @@ run "running" {
       aws_service_discovery_private_dns_namespace.main.name == "prompt-patrol.internal" &&
       aws_service_discovery_service.detector.name == "detector" &&
       aws_service_discovery_service.detector.dns_config[0].dns_records[0].type == "A" &&
-      aws_service_discovery_service.detector.dns_config[0].dns_records[0].ttl == 10
+      aws_service_discovery_service.detector.dns_config[0].dns_records[0].ttl == 10 &&
+      length(aws_service_discovery_service.detector.health_check_custom_config) == 1
     )
     error_message = "detector.prompt-patrol.internal: A record, TTL 10."
   }

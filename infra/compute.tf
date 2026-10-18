@@ -58,7 +58,16 @@ resource "aws_service_discovery_service" "detector" {
     }
   }
 
-  health_check_custom_config {}
+  # An empty block is never sent to AWS, so every plan wants to replace the
+  # service. failure_threshold is deprecated (AWS always uses 1) but makes the
+  # provider send the block.
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+
+  # ECS registers the detector task here; without this a replacement fails
+  # with ResourceInUse.
+  force_destroy = true
 }
 
 # --- IAM ---------------------------------------------------------------------
