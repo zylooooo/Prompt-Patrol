@@ -66,6 +66,15 @@ resource "aws_cloudfront_vpc_origin" "alb" {
       quantity = 1
     }
   }
+
+  # On pause the distribution drops this origin in the same apply. Without
+  # this, Terraform deletes the origin first and CloudFront refuses (409, still
+  # in use); with it, the distribution update runs first. Terraform also treats
+  # the ALB as create-before-destroy, so a forced replacement of either would
+  # hit a name clash: pause and resume instead.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # AWS creates this SG with the VPC origin (it may appear only once a
