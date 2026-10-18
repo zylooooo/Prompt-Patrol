@@ -1,6 +1,8 @@
 # Offline (mock provider). Guards the two things that must never loosen: who
 # can assume the deploy role, and that image tags can't be overwritten.
-mock_provider "aws" {}
+mock_provider "aws" {
+  source = "./tests/mocks"
+}
 
 run "deploy" {
   command = apply

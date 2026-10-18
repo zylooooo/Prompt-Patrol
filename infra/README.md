@@ -10,23 +10,23 @@ S3's native lockfile (no DynamoDB table).
 One root, one state, files split by area per the
 [Terraform style guide](https://developer.hashicorp.com/terraform/language/style#file-names):
 
-| File                                | Holds                                             |
-| ----------------------------------- | ------------------------------------------------- |
-| `terraform.tf`                      | `required_version`, `required_providers`          |
-| `backend.tf`                        | S3 backend                                        |
-| `providers.tf`                      | AWS provider, account guard, default tags         |
-| `variables.tf` / `terraform.tfvars` | inputs / their committed values                   |
-| `network.tf`                        | VPC, subnets, NAT, route tables                   |
-| `endpoints.tf`                      | VPC endpoints and their security group            |
-| `ecr.tf`                            | ECR repositories and lifecycle policies           |
-| `github-oidc.tf`                    | GitHub OIDC provider and the deploy role          |
-| `tests/`                            | `terraform test` files (mock provider, run in CI) |
+| File                                | Holds                                                       |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `terraform.tf`                      | `required_version`, `required_providers`                    |
+| `backend.tf`                        | S3 backend                                                  |
+| `providers.tf`                      | AWS provider, account guard, default tags                   |
+| `variables.tf` / `terraform.tfvars` | inputs / their committed values                             |
+| `network.tf`                        | VPC, subnets, NAT, route tables                             |
+| `endpoints.tf`                      | VPC endpoints and their security group                      |
+| `ecr.tf`                            | ECR repositories and lifecycle policies                     |
+| `compute.tf`                        | ECS cluster, services, IAM, security groups, purge schedule |
+| `edge.tf`                           | ALB, VPC origin, SPA bucket, CloudFront                     |
+| `github-oidc.tf`                    | GitHub OIDC provider and the deploy role                    |
+| `tests/`                            | `terraform test` files (mock provider, run in CI)           |
 
-Later steps add one file per area (`database.tf`, `compute.tf`, `edge.tf`).
-A module goes in `modules/` only when it is a real repeated concept. The
-planned one is `modules/fargate-service/`, used by the API, Worker and
-detector. A module used once is just a folder of resources with extra
-input/output wiring. Add `outputs.tf` when something needs an output.
+`compute.tf` and `edge.tf` are step 5. There are no modules: every resource is
+hand-written per service (api, worker, detector) for granular control. Add
+`outputs.tf` entries when something needs an output.
 
 ## Prerequisites
 
@@ -53,8 +53,11 @@ fail before it touches anything.
 
 ## Pausing the environment
 
-Everything billed by the hour (today: the NAT gateway, its Elastic IP and the
-five interface endpoints in both zones, about $4.70/day) is gated on `paused`. To stop paying
+Everything billed by the hour is gated on `paused`: the NAT gateway, its
+Elastic IP and the five interface endpoints (about $4.70/day), the RDS
+instance, and since step 5 the ALB, the CloudFront VPC origin, the three ECS
+services and their task definitions, and the nightly session-purge schedule
+(about $5/day more). To stop paying
 for it, set this in `terraform.tfvars`, apply, and commit:
 
 ```hcl
@@ -63,7 +66,7 @@ paused = true
 
 Set it back to `false` and apply to resume (about 5 minutes). Free resources
 (VPC, subnets, route tables, internet gateway, S3 gateway endpoint, security
-groups) stay up either way, so nothing that depends on them is rebuilt.
+groups, ECS cluster, CloudFront distribution, SPA bucket, log groups) stay up either way, so nothing that depends on them is rebuilt.
 
 - Change it in `terraform.tfvars`, never with `-var`: the CD apply reads the
   committed file, so a `-var` pause would be undone by the next deploy.
@@ -99,6 +102,113 @@ push to main ─► CI builds api / worker / detector ─► GHCR (tag = commit 
 - ECR keeps the newest 10 images per repo; GHCR keeps every build.
 - The detector image is `apps/detector/Dockerfile.desklib`.
 
+## Compute and edge (step 5)
+
+`compute.tf` runs api, worker and detector on Fargate in cluster
+`prompt-patrol`; `edge.tf` puts CloudFront (SPA from S3, `/api/*` to the
+internal ALB through a VPC origin) in front. Bringing it up is manual and
+ordered. **Run every command here in Git Bash**: PowerShell 5.1 mangles the
+inline JSON in the one-off task commands. All AWS commands carry
+`--profile prompt-patrol --region ap-southeast-1`; `terraform` runs from
+`infra/`.
+
+1. **Images.** Commit, let CI's `deploy` job copy that commit's images to ECR,
+   then set `image_tag` in `terraform.tfvars` to the commit SHA.
+2. **Apply** with `paused = false`:
+
+   ```bash
+   terraform apply
+   ```
+
+   The services fail to start until step 3 (the redirect secret is empty).
+   That is expected. If the first apply fails reading the security group
+   `CloudFront-VPCOrigins-Service-SG`, it simply didn't exist yet (AWS creates
+   it when the VPC origin does): run `terraform apply` once more.
+3. **Redirect secret.** Fill `prompt-patrol/AUTH0_REDIRECT_URI` with the output
+   of `terraform output -raw auth0_callback_url`, (the other
+   five `AUTH0_*` secrets are already set):
+
+   ```bash
+   aws secretsmanager put-secret-value --profile prompt-patrol --region ap-southeast-1 \
+     --secret-id prompt-patrol/AUTH0_REDIRECT_URI \
+     --secret-string "$(terraform output -raw auth0_callback_url)"
+   ```
+
+   The URL is not a secret, so it goes straight from the output; no `read`
+   needed. (Or paste it in the console's Plaintext tab.) Then, in the Auth0
+   application, add that callback URL to **Allowed Callback URLs**, and
+   `terraform output -raw frontend_url` plus `<frontend_url>/login` to
+   **Allowed Logout URLs**. Logout redirects to `FRONTEND_URL` or
+   `FRONTEND_URL/login?error=...` (`auth_routes.py`); add both URLs and test a
+   logout rather than relying on Auth0 ignoring the query string.
+4. **Pick up the secret.** Secrets are read at task start, and on first
+   bring-up api and worker have been failing without `AUTH0_REDIRECT_URI`, so
+   restart both:
+
+   ```bash
+   for s in api worker; do
+     aws ecs update-service --profile prompt-patrol --region ap-southeast-1 \
+       --cluster prompt-patrol --service $s --force-new-deployment
+   done
+   ```
+
+   Then let the rollouts settle. The Fargate vCPU quota is 6 and a full rollout
+   peaks at 5.5, so a one-off task started mid-rollout fails to place. Wait
+   until each service shows `runningCount` equal to `desiredCount` and no
+   pending deployment:
+
+   ```bash
+   aws ecs describe-services --profile prompt-patrol --region ap-southeast-1 \
+     --cluster prompt-patrol --services api worker detector \
+     --query "services[].[serviceName,desiredCount,runningCount,deployments[].rolloutState]"
+   ```
+
+5. **Migrate, only after the rollouts settle.** Between the restart and the
+   migration the api may serve against an unmigrated DB; that is harmless, as
+   there are no users yet.
+
+   Run the migration, then wait for it to stop with exit code 0 (this is the
+   first proof the `DB_URL` password works). Take the commands from
+   `terraform output -raw` (plain `terraform output` adds quotes and escapes
+   that break the shell):
+
+   ```bash
+   eval "$(terraform output -raw migrate_command) --query 'tasks[0].taskArn' --output text"   # prints the task ARN
+   aws ecs wait tasks-stopped --profile prompt-patrol --region ap-southeast-1 \
+     --cluster prompt-patrol --tasks <task-arn>
+   aws ecs describe-tasks --profile prompt-patrol --region ap-southeast-1 \
+     --cluster prompt-patrol --tasks <task-arn> \
+     --query "tasks[0].containers[0].[exitCode,reason]"
+   ```
+
+   Logs are in `/ecs/prompt-patrol/api`.
+6. **Seed the root admin.** `provision_admin_command` contains an `<email>`
+   placeholder: replace it, then run it the same way as the migration.
+
+   ```bash
+   terraform output -raw provision_admin_command   # copy, replace <email>, append --query 'tasks[0].taskArn' --output text, run
+   ```
+
+7. **Ship the SPA.** Needs Node 24 (Node 25 breaks the toolchain):
+
+   ```bash
+   (cd ../apps/web && npm ci && npm run build)
+   aws s3 sync ../apps/web/dist/ "s3://$(terraform output -raw web_bucket_name)" --delete \
+     --profile prompt-patrol --region ap-southeast-1
+   aws cloudfront create-invalidation --profile prompt-patrol --region ap-southeast-1 \
+     --distribution-id "$(terraform output -raw cloudfront_distribution_id)" --paths "/*"
+   ```
+
+8. Open `terraform output -raw frontend_url`, sign in, run one check. Then pause.
+
+Known gaps until step 6 of the CD plan: no WAF, no CSP or other security
+headers, and batch CSV upload fails (the batches bucket has no CORS rule).
+
+**Cost.** Step 5 adds about $5/day (detector about $0.145/h, api $0.031/h,
+worker $0.015/h, ALB $0.025/h). With the NAT/endpoints and RDS the whole stack
+is about $10/day, or about $310/month: over the $100 budget if left running.
+Run it in test windows and [pause](#pausing-the-environment) between them.
+
 ## The state bucket is not managed here
 
 The bucket was created once by hand in the console and is deliberately outside
@@ -125,14 +235,20 @@ Read-only check (works in PowerShell or bash):
 
 ```powershell
 $b = "prompt-patrol-tfstate-420974348257"
-aws s3api get-bucket-location            --bucket $b
-aws s3api get-bucket-versioning          --bucket $b
+aws s3api get-bucket-location     \
+       --bucket $b
+aws s3api get-bucket-versioning   \
+       --bucket $b
 aws s3api get-bucket-lifecycle-configuration --bucket $b
-aws s3api get-bucket-encryption          --bucket $b
-aws s3api get-public-access-block        --bucket $b
+aws s3api get-bucket-encryption   \
+       --bucket $b
+aws s3api get-public-access-block \
+       --bucket $b
 aws s3api get-bucket-ownership-controls  --bucket $b
-aws s3api get-bucket-policy              --bucket $b
-aws s3api get-bucket-tagging             --bucket $b
+aws s3api get-bucket-policy       \
+       --bucket $b
+aws s3api get-bucket-tagging      \
+       --bucket $b
 ```
 
 ## Credentials and secrets
@@ -159,7 +275,9 @@ aws s3api get-bucket-tagging             --bucket $b
   Flipping both in one apply fails the DB destroy after `DB_URL` left state;
   recover by bumping `db_password_version` (below).
 - If `DB_URL` and the DB disagree, bump `db_password_version` in
-  `database.tf` and apply.
+  `database.tf` and apply. Running tasks keep the old secret, so then run
+  `aws ecs update-service --cluster prompt-patrol --service <api|worker>
+  --force-new-deployment` for both api and worker.
 - `terraform.tfvars` is committed and holds non-secret config only.
   `*.secret.tfvars` is gitignored as a safety net, not as permission.
 

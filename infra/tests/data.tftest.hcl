@@ -1,6 +1,8 @@
 # Offline (mock provider). Guards the queue settings that DECISION LOG [0.29.0]
 # fixes, and that the CSV bucket stays private and expiring.
-mock_provider "aws" {}
+mock_provider "aws" {
+  source = "./tests/mocks"
+}
 
 run "running" {
   command = apply

@@ -1,0 +1,266 @@
+# Edge: CloudFront in front of the SPA bucket and, via a VPC origin, the
+# internal ALB. The ALB and VPC origin are hourly-billed, so they follow
+# var.paused. The distribution and SPA bucket never do: the distribution's
+# domain is the app's identity (FRONTEND_URL, Auth0 allowed URLs).
+
+locals {
+  frontend_url = "https://${aws_cloudfront_distribution.web.domain_name}"
+}
+
+# --- Internal ALB ------------------------------------------------------------
+
+# Isolated subnets: it only talks to the VPC origin and the API tasks. No TLS on
+# this hop: no domain of ours to certify, and it stays inside AWS's network.
+resource "aws_lb" "api" {
+  count                      = var.paused ? 0 : 1
+  name                       = "prompt-patrol"
+  internal                   = true
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = aws_subnet.isolated[*].id
+  idle_timeout               = 60
+  drop_invalid_header_fields = true
+}
+
+resource "aws_lb_target_group" "api" {
+  count                = var.paused ? 0 : 1
+  name                 = "prompt-patrol-api"
+  port                 = 8000
+  protocol             = "HTTP"
+  target_type          = "ip"
+  vpc_id               = aws_vpc.main.id
+  deregistration_delay = 30
+
+  health_check {
+    path    = "/health"
+    matcher = "200"
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  count             = var.paused ? 0 : 1
+  load_balancer_arn = aws_lb.api[0].arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api[0].arn
+  }
+}
+
+# Create/delete takes several minutes; accepted for the pause savings.
+resource "aws_cloudfront_vpc_origin" "alb" {
+  count = var.paused ? 0 : 1
+
+  vpc_origin_endpoint_config {
+    name                   = "prompt-patrol-alb"
+    arn                    = aws_lb.api[0].arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "http-only"
+
+    # Required by the API even for http-only; unused.
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
+    }
+  }
+}
+
+# AWS creates this SG with the VPC origin (it may appear only once a
+# distribution uses it). Allowing it, not CloudFront's prefix list, admits our
+# distributions only.
+data "aws_security_group" "cloudfront_vpc_origin" {
+  count = var.paused ? 0 : 1
+
+  filter {
+    name   = "group-name"
+    values = ["CloudFront-VPCOrigins-Service-SG"]
+  }
+  filter {
+    name   = "vpc-id"
+    values = [aws_vpc.main.id]
+  }
+
+  depends_on = [aws_cloudfront_vpc_origin.alb, aws_cloudfront_distribution.web]
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
+  count                        = var.paused ? 0 : 1
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = data.aws_security_group.cloudfront_vpc_origin[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = 80
+  to_port                      = 80
+}
+
+# --- SPA bucket --------------------------------------------------------------
+
+resource "aws_s3_bucket" "web" {
+  bucket        = "prompt-patrol-web-420974348257"
+  force_destroy = true # so the end-of-project destroy works with objects inside
+}
+
+resource "aws_s3_bucket_public_access_block" "web" {
+  bucket                  = aws_s3_bucket.web.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "web" {
+  bucket = aws_s3_bucket.web.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+# SSE-S3, not KMS: OAC reading SSE-KMS objects needs a key policy too.
+resource "aws_s3_bucket_server_side_encryption_configuration" "web" {
+  bucket = aws_s3_bucket.web.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "web" {
+  bucket = aws_s3_bucket.web.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.web.arn, "${aws_s3_bucket.web.arn}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      },
+      {
+        # SourceArn: only this distribution, not any CloudFront in any account.
+        Sid       = "CloudFrontOacRead"
+        Effect    = "Allow"
+        Principal = { Service = "cloudfront.amazonaws.com" }
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.web.arn}/*"
+        Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.web.arn } }
+      },
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.web]
+}
+
+# --- CloudFront --------------------------------------------------------------
+
+data "aws_cloudfront_cache_policy" "caching_optimized" {
+  name = "Managed-CachingOptimized"
+}
+
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+# Cookies, query strings, Origin and Sec-Fetch-Site reach the API (CSRF check).
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
+resource "aws_cloudfront_origin_access_control" "web" {
+  name                              = "prompt-patrol-web"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# Client-side routes (no file extension) get index.html. Done here rather than
+# custom_error_response, which would also rewrite the API's deliberate 404s.
+resource "aws_cloudfront_function" "spa_rewrite" {
+  name    = "prompt-patrol-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      if (request.uri.split('/').pop().indexOf('.') === -1) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
+}
+
+# PriceClass_200 includes the Singapore edges; 100 does not. IPv4 only: a
+# dual-stack VPC origin needs more setup.
+resource "aws_cloudfront_distribution" "web" {
+  enabled             = true
+  comment             = "prompt-patrol"
+  price_class         = "PriceClass_200"
+  http_version        = "http2and3"
+  is_ipv6_enabled     = false
+  default_root_object = "index.html"
+
+  origin {
+    origin_id                = "web"
+    domain_name              = aws_s3_bucket.web.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.web.id
+  }
+
+  # While paused, /api/* falls through to the SPA.
+  dynamic "origin" {
+    for_each = aws_cloudfront_vpc_origin.alb
+    content {
+      origin_id   = "api"
+      domain_name = aws_lb.api[0].dns_name
+
+      vpc_origin_config {
+        vpc_origin_id       = origin.value.id
+        origin_read_timeout = 60 # a single check can wait up to 30 s on the detector
+      }
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "web"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    compress               = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = aws_cloudfront_vpc_origin.alb
+    content {
+      path_pattern             = "/api/*"
+      target_origin_id         = "api"
+      viewer_protocol_policy   = "redirect-to-https"
+      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods           = ["GET", "HEAD"]
+      cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    }
+  }
+
+  # No custom_error_response: it is distribution-wide (see spa_rewrite).
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}

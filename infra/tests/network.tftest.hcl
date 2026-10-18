@@ -1,6 +1,8 @@
 # Offline: the mock provider fakes every AWS call, so this runs in CI without
 # credentials. It checks the configuration's intent, not live AWS.
-mock_provider "aws" {}
+mock_provider "aws" {
+  source = "./tests/mocks"
+}
 
 run "running" {
   command = apply
