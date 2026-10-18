@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.25.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.27.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,18 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.27.0 DELETE /api/users/{id} now cancels the user's unfinished batches
+#          in the same commit (`cancelled_at` set, queued rows purged best
+#          effort), so no check is written for a deleted owner. Finished
+#          batches are left as they are. Closes the KNOWN GAP in [0.26.0].
+#          No request or response shape changes. See DECISION LOG [0.27.0].
+#   0.26.0 Re-provisioning a deleted email no longer hands the new account
+#          the previous holder's checks and batches. The reused row is
+#          stamped `reprovisioned_at`; for a non-`root_admin` caller,
+#          GET /api/checks omits, and GET /api/checks/{check_id},
+#          GET /api/batches/{batch_id} and its cancel return `404` for,
+#          rows created before it. root_admin's view is unchanged. No field
+#          is added to any response. See DECISION LOG [0.26.0].
 #   0.25.0 BREAKING (CSRF) — every POST/PUT/PATCH/DELETE must come from this
 #          application's own origin: `Sec-Fetch-Site: same-origin` (or
 #          `none`), else an `Origin` equal to the SPA's; anything else is
@@ -318,7 +330,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.25.0
+  version: 0.27.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -1051,7 +1063,9 @@ paths:
             `deactivated` (use `POST /api/users/{id}/reactivate` for the
             latter). A `deleted` row does not block provisioning: the new
             account reuses that row, with a fresh Auth0 credential and a
-            `deleted → active` entry in the status history.
+            `deleted → active` entry in the status history. Checks and
+            batches the previous holder created stay out of the new
+            account's reads (DECISION LOG [0.26.0]).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1342,6 +1356,11 @@ paths:
 
         Any teaching assistant left with no active supervisor is signed
         out in the same commit ([0.22.0]).
+
+        Cancels every unfinished batch the user owns in the same commit,
+        exactly as `POST /api/batches/{batch_id}/cancel` would; finished
+        batches are untouched. Their queued rows are then purged best
+        effort ([0.27.0]).
 
         **Immediately revokes every active session belonging to this user.**
         It takes effect on their very next request: the app checks the
@@ -3176,6 +3195,55 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.27.0] Deleting a user cancels their unfinished batches.
+#
+#   PROBLEM. The KNOWN GAP in [0.26.0]: the Worker kept scoring a deleted
+#   user's queued rows. If the address was re-provisioned first, those
+#   checks were stamped after `reprovisioned_at` and showed to the new
+#   holder. It also spent detector time on work nobody can read.
+#   DECISION. `delete_user` sets `cancelled_at` on the user's batches that
+#   are not yet finished (`completed + failed < row_total`), in the same
+#   commit as the status change. The Worker already skips any row whose
+#   batch is cancelled ([0.14.0]), so that commit is what closes the gap.
+#   After it, one best-effort SQS purge drops the queued rows; a purge
+#   failure is logged, not raised, since the user is already deleted and
+#   the Worker's check is the backstop. Finished batches are left alone so
+#   root_admin's view of them doesn't turn into "cancelled".
+#   SCOPE. Delete only. Deactivation is reversible and keeps its batches
+#   running, the same way it keeps supervision links ([0.21.0]).
+#   OPTION REJECTED. Having the Worker refuse to write a check whose batch
+#   predates the owner's `reprovisioned_at`. It closes the visibility hole
+#   but still scores every row, and puts a user-lifecycle rule in the
+#   Worker instead of next to the deletion that causes it.
+#
+# [0.26.0] A re-provisioned address does not inherit the old holder's history.
+#
+#   PROBLEM. Deleting a user keeps the row and its id, and re-provisioning
+#   the same email reuses that row ([0.18.0]). Checks and batches are owned
+#   by `actor_id`, so whoever held the address next could read every check
+#   and batch the previous holder ran, including retained student answers.
+#   The reuse code already says the address "may now belong to someone
+#   else" and clears the display name for that reason; the history was the
+#   one thing it missed.
+#   DECISION. `users.reprovisioned_at` is stamped when a deleted row is
+#   re-provisioned. A non-`root_admin` caller owns a check or batch only if
+#   it is theirs by `actor_id` and was created at or after that stamp.
+#   Older rows read as "not yours": omitted from lists, `404` on fetch and
+#   cancel. root_admin still sees everything, so nothing is lost for an
+#   investigation. Migration 0014 backfills the stamp from each row's latest
+#   `deleted → active` status event.
+#   COST. A person deleted and re-invited by mistake loses sight of their own
+#   earlier checks. Accepted: the system cannot tell that case from a
+#   reassigned address, and leaking one person's history to another is the
+#   worse failure. root_admin can still read it for them.
+#   OPTION REJECTED. A fresh `users.id` on re-provisioning. It needs the
+#   email moved off the old row and changes [0.18.0]'s reuse model, for the
+#   same outcome as one column and a filter.
+#   KNOWN GAP. A batch still queued when its owner is deleted can be scored
+#   after re-provisioning; those checks are stamped later and would show to
+#   the new holder. Deleting a user does not cancel their batches today.
+#   Closed in [0.27.0].
 #
 # [0.25.0] The app checks every request itself; CSRF is enforced by origin.
 #

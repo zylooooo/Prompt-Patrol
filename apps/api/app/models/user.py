@@ -1,12 +1,17 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import Enum, ForeignKey, Index, String, Text, Uuid, and_, text
+from sqlalchemy import ColumnElement, Enum, ForeignKey, Index, String, Text, Uuid, and_, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from .base import Base
+
+
+# SQLite hands timestamps back naive; Postgres hands them back UTC-aware.
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class UserRoleEnum(str, enum.Enum):
@@ -55,6 +60,12 @@ class User(Base):
     # re-provisioned.
     first_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # Set when a deleted row is re-provisioned. The row keeps its id, and the
+    # address may now belong to someone else, so checks and batches created
+    # before this belong to the previous holder and are hidden from this one.
+    # Null for an account never re-provisioned.
+    reprovisioned_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     # Instructors currently supervising this user: active `supervisions` links
     supervisors: Mapped[list["User"]] = relationship(
         "User",
@@ -69,6 +80,19 @@ class User(Base):
     @property
     def supervisor_ids(self) -> list[uuid.UUID]:
         return [instructor.id for instructor in self.supervisors]
+
+    def owns(self, actor_id: uuid.UUID, created_at: datetime) -> bool:
+        """Whether a check or batch attributed to `actor_id` is this person's."""
+        if actor_id != self.id:
+            return False
+        return self.reprovisioned_at is None or _as_utc(created_at) >= _as_utc(self.reprovisioned_at)
+
+    def owned_by_clause(self, model) -> ColumnElement[bool]:
+        """`owns` as a query filter, for a model with `actor_id` and `created_at`."""
+        clause = model.actor_id == self.id
+        if self.reprovisioned_at is not None:
+            clause = and_(clause, model.created_at >= self.reprovisioned_at)
+        return clause
 
     # Partial uniqueness, not plain UNIQUE: identifiers are reserved only while a
     # user is still part of the system. Declared on the model so the SQLite test

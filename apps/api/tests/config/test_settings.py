@@ -1,6 +1,10 @@
+import logging
+import sys
+
 import pytest
 
 from config import SESSION_SECRET_MIN_LENGTH, validate_session_cookie_hosts, validate_session_secret
+from config.settings import _JsonFormatter, _RedactingFormatter
 
 
 @pytest.mark.parametrize(
@@ -112,3 +116,16 @@ def test_dev_is_exempt(secret):
     # Local dev and CI both run with throwaway values on purpose; enforcing here
     # would only teach people to weaken the check.
     validate_session_secret(secret, "dev")
+
+
+def test_deployed_log_lines_mask_emails_in_messages_and_tracebacks():
+    try:
+        raise ValueError("Could not create an Auth0 credential for jane.doe@smu.edu.sg")
+    except ValueError:
+        record = logging.LogRecord("t", logging.WARNING, __file__, 1, "Refused sign-in: %s.", ("a.b@x.sg",), None)
+        record.exc_info = sys.exc_info()
+    for formatter in (_RedactingFormatter(), _JsonFormatter()):
+        record.exc_text = None
+        line = formatter.format(record)
+        assert "a***@x.sg" in line and "j***@smu.edu.sg" in line
+        assert "a.b@" not in line and "jane.doe" not in line
