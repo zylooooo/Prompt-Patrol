@@ -18,7 +18,7 @@ One root, one state, files split by area per the
 | `variables.tf` / `terraform.tfvars` | inputs / their committed values                             |
 | `network.tf`                        | VPC, subnets, NAT, route tables                             |
 | `endpoints.tf`                      | VPC endpoints and their security group                      |
-| `ecr.tf`                            | ECR repositories and lifecycle policies                     |
+| `ecr.tf`                            | ECR repositories, lifecycle policies, scan-on-push rule     |
 | `compute.tf`                        | ECS cluster, services, IAM, security groups, purge schedule |
 | `edge.tf`                           | ALB, VPC origin, SPA bucket, CloudFront                     |
 | `github-oidc.tf`                    | GitHub OIDC provider and the deploy role                    |
@@ -193,19 +193,27 @@ inline JSON in the one-off task commands. All AWS commands carry
 ## Releases
 
 Push, then approve the `deploy` job (environment `production`). Nothing
-reaches AWS before approval. Order: check, copy, migrate, roll out, publish,
-record.
+reaches AWS before approval. Order: check, copy, migrate, roll out, record,
+publish, smoke. The SPA is built earlier, in the `build-web` job, which holds
+no AWS credentials; the deploy job only downloads it.
 
 1. **Check:** fails with `stack is paused` if the api service is not ACTIVE,
    before any write.
-2. **Copy** this commit's images from GHCR to ECR.
+2. **Copy** this commit's images from GHCR to ECR, by the digest
+   `docker-build` pushed (not the GHCR tag, which can be repointed).
 3. **Migrate** on a new api task definition revision; on failure it
    deregisters the revisions it registered and prints the task log.
 4. **Roll out** api, worker and detector on new revisions (the latest ACTIVE
    revision with only the image swapped); waits up to 30 min and fails if ECS
    rolled back.
-5. **Publish** the SPA to S3 and invalidate CloudFront.
-6. **Record** the SHA in `/prompt-patrol/image-tag`.
+5. **Record** the SHA in `/prompt-patrol/image-tag`, as soon as the services
+   run it: a later failure (SPA publish, smoke) can't leave SSM naming the
+   previous image, which an un-pause would bring back on a migrated schema.
+6. **Publish** the SPA to S3 and invalidate CloudFront.
+7. **Smoke** through CloudFront: `/` must serve this build's entry chunk and an
+   unauthenticated `/api/auth/me` must be the api's own 401 (retries for about
+   5 min while the invalidation lands). A failure here means the release is
+   live but broken: fix forward or roll back.
 
 - **Terraform and the SHA.** Services ignore `task_definition` changes, so
   `terraform apply` never rolls an image. Terraform reads the SHA from the SSM
@@ -216,7 +224,8 @@ record.
 - **Roll back:** re-run a deploy made after step 7, within ~30 days, while the
   image is still among the last 10 in ECR. A re-run across a migration fails
   at the migrate step by design (down-migrations are manual). Re-running a
-  deploy from before step 7 only copies images: don't use it.
+  deploy from before step 7 only copies images: don't use it. A re-run reuses
+  that run's image digests and SPA artifact (kept 30 days, the re-run window).
 - **Plan after a deploy** shows one replaced task definition per service, with
   the same image. This is expected; the services don't roll.
 

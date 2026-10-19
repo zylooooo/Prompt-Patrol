@@ -12,8 +12,24 @@ resource "aws_ecr_repository" "service" {
   image_tag_mutability = "IMMUTABLE" # tags are commit SHAs; a tag never moves
   force_delete         = true        # so the end-of-project destroy works with images inside
 
+  # Inert: the registry scanning configuration below overrides it. Kept so
+  # the repos still say what they want if that config is ever removed.
   image_scanning_configuration {
-    scan_on_push = true # basic scanning, free
+    scan_on_push = true
+  }
+}
+
+# Registry-wide (this account holds only this project). With an empty rule set
+# nothing is scanned, whatever the repos say. Basic scanning is free.
+resource "aws_ecr_registry_scanning_configuration" "main" {
+  scan_type = "BASIC"
+
+  rule {
+    scan_frequency = "SCAN_ON_PUSH"
+    repository_filter {
+      filter      = "prompt-patrol/*"
+      filter_type = "WILDCARD"
+    }
   }
 }
 

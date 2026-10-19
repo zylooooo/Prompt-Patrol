@@ -1,0 +1,69 @@
+# Weekly, one grouped PR per ecosystem to keep the noise down. Security
+# updates still open on their own as soon as an advisory lands.
+version: 2
+updates:
+  # Keeps the SHA pins in .github/workflows current (the `# vX.Y.Z` comments too).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+    groups:
+      web:
+        patterns: ["*"]
+    ignore:
+      # Major must match .nvmrc (lint-frontend enforces it); bump them together by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: pip
+    directories:
+      - /apps/api
+      - /apps/worker
+      - /apps/data-pipeline
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  # Its own entry so the ML pins below are ignored here only.
+  - package-ecosystem: pip
+    directory: /apps/detector
+    schedule:
+      interval: weekly
+    groups:
+      detector:
+        patterns: ["*"]
+    ignore:
+      # ML-team owned and tied to the calibrated threshold; torch comes from the CPU index in Dockerfile.desklib.
+      - dependency-name: torch
+      - dependency-name: transformers
+      - dependency-name: peft
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/api
+      - /apps/worker
+      - /apps/detector
+      - /apps/web
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      # Runtime versions are pinned to match CI (Python 3.13, Node from .nvmrc); patch only.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: nginx
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

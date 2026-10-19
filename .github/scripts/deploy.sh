@@ -4,7 +4,10 @@
 #   deploy.sh release              migrate -> roll out (images must already be in ECR)
 #   deploy.sh publish-web <dir>    sync the SPA build to S3, invalidate CloudFront
 #   deploy.sh record               store SHA as the image tag Terraform reads
-# Env: SHA, ECR (registry host), optional STABLE_TIMEOUT_SECONDS, POLL_SECONDS.
+#   deploy.sh smoke <dir>          check the SPA and /api through CloudFront
+# The job runs release -> record -> publish-web -> smoke.
+# Env: SHA, ECR (registry host), FRONTEND_URL (smoke), optional
+# STABLE_TIMEOUT_SECONDS, POLL_SECONDS, SMOKE_ATTEMPTS.
 set -euo pipefail
 
 CLUSTER=prompt-patrol
@@ -14,6 +17,7 @@ TAG_PARAM=/prompt-patrol/image-tag
 DIST_PARAM=/prompt-patrol/cloudfront-distribution-id
 STABLE_TIMEOUT_SECONDS="${STABLE_TIMEOUT_SECONDS:-1800}" # detector startPeriod is 300s; waiters give up at 10 min
 POLL_SECONDS="${POLL_SECONDS:-15}"
+SMOKE_ATTEMPTS="${SMOKE_ATTEMPTS:-20}" # x POLL_SECONDS: room for the invalidation to land
 
 # Revisions registered this run, by service. ROLLING flips to 1 right before the
 # first update-service: from then on ECS owns rollback and nothing is deregistered.
@@ -165,10 +169,36 @@ record() {
   aws ssm put-parameter --name "$TAG_PARAM" --value "$SHA" --overwrite >/dev/null
 }
 
+# Through the real path (CloudFront -> S3, and CloudFront -> WAF -> ALB -> api).
+# / must serve this build's entry chunk. An unauthenticated /api/auth/me must be
+# the api's own 401 (not_signed_in) JSON: a CloudFront 5xx, a WAF 403, or the
+# SPA's 200 HTML (what /api/* falls through to while paused) all fail.
+smoke() {
+  local dist="${1:?usage: deploy.sh smoke <dist-dir>}" url="${FRONTEND_URL:?FRONTEND_URL is required}"
+  local entry page api i
+  entry="$(grep -o 'assets/index-[^"]*\.js' "$dist/index.html" | head -1)" || true
+  [ -n "$entry" ] || { echo "no assets/index-*.js in $dist/index.html" >&2; exit 1; }
+  for ((i = 1; ; i++)); do
+    page="$(curl -fsS --max-time 10 "$url/" 2>&1)" || true
+    api="$(curl -sS --max-time 10 -w ' HTTP %{http_code}' "$url/api/auth/me" 2>&1)" || true
+    if [[ "$page" == *"$entry"* && "$api" == *not_signed_in*" HTTP 401" ]]; then
+      log "smoke passed: $url/ serves $entry, /api/auth/me is the api's 401"
+      return
+    fi
+    log "smoke attempt $i/$SMOKE_ATTEMPTS: / has entry chunk: $([[ "$page" == *"$entry"* ]] && echo yes || echo no); /api/auth/me: ${api:0:300}"
+    if [ "$i" -ge "$SMOKE_ATTEMPTS" ]; then
+      log "smoke FAILED"
+      exit 1
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
 case "${1:-}" in
   check-running) check_running ;;
   release) release ;;
   publish-web) publish_web "${2:-}" ;;
   record) record ;;
-  *) echo "usage: deploy.sh check-running|release|publish-web <dir>|record" >&2; exit 2 ;;
+  smoke) smoke "${2:-}" ;;
+  *) echo "usage: deploy.sh check-running|release|publish-web <dir>|record|smoke <dir>" >&2; exit 2 ;;
 esac

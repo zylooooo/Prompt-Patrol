@@ -33,6 +33,16 @@ run "deploy" {
   }
 
   assert {
+    condition = (
+      aws_ecr_registry_scanning_configuration.main.scan_type == "BASIC"
+      && length(aws_ecr_registry_scanning_configuration.main.rule) == 1
+      && one(aws_ecr_registry_scanning_configuration.main.rule).scan_frequency == "SCAN_ON_PUSH"
+      && one(one(aws_ecr_registry_scanning_configuration.main.rule).repository_filter) == { filter = "prompt-patrol/*", filter_type = "WILDCARD" }
+    )
+    error_message = "The registry must scan prompt-patrol/* on push; without a rule nothing is scanned."
+  }
+
+  assert {
     condition     = length(aws_ecr_lifecycle_policy.service) == 3
     error_message = "Every ECR repo needs its lifecycle policy."
   }

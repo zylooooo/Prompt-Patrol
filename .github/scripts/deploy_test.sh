@@ -52,6 +52,29 @@ exit 0
 FAKE
 chmod +x "$ROOT/bin/aws"
 
+# Fake curl for smoke. SCEN_API=spa (paused: /api/* falls through to the SPA)
+# or 502; SCEN_STALE=<n>: / serves the previous build for the first n calls.
+cat > "$ROOT/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+echo "curl $*" >> "$FAKE_DIR/calls.log"
+url="${!#}"
+case "$url" in
+*/api/auth/me)
+  case "${SCEN_API:-}" in
+  spa) printf '<!doctype html><script src="/assets/index-NEW.js"></script>'; code=200 ;;
+  502) printf '<html>502 Bad Gateway</html>'; code=502 ;;
+  *) printf '{"detail":{"code":"not_signed_in","message":"No session cookie was sent."}}'; code=401 ;;
+  esac
+  [[ " $* " == *" -w "* ]] && printf ' HTTP %s' "$code" ;;
+*/)
+  n=$(( $(cat "$FAKE_DIR/pages" 2>/dev/null || echo 0) + 1 )); echo $n > "$FAKE_DIR/pages"
+  if [ "$n" -le "${SCEN_STALE:-0}" ]; then printf '<script src="/assets/index-OLD.js"></script>'
+  else printf '<script src="/assets/index-NEW.js"></script>'; fi ;;
+esac
+exit 0
+FAKE
+chmod +x "$ROOT/bin/curl"
+
 SHA=0123456789abcdef0123456789abcdef01234567
 FAILED=0
 ok() { "$@" || { echo "  assert failed: $*" >&2; [ -n "${DEBUG:-}" ] && cat "$FAKE_DIR/out" "$FAKE_DIR/err" >&2; FAILED=1; }; }
@@ -64,7 +87,7 @@ run() {
   FAKE_DIR="$(mktemp -d -p "$ROOT")"; export FAKE_DIR; : > "$FAKE_DIR/calls.log"
   RC=0
   PATH="$ROOT/bin:$PATH" SHA=$SHA ECR=123.dkr.ecr.ap-southeast-1.amazonaws.com \
-    STABLE_TIMEOUT_SECONDS=60 POLL_SECONDS=0 \
+    STABLE_TIMEOUT_SECONDS=60 POLL_SECONDS=0 SMOKE_ATTEMPTS=3 FRONTEND_URL=https://cdn.example \
     bash "$DEPLOY" "$@" >"$FAKE_DIR/out" 2>"$FAKE_DIR/err" || RC=$?
 }
 
@@ -157,11 +180,45 @@ case_publish_web() {
   ok test "$(line_of 's3 sync')" -lt "$(line_of create-invalidation)"
 }
 
+# A dist dir whose index.html names the build the fake CloudFront serves.
+smoke_dist() {
+  local d; d="$(mktemp -d -p "$ROOT")"
+  echo '<script type="module" crossorigin src="/assets/index-NEW.js"></script>' > "$d/index.html"
+  echo "$d"
+}
+
+case_smoke_passes() {
+  run smoke "$(smoke_dist)"
+  ok eq "$RC" 0
+  ok eq "$(calls 'curl .*https://cdn.example/$')" 1
+  ok eq "$(calls 'curl .*https://cdn.example/api/auth/me$')" 1
+}
+
+case_smoke_waits_for_invalidation() {
+  SCEN_STALE=2 run smoke "$(smoke_dist)"
+  ok eq "$RC" 0
+  ok eq "$(cat "$FAKE_DIR/pages")" 3
+}
+
+case_smoke_fails_on_spa_fallthrough() {
+  SCEN_API=spa run smoke "$(smoke_dist)"
+  ok eq "$RC" 1
+  ok grep -q "smoke FAILED" "$FAKE_DIR/out"
+  ok eq "$(calls 'curl .*/api/auth/me$')" 3
+}
+
+case_smoke_fails_on_5xx() {
+  SCEN_API=502 run smoke "$(smoke_dist)"
+  ok eq "$RC" 1
+  ok grep -q "502 Bad Gateway</html> HTTP 502" "$FAKE_DIR/out"
+}
+
 EXIT=0
 for c in paused_fails_first happy_path migration_failure_deregisters_and_stops \
          run_task_failures_deregisters partial_register_deregisters \
-         net_config_failure_deregisters describe_error_not_paused rollback_detected_fails record_writes_sha publish_web; do
-  FAILED=0; unset SCEN_PAUSED SCEN_EXIT SCEN_ROLLBACK SCEN_RUNFAIL SCEN_DESCFAIL SCEN_NETFAIL SCEN_REGFAIL
+         net_config_failure_deregisters describe_error_not_paused rollback_detected_fails record_writes_sha publish_web \
+         smoke_passes smoke_waits_for_invalidation smoke_fails_on_spa_fallthrough smoke_fails_on_5xx; do
+  FAILED=0; unset SCEN_PAUSED SCEN_EXIT SCEN_ROLLBACK SCEN_RUNFAIL SCEN_DESCFAIL SCEN_NETFAIL SCEN_REGFAIL SCEN_API SCEN_STALE
   "case_$c"
   if [ $FAILED = 0 ]; then echo "PASS $c"; else echo "FAIL $c"; EXIT=1; fi
 done
