@@ -11,3 +11,17 @@ provider "aws" {
     }
   }
 }
+
+# CloudFront-scoped WAF web ACLs can only be created in us-east-1.
+provider "aws" {
+  alias               = "us_east_1"
+  region              = "us-east-1"
+  allowed_account_ids = ["420974348257"]
+
+  default_tags {
+    tags = {
+      Project   = "prompt-patrol"
+      ManagedBy = "terraform"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Uploaded batch CSVs. Storage only, so not gated on var.paused. Encryption
 # (SSE-S3) and BucketOwnerEnforced are the S3 defaults for new buckets, so no
-# resource is needed for either. CORS for browser uploads lands in step 6.
+# resource is needed for either. CORS is for the browser's direct presigned PUT.
 
 locals {
   # Change the CSV retention days to the confirmed number after checking the PDPA
@@ -51,5 +51,18 @@ resource "aws_s3_bucket_lifecycle_configuration" "batches" {
     expiration {
       days = local.csv_retention_days
     }
+  }
+}
+
+# The SPA PUTs the CSV straight to S3 via a presigned URL. Only the frontend
+# origin, only PUT, only content-type: the presigned signature covers the rest.
+resource "aws_s3_bucket_cors_configuration" "batches" {
+  bucket = aws_s3_bucket.batches.id
+
+  cors_rule {
+    allowed_origins = [local.frontend_url]
+    allowed_methods = ["PUT"]
+    allowed_headers = ["content-type"]
+    max_age_seconds = 3000
   }
 }

@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.29.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.30.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,12 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.30.0 AWS edge hardening (CD step 6): WAF web ACL (IP reputation, two
+#          per-IP rate rules, Common Rule Set and Known Bad Inputs with their
+#          body rules in Count), a CloudFront security-headers policy, and
+#          CORS on the batches bucket. A rate-limit block is CloudFront's
+#          non-JSON `403`. No request or response shape changes. See
+#          DECISION LOG [0.30.0].
 #   0.29.0 Batch cancel's queue drain hides messages it receives for 30 s, not
 #          the queue default (600 s in AWS). maxReceiveCount 3 → 5. No request
 #          or response shape changes. See DECISION LOG [0.29.0].
@@ -340,7 +346,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.29.0
+  version: 0.30.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -581,16 +587,52 @@ servers:
 # -----------------------------------------------------------------------------
 x-edge-configuration:
   status: |
-    TARGET DESIGN, NOT DEPLOYED. Locally (and in e2e) nginx serves the SPA
-    and proxies `/api/*` on the same origin; in AWS, CloudFront plays that
-    role. There is no API Gateway and none is planned — see DECISION LOG
-    [0.28.0]. Every guarantee the app needs (a valid session, CSRF), it
-    enforces itself; the edge is an outer filter, never a replacement.
+    DEPLOYED in AWS (CloudFront + WAF -> VPC origin -> internal ALB). Locally
+    (and in e2e) nginx still serves the SPA and proxies `/api/*` on the same
+    origin; in AWS, CloudFront plays that role. There is no API Gateway and
+    none is planned — see DECISION LOG [0.28.0]. Every guarantee the app
+    needs (a valid session, CSRF), it enforces itself; the edge is an outer
+    filter, never a replacement.
   path:
     - CloudFront (AWS WAF attached) — one distribution, one origin for the
       browser. Default behavior → S3 (SPA). `/api/*` → VPC origin.
     - CloudFront VPC origin → internal Application Load Balancer → API
       service (ECS Fargate, private subnet). The ALB has no public address.
+  waf:
+    note: |
+      One web ACL `prompt-patrol` (scope CLOUDFRONT, in `us-east-1`; default
+      action Allow), attached to the distribution. Rules in priority order:
+        1. `AWSManagedRulesAmazonIpReputationList` — Block.
+        2. Rate limit, all requests — Block above 2000 requests / 5 min / IP.
+        3. Rate limit, writes — Block above 300 requests / 5 min / IP, for
+           POST, PUT, PATCH and DELETE on paths starting `/api/`.
+        4. `AWSManagedRulesCommonRuleSet` — Block, `*_BODY` rules in Count.
+        5. `AWSManagedRulesKnownBadInputsRuleSet` — Block, `*_BODY` rules
+           in Count.
+
+      The WAF never blocks on request bodies. Student answers contain code
+      (`<script>`, SQL, `${jndi:...}`) and run to 10,000 + 2,000 characters
+      (`answer_text` + `question_text`), past the Common Rule Set's 8 KB body
+      limit; a body block would be a `403` on a legitimate check. Header,
+      URI and query-string checks stay on.
+
+      Sampled requests are off and there is no WAF logging: a sample keeps
+      full request headers, including the `__Host-session` cookie, in the
+      `us-east-1` console, and WAF redaction does not apply to samples.
+      Per-rule CloudWatch metrics are on.
+
+      A WAF block (rate limit, IP reputation, header/URI match) is
+      CloudFront's own non-JSON `403`, not the `Error` schema. Clients must
+      not assume every `403` has a JSON body.
+  response_headers:
+    note: |
+      CloudFront response headers policy `prompt-patrol-security` on the
+      default and `/api/*` behaviors: CSP, HSTS (1 year, no
+      `includeSubDomains`/`preload`), `nosniff`, `X-Frame-Options: DENY`,
+      `Referrer-Policy`, `Permissions-Policy`. Mirrors
+      `apps/web/nginx.conf`, except HSTS max-age and `connect-src`, which
+      lists the batches bucket hosts instead of LocalStack. Change both
+      together.
   api_behavior:
     cache_policy: CachingDisabled
     origin_request_policy:
@@ -3196,6 +3238,41 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.30.0] WAF, security headers and S3 CORS at the AWS edge.
+#
+#   PROBLEM. Step 5 put the app behind CloudFront with no WAF, no security
+#   headers (nginx sets them only locally) and no CORS on the batches bucket,
+#   so the edge was open to floods and batch CSV upload could not work.
+#   DECISION. A WAF web ACL with five rules (see `x-edge-configuration.waf`):
+#   IP reputation, a 2000 / 5 min / IP rate limit on everything, a stricter
+#   300 / 5 min / IP limit on API writes, and the Common Rule Set and Known
+#   Bad Inputs set with every `*_BODY` rule forced to Count. Rate limiting is
+#   the priority; the managed groups are an outer filter for headers, URI and
+#   query string. The rate limits sit above a shared campus NAT plus 2 s
+#   batch polling. CloudFront response headers policy
+#   `prompt-patrol-security` sets the nginx
+#   header set on both behaviors, and the batches bucket allows a browser
+#   `PUT` from the CloudFront origin only.
+#   WHY NO BODY INSPECTION. An instructor must never get a `403` on a real
+#   check because of what the student wrote: answers about XSS, SQL
+#   injection or Log4Shell contain exactly the strings the body rules match,
+#   and bodies reach 12,000 characters against an 8 KB inspection limit.
+#   The app already parameterises queries and React escapes output.
+#   WHY SAMPLED REQUESTS ARE OFF. They store full request headers, cookie
+#   included, for about 3 h, and WAF redaction does not cover them. Turn on
+#   for one rule while debugging a suspected false positive, then off.
+#   OPTION REJECTED. SQL injection rule set: body-heavy, and the ORM already
+#   parameterises. Bot Control and Account Takeover Prevention: paid, and
+#   Auth0 Attack Protection covers login. WAF logging: CloudFront-scope logs
+#   must live in `us-east-1`, hold client IPs and headers, and cost per GB.
+#   Body inspection with Block: see above.
+#   CEILING. Rate rules act per source IP; many users behind one NAT share
+#   a budget. Raise the limits if the metrics show legitimate blocks. A
+#   new `*_BODY` rule added to a managed group blocks until the Count list
+#   in `infra/waf.tf` is refreshed (see `infra/README.md`).
+#   CHECKED 2026-10-19. The presigned batch upload URL is the global S3 host
+#   (boto3 1.35.99), and CSP `connect-src` allows it and the regional host.
 #
 # [0.29.0] Batch cancel's queue drain hides messages for 30 s, not 600 s.
 #

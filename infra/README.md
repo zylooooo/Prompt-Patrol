@@ -205,13 +205,68 @@ inline JSON in the one-off task commands. All AWS commands carry
 
 8. Open `terraform output -raw frontend_url`, sign in, run one check. Then pause.
 
-Known gaps until step 6 of the CD plan: no WAF, no CSP or other security
-headers, and batch CSV upload fails (the batches bucket has no CORS rule).
-
 **Cost.** Step 5 adds about $5/day (detector about $0.145/h, api $0.031/h,
 worker $0.015/h, ALB $0.025/h). With the NAT/endpoints and RDS the whole stack
 is about $10/day, or about $310/month: over the $100 budget if left running.
 Run it in test windows and [pause](#pausing-the-environment) between them.
+
+## WAF, headers and CORS (step 6)
+
+**What the WAF does.** Web ACL `prompt-patrol` (in `us-east-1`, as CloudFront
+requires) filters at the edge: IP reputation list, a per-IP rate limit of
+2000 requests / 5 min on everything, a per-IP limit of 300 / 5 min on API
+writes (POST/PUT/PATCH/DELETE on `/api/`), and the Common Rule Set and Known
+Bad Inputs set for headers, URI and query string. **It never blocks on
+request bodies**: student answers contain code and run to 12,000 characters,
+so every `*_BODY` rule is forced to Count (`local.crs_body_rules` and
+`local.kbi_body_rules` in `waf.tf`). It is an outer filter; the app still
+checks session and CSRF itself. L3/L4 floods are covered by Shield Standard,
+which CloudFront includes. A blocked request gets CloudFront's own non-JSON
+`403`. The ACL is removed while [paused](#pausing-the-environment); the
+headers policy and CORS rule are free and always stay.
+
+**Cost.** About $10/month prorated while running ($5 ACL + $1 per rule) plus
+$0.60 per million requests.
+
+**Reading metrics.** CloudWatch, Region `us-east-1`, namespace `AWS/WAFV2`,
+dimensions `WebACL=prompt-patrol` + `Rule=ALL` (whole ACL) or `Rule=<metric
+name>` (e.g. `CrossSiteScripting_BODY`, `prompt-patrol-rate-writes`); there is
+no `Region` dimension for CloudFront. `BlockedRequests` on a rule means it
+blocked (the metric doesn't exist until the first block); `CountedRequests` on
+the body rules is expected.
+
+**Sampled requests are off** on purpose: a sample keeps the full request,
+including the `__Host-session` cookie, for about 3 hours in the console, and
+redaction does not apply. To debug a suspected false positive, set
+`sampled_requests_enabled = true` on that one rule's `visibility_config`,
+apply, look, then set it back and apply. There is no WAF logging.
+
+**Flip a rule to Count** (to stop it blocking while you investigate): for a
+managed group, change its `override_action { none {} }` to `{ count {} }` (or
+add one rule to its `rule_action_override` with `count {}`); for a rate rule,
+change `action { block {} }` to `action { count {} }`. Apply.
+
+**New `*_BODY` rule from AWS.** If AWS adds a body rule to a managed group, it
+blocks until the local list is refreshed. Check with:
+
+```bash
+aws wafv2 describe-managed-rule-group   --scope CLOUDFRONT --region us-east-1   --vendor-name AWS --name AWSManagedRulesCommonRuleSet   --query "Rules[].Name" --profile prompt-patrol
+```
+
+(repeat for `AWSManagedRulesKnownBadInputsRuleSet`), then add any new
+`*_BODY` names to the matching local list in `waf.tf` and apply.
+
+**Rate-limit tests: only from a disposable IP** (a phone hotspot). Never from
+campus or any shared network: the block would lock out everyone behind that
+IP. It lifts on its own once the rate drops.
+
+**Headers and CSP.** The CloudFront response headers policy
+`prompt-patrol-security` (in `edge.tf`) mirrors `apps/web/nginx.conf`. Change
+the CSP in both places together (HSTS differs on purpose: 1 year at
+CloudFront, 86400 in nginx, and none locally since it is plain http).
+`connect-src` lists the batches bucket's global and regional hosts so the
+browser's presigned PUT passes CSP; the bucket's CORS rule (in `storage.tf`) allows `PUT` from the CloudFront origin.
+Both are only enforced by a real browser, so test batch upload in one.
 
 ## The state bucket is not managed here
 

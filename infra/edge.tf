@@ -204,6 +204,50 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   EOT
 }
 
+# Security headers on every response (SPA and /api/*). Values mirror
+# apps/web/nginx.conf (change both together). connect-src lists both S3 hosts
+# of the batches bucket: the pinned boto3 signs the global host and an upgrade
+# may switch to the regional one, and a CSP miss is silent (the upload just
+# fails in the browser). HSTS is 1 year with no includeSubDomains/preload
+# because this hostname is fixed and not ours to commit a whole domain on.
+# override = true so these win over anything the origin sends.
+resource "aws_cloudfront_response_headers_policy" "security" {
+  name = "prompt-patrol-security"
+
+  security_headers_config {
+    content_security_policy {
+      content_security_policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://${aws_s3_bucket.batches.bucket_domain_name} https://${aws_s3_bucket.batches.bucket_regional_domain_name}; form-action 'self' https://*.auth0.com; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'"
+      override                = true
+    }
+    content_type_options {
+      override = true
+    }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = false
+      preload                    = false
+      override                   = true
+    }
+  }
+
+  # No typed block for Permissions-Policy.
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+      override = true
+    }
+  }
+}
+
 # PriceClass_200 includes the Singapore edges; 100 does not. IPv4 only: a
 # dual-stack VPC origin needs more setup.
 resource "aws_cloudfront_distribution" "web" {
@@ -213,6 +257,7 @@ resource "aws_cloudfront_distribution" "web" {
   http_version        = "http2and3"
   is_ipv6_enabled     = false
   default_root_object = "index.html"
+  web_acl_id          = var.paused ? null : aws_wafv2_web_acl.main[0].arn
 
   origin {
     origin_id                = "web"
@@ -235,12 +280,13 @@ resource "aws_cloudfront_distribution" "web" {
   }
 
   default_cache_behavior {
-    target_origin_id       = "web"
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
-    compress               = true
+    target_origin_id           = "web"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    compress                   = true
 
     function_association {
       event_type   = "viewer-request"
@@ -251,13 +297,14 @@ resource "aws_cloudfront_distribution" "web" {
   dynamic "ordered_cache_behavior" {
     for_each = aws_cloudfront_vpc_origin.alb
     content {
-      path_pattern             = "/api/*"
-      target_origin_id         = "api"
-      viewer_protocol_policy   = "redirect-to-https"
-      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-      cached_methods           = ["GET", "HEAD"]
-      cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+      path_pattern               = "/api/*"
+      target_origin_id           = "api"
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods             = ["GET", "HEAD"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
+      origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
     }
   }
 

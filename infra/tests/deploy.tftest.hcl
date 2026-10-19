@@ -4,6 +4,11 @@ mock_provider "aws" {
   source = "./tests/mocks"
 }
 
+mock_provider "aws" {
+  alias  = "us_east_1"
+  source = "./tests/mocks"
+}
+
 run "deploy" {
   command = apply
 
