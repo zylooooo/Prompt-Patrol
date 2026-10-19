@@ -12,13 +12,16 @@ REVISION = "4ff1f23a69a36aa1df47b0933be6279f1b896c9b"
 
 ##  RADAR has 2 outputs per answer (either AI or human)
 ##  the order comes from the model card's own example: log_softmax(logits)[:, 0] is 'AI-generated'
+##  it can't be confirmed by scoring text: untouched RADAR gives almost any modern text ~0.99, human or AI (see the PEP probe below)
+##  the fine-tuned model doesn't depend on it, training learns the direction from our labels
 AI, HUMAN = 0, 1
 
-## answers are short (99% are under ~105 words, RADAR's own limit is 512 tokens)
+##  answers are short (99% are under ~105 words, RADAR's own limit is 512 tokens)
 MAX_LEN = 256
 
 ##  human-written software-engineering prose from python's PEPs (2000-2001, public domain), topic-matched to PROBE_AI
 ##  sources: PEP 257, PEP 8, PEP 1, PEP 8, PEP 1 (https://peps.python.org)
+##  used by check() as information only: untouched RADAR scores both lists ~0.997, so it can't confirm the label order
 ##
 ##  PROBE_HUMAN:    paragraphs from the PEPs, unchanged
 ##  PROBE_AI:       an LLM's rewrite of each PEP paragraph, same topic and length, in the same order
@@ -92,11 +95,11 @@ def load_radar(device: torch.device | str | None = None):
     return model, tokenizer, device
 
 ##  turns RADAR's 2 outputs into 1 number per answer (AI output minus human output)
-##  sigmoid() of that number = RADAR's own softmax AI probability 
+##  sigmoid() of that number = RADAR's own softmax AI probability
 ##  every script works with this 1 number, so the loss, temperature scaling, threshold and scores file work the same as desklib's
 ##
 ##  model:          RADAR, untouched or with LoRA
-##  input_ids:       the tokenised answers, from encode()
+##  input_ids:      the tokenised answers, from encode()
 ##  attention_mask: marks which tokens are real and which are padding, from encode()
 def radar_logit(model, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     out = model(input_ids=input_ids, attention_mask=attention_mask).logits.float()
@@ -104,22 +107,22 @@ def radar_logit(model, input_ids: torch.Tensor, attention_mask: torch.Tensor) ->
 
 ##  tokenises a batch of answers, padded to the longest answer in the batch and cut at max_len tokens
 ##
-##  tokenizer:  radar's tokenizer, from load_radar()
+##  tokenizer:  RADAR's tokenizer, from load_radar()
 ##  texts:      the answers in this batch
 ##  device:     where to put the result
-##  max_len:    the longest an answer can be, in tokens
+##  max_len:    longest an answer can be (in tokens)
 ##  returns (input_ids, attention_mask)
 def encode(tokenizer, texts, device: torch.device, max_len: int = MAX_LEN):
     enc = tokenizer([str(t) for t in texts], padding=True, truncation=True, max_length=max_len, return_tensors="pt")
     return enc["input_ids"].to(device), enc["attention_mask"].to(device)
 
-##  scores a list of answers and returns one logit per answer (same order as text)
+##  scores a list of answers and returns one logit per answer (same order as texts)
 ##  answers are scored in batches sorted shortest-first (less padding = faster), then returned to original order
 ##
-##  model:      RADAR, untouched, or with LoRA 
+##  model:      RADAR, untouched, or with LoRA
 ##  tokenizer:  RADAR's tokenizer
 ##  texts:      the answers to score
-##  device:     where the model is ran
+##  device:     where the model is run
 ##  batch_size: answers scored at once
 ##  max_len:    longest an answer can be (in tokens)
 @torch.no_grad()
@@ -199,11 +202,11 @@ def check(n: int, seed: int, device: str | None) -> None:
     print("CHECK PASSED: weights loaded, the logit matches the authors' formula, and scores stay attached to their answers")
 
 ##  command line entry point
-##      python radar.py --check            -> PP-550 check, plus 200 validation answers
+##      python radar.py --check            -> PP-550 sanity check, on 200 validation answers
 ##      python radar.py --check --n 0      -> every validation answer
 def main() -> None:
     ap = argparse.ArgumentParser(description="RADAR loading and scoring. Run with --check for the PP-550 sanity check.")
-    ap.add_argument("--check", action="store_true", help="run the PP-550 label-order check")
+    ap.add_argument("--check", action="store_true", help="run the PP-550 sanity check")
     ap.add_argument("--n", type=int, default=200, help="validation rows to score; 0 = all")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default=None, help="cuda, mps or cpu (default: best available)")
@@ -214,6 +217,7 @@ def main() -> None:
         return
 
     check(args.n, args.seed, args.device)
+
 
 if __name__ == "__main__":
     main()
