@@ -6,9 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# main and cd-pipeline can deploy: one group per commit there, so a run whose
+# deploy awaits approval never blocks the next push, and nothing cancels a
+# deploy mid-migration (the deploy job's own group serializes deploys). Other
+# branches share a group and cancel superseded runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # main and cd-pipeline can deploy; cancelling mid-deploy orphans a migration
+  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline') && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/cd-pipeline' }}
 
 jobs:
