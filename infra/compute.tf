@@ -368,7 +368,7 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([{
     name         = "api"
-    image        = "${aws_ecr_repository.service["api"].repository_url}:${var.image_tag}"
+    image        = "${aws_ecr_repository.service["api"].repository_url}:${local.image_tag}"
     essential    = true
     command      = ["python", "main.py"]
     portMappings = [{ containerPort = 8000, protocol = "tcp" }]
@@ -410,7 +410,7 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([{
     name        = "worker"
-    image       = "${aws_ecr_repository.service["worker"].repository_url}:${var.image_tag}"
+    image       = "${aws_ecr_repository.service["worker"].repository_url}:${local.image_tag}"
     essential   = true
     environment = local.app_env
     secrets     = local.app_secrets_env
@@ -445,7 +445,7 @@ resource "aws_ecs_task_definition" "detector" {
 
   container_definitions = jsonencode([{
     name         = "detector"
-    image        = "${aws_ecr_repository.service["detector"].repository_url}:${var.image_tag}"
+    image        = "${aws_ecr_repository.service["detector"].repository_url}:${local.image_tag}"
     essential    = true
     portMappings = [{ containerPort = 8001, protocol = "tcp" }]
     environment = [
@@ -510,6 +510,11 @@ resource "aws_ecs_service" "api" {
   # resume, tasks must not start before RDS exists and DB_URL holds its new
   # password, or the api stalls and the worker runs on a stale one.
   depends_on = [aws_lb_listener.http, aws_secretsmanager_secret_version.db_url]
+
+  # CD owns rollouts: it registers new revisions and updates the service (spec, option A).
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_service" "worker" {
@@ -537,6 +542,11 @@ resource "aws_ecs_service" "worker" {
 
   # Same as api: wait for RDS and the new DB_URL on resume.
   depends_on = [aws_secretsmanager_secret_version.db_url]
+
+  # CD owns rollouts: it registers new revisions and updates the service (spec, option A).
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_service" "detector" {
@@ -566,6 +576,11 @@ resource "aws_ecs_service" "detector" {
   service_registries {
     registry_arn = aws_service_discovery_service.detector.arn
   }
+
+  # CD owns rollouts: it registers new revisions and updates the service (spec, option A).
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 # --- Session purge -----------------------------------------------------------
@@ -594,10 +609,13 @@ resource "aws_iam_role_policy" "scheduler" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "RunApiTask"
-        Effect   = "Allow"
-        Action   = "ecs:RunTask"
-        Resource = "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/${local.api_family}:*"
+        Sid    = "RunApiTask"
+        Effect = "Allow"
+        Action = "ecs:RunTask"
+        Resource = [
+          "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/${local.api_family}",
+          "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/${local.api_family}:*",
+        ]
       },
       {
         Sid      = "PassApiRoles"
@@ -629,7 +647,7 @@ resource "aws_scheduler_schedule" "purge_sessions" {
     })
 
     ecs_parameters {
-      task_definition_arn = aws_ecs_task_definition.api[0].arn
+      task_definition_arn = "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/${local.api_family}" # family: latest ACTIVE revision, so CD deploys reach the purge
       launch_type         = "FARGATE"
       task_count          = 1
 

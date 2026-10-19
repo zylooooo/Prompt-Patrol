@@ -36,4 +36,36 @@ run "deploy" {
     condition     = length(aws_ecr_lifecycle_policy.service) == 3
     error_message = "Every ECR repo needs its lifecycle policy."
   }
+
+  # deploy_role_can_tag_on_register
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s if s.Sid == "TagOnRegister"][0].Condition == { StringEquals = { "ecs:CreateAction" = "RegisterTaskDefinition" } }
+    error_message = "Registering tagged task definitions needs ecs:TagResource scoped to RegisterTaskDefinition."
+  }
+
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s.Resource != "*" || s.Sid == "TaskDefinitionsUnscopable"])
+    error_message = "Only the unscopable task-definition actions may use Resource *."
+  }
+
+  assert {
+    condition = (
+      flatten([[for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s if s.Sid == "RecordLiveSha"][0].Action]) == ["ssm:PutParameter"]
+      && [for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s if s.Sid == "RecordLiveSha"][0].Resource == aws_ssm_parameter.image_tag.arn
+    )
+    error_message = "The pipeline may write only the live-SHA parameter."
+  }
+
+  assert {
+    condition = (
+      [for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s if s.Sid == "PassTaskRoles"][0].Condition == { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } }
+      && length([for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : s if s.Sid == "PassTaskRoles"][0].Resource) == 3
+    )
+    error_message = "PassRole only for the 3 task roles, only to ECS tasks."
+  }
+
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.deploy_release.policy).Statement : !contains(flatten([s.Action]), "*")])
+    error_message = "No wildcard actions."
+  }
 }

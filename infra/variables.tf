@@ -16,8 +16,3 @@ variable "db_deletion_protection" {
   type        = bool
   default     = false
 }
-
-variable "image_tag" {
-  description = "Commit SHA of the images in ECR; all three services use it. Step 7's CD replaces this."
-  type        = string
-}

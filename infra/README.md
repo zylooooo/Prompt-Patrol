@@ -100,7 +100,7 @@ push to main ─► CI builds api / worker / detector ─► GHCR (tag = commit 
   they can't pull from `ghcr.io`; ECR is reached through the VPC endpoints.
 - **Copy by digest:** the image in ECR is byte-for-byte the one CI built.
   ECR tags are immutable; re-running a deploy skips images already copied.
-- **Roll back:** re-run the `deploy` job of an older CI run.
+- **Roll back:** see [Releases](#releases).
 - GHCR packages are **public** (private storage on the free plan is 500 MB;
   the detector alone is several GB).
 - ECR keeps the newest 10 images per repo; GHCR keeps every build.
@@ -116,8 +116,13 @@ inline JSON in the one-off task commands. All AWS commands carry
 `--profile prompt-patrol --region ap-southeast-1`; `terraform` runs from
 `infra/`.
 
-1. **Images.** Commit, let CI's `deploy` job copy that commit's images to ECR,
-   then set `image_tag` in `terraform.tfvars` to the commit SHA.
+1. **Images.** Bring-up deploys the SHA already in SSM
+   `/prompt-patrol/image-tag` (seeded in `release.tf`; there is no `image_tag`
+   variable), so its images must still be in ECR (it keeps the last 10). The
+   `deploy` job can't copy new ones now: the stack is paused, so it fails with
+   `stack is paused`. To move to a newer commit, bring the stack up first,
+   then push and approve a deploy. A brand-new account needs a running stack
+   for its first deploy.
 2. **Apply** with `paused = false`:
 
    ```bash
@@ -169,22 +174,8 @@ inline JSON in the one-off task commands. All AWS commands carry
 
 5. **Migrate, only after the rollouts settle.** Between the restart and the
    migration the api may serve against an unmigrated DB; that is harmless, as
-   there are no users yet.
-
-   Run the migration, then wait for it to stop with exit code 0 (this is the
-   first proof the `DB_URL` password works). Take the commands from
-   `terraform output -raw` (plain `terraform output` adds quotes and escapes
-   that break the shell):
-
-   ```bash
-   eval "$(terraform output -raw migrate_command) --query 'tasks[0].taskArn' --output text"   # prints the task ARN
-   aws ecs wait tasks-stopped --profile prompt-patrol --region ap-southeast-1 \
-     --cluster prompt-patrol --tasks <task-arn>
-   aws ecs describe-tasks --profile prompt-patrol --region ap-southeast-1 \
-     --cluster prompt-patrol --tasks <task-arn> \
-     --query "tasks[0].containers[0].[exitCode,reason]"
-   ```
-
+   there are no users yet. Run it by hand as in [Break glass](#break-glass),
+   and wait for exit code 0 (the first proof the `DB_URL` password works).
    Logs are in `/ecs/prompt-patrol/api`.
 6. **Seed the root admin.** `provision_admin_command` contains an `<email>`
    placeholder: replace it, then run it the same way as the migration.
@@ -193,17 +184,70 @@ inline JSON in the one-off task commands. All AWS commands carry
    terraform output -raw provision_admin_command   # copy, replace <email>, append --query 'tasks[0].taskArn' --output text, run
    ```
 
-7. **Ship the SPA.** Needs Node 24 (Node 25 breaks the toolchain):
-
-   ```bash
-   (cd ../apps/web && npm ci && npm run build)
-   aws s3 sync ../apps/web/dist/ "s3://$(terraform output -raw web_bucket_name)" --delete \
-     --profile prompt-patrol --region ap-southeast-1
-   aws cloudfront create-invalidation --profile prompt-patrol --region ap-southeast-1 \
-     --distribution-id "$(terraform output -raw cloudfront_distribution_id)" --paths "/*"
-   ```
+7. **Ship the SPA.** From now on, push and approve the `deploy` job
+   ([Releases](#releases)); the by-hand commands are under
+   [Break glass](#break-glass).
 
 8. Open `terraform output -raw frontend_url`, sign in, run one check. Then pause.
+
+## Releases
+
+Push, then approve the `deploy` job (environment `production`). Nothing
+reaches AWS before approval. Order: check, copy, migrate, roll out, publish,
+record.
+
+1. **Check:** fails with `stack is paused` if the api service is not ACTIVE,
+   before any write.
+2. **Copy** this commit's images from GHCR to ECR.
+3. **Migrate** on a new api task definition revision; on failure it
+   deregisters the revisions it registered and prints the task log.
+4. **Roll out** api, worker and detector on new revisions (the latest ACTIVE
+   revision with only the image swapped); waits up to 30 min and fails if ECS
+   rolled back.
+5. **Publish** the SPA to S3 and invalidate CloudFront.
+6. **Record** the SHA in `/prompt-patrol/image-tag`.
+
+- **Terraform and the SHA.** Services ignore `task_definition` changes, so
+  `terraform apply` never rolls an image. Terraform reads the SHA from the SSM
+  parameter at refresh (a `-refresh=false` plan or a `-target` apply uses the
+  stale state value). Un-pausing therefore restores the SHA last recorded.
+- **Terraform-only changes** (env, sizing) reach the services on the next
+  deploy: re-run the latest deploy to apply them now.
+- **Roll back:** re-run a deploy made after step 7, within ~30 days, while the
+  image is still among the last 10 in ECR. A re-run across a migration fails
+  at the migrate step by design (down-migrations are manual). Re-running a
+  deploy from before step 7 only copies images: don't use it.
+- **Plan after a deploy** shows one replaced task definition per service, with
+  the same image. This is expected; the services don't roll.
+
+### Break glass
+
+By hand, in Git Bash from `infra/`, when the pipeline can't be used.
+`migrate_command` runs the family (`prompt-patrol-api`), so it uses the
+latest revision. After a circuit-breaker rollback the failed revision stays
+the latest ACTIVE one in the family, so these commands and the purge schedule
+run that image until the next successful deploy (the schema is already
+migrated, so this is consistent). Take commands from `terraform output -raw` (plain
+`terraform output` adds quotes and escapes that break the shell):
+
+```bash
+eval "$(terraform output -raw migrate_command) --query 'tasks[0].taskArn' --output text"   # prints the task ARN
+aws ecs wait tasks-stopped --profile prompt-patrol --region ap-southeast-1 \
+  --cluster prompt-patrol --tasks <task-arn>
+aws ecs describe-tasks --profile prompt-patrol --region ap-southeast-1 \
+  --cluster prompt-patrol --tasks <task-arn> \
+  --query "tasks[0].containers[0].[exitCode,reason]"
+```
+
+SPA (needs Node 24; Node 25 breaks the toolchain):
+
+```bash
+(cd ../apps/web && npm ci && npm run build)
+aws s3 sync ../apps/web/dist/ "s3://$(terraform output -raw web_bucket_name)" --delete \
+  --profile prompt-patrol --region ap-southeast-1
+aws cloudfront create-invalidation --profile prompt-patrol --region ap-southeast-1 \
+  --distribution-id "$(terraform output -raw cloudfront_distribution_id)" --paths "/*"
+```
 
 **Cost.** Step 5 adds about $5/day (detector about $0.145/h, api $0.031/h,
 worker $0.015/h, ALB $0.025/h). With the NAT/endpoints and RDS the whole stack
@@ -250,7 +294,9 @@ change `action { block {} }` to `action { count {} }`. Apply.
 blocks until the local list is refreshed. Check with:
 
 ```bash
-aws wafv2 describe-managed-rule-group   --scope CLOUDFRONT --region us-east-1   --vendor-name AWS --name AWSManagedRulesCommonRuleSet   --query "Rules[].Name" --profile prompt-patrol
+aws wafv2 describe-managed-rule-group --scope CLOUDFRONT --region us-east-1 \
+  --vendor-name AWS --name AWSManagedRulesCommonRuleSet \
+  --query "Rules[].Name" --profile prompt-patrol
 ```
 
 (repeat for `AWSManagedRulesKnownBadInputsRuleSet`), then add any new

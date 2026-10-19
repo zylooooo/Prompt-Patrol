@@ -244,6 +244,22 @@ run "running" {
     condition     = length(aws_scheduler_schedule.purge_sessions) == 1
     error_message = "Session purge schedule exists while running."
   }
+  assert {
+    condition     = aws_ssm_parameter.image_tag.name == "/prompt-patrol/image-tag" && aws_ssm_parameter.image_tag.type == "String"
+    error_message = "The live-SHA parameter must be /prompt-patrol/image-tag (String)."
+  }
+  assert {
+    condition     = aws_ssm_parameter.cloudfront_distribution_id.name == "/prompt-patrol/cloudfront-distribution-id"
+    error_message = "The pipeline reads the distribution id from SSM."
+  }
+  assert {
+    condition     = strcontains(jsondecode(aws_ecs_task_definition.api[0].container_definitions)[0].image, ":${local.image_tag}")
+    error_message = "Task definitions must take the image tag from SSM."
+  }
+  assert {
+    condition     = aws_scheduler_schedule.purge_sessions[0].target[0].ecs_parameters[0].task_definition_arn == "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/prompt-patrol-api"
+    error_message = "The purge schedule must target the family (latest ACTIVE revision), not a pinned revision."
+  }
 }
 
 # The free, stateful compute foundation must survive a pause.
@@ -270,5 +286,9 @@ run "paused" {
       length(aws_scheduler_schedule.purge_sessions) == 0
     )
     error_message = "Services, task definitions and the purge schedule are paused."
+  }
+  assert {
+    condition     = length(aws_ssm_parameter.image_tag.name) > 0
+    error_message = "The live-SHA parameter survives a pause."
   }
 }
