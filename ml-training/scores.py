@@ -24,8 +24,8 @@ SPLITS = ("val", "test")
 ##  logits: the model's raw output for each row, before temperature scaling
 ##  y_prob: the probability that the threshold is applied to -> sigmoid(logit) for untouched model, sigmoid(logit/T) for the tuned model
 def score_rows(model: str, split: str, frame: pd.DataFrame, logits, y_prob) -> pd.DataFrame:
-    logits, y_prob = np.asasrray(logits, dtype=np.float64), np.asarray(y_prob, dtype=np.float64)
-    if not lens(frame) == len(logits) == len(y_prob):
+    logits, y_prob = np.asarray(logits, dtype=np.float64), np.asarray(y_prob, dtype=np.float64)
+    if not len(frame) == len(logits) == len(y_prob):
         raise ValueError(f"{model}/{split}: {len(frame)} rows but {len(logits)} logits and {len(y_prob)} probs")
 
     return pd.DataFrame({
