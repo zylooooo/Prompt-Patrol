@@ -8,16 +8,11 @@ Val and test  : every row from all four sets, not downsampled. FPR and TPR do no
                 The 10-word minimum is NOT applied here: it is applied at evaluation time
                 (n_words is kept), so the data version and the splits stay unchanged.
 
-The question-level partitions come from the source files and are never reassigned. Rewrites
-(paraphrased, human-edited) inherit the partition of their source answer, which this script
-re-checks. The `core` column marks rows of the original combined set (v0.1 + spliced), so the
-earlier val (1,519) and test (2,281) sets can be recovered exactly.
-
     python build_extended_corpus.py --dry-run     # print the plan and the checks, write nothing
     python build_extended_corpus.py               # write v0.1-extended-{train,val,test}.parquet + manifest
     python build_extended_corpus.py --force       # overwrite existing outputs
 
-Writes next to the inputs in data/splits/. Add them to DVC yourself (dvc add data, dvc push).
+Writes next to the inputs in data/splits/.
 """
 
 import argparse
@@ -81,7 +76,7 @@ def allocate(sizes: pd.Series, n: int) -> pd.Series:
         take[key] += 1
     take = np.minimum(take, sizes)
     short = n - int(take.sum())
-    while short > 0:  # a group was capped: hand the remainder to groups that still have room
+    while short > 0:
         room = (sizes - take)[(sizes - take) > 0]
         if room.empty:
             break
@@ -117,7 +112,7 @@ def build_train(all_rows: pd.DataFrame, rng: np.random.Generator):
     n_raw = int(round(n_ai * RAW_SHARE))
     n_each = split_evenly(n_ai - n_raw, ["spliced", "paraphrased", "edited"])
 
-    used: set[str] = set()  # AI answers already used as a source, so no near-duplicates enter train
+    used: set[str] = set()
     notes = {}
 
     def fresh(pool):
