@@ -48,6 +48,29 @@ jobs:
       - name: Lint API contract
         run: npx --yes @redocly/cli@2.63.0 lint docs/openapi.yaml
 
+  # Gitleaks over the full history of the checked-out ref, not just the diff:
+  # a secret deleted in a later commit is still in git and still needs rotating.
+  # The CLI image, not gitleaks-action (that one needs a licence key on org-owned
+  # repos). Pinned by digest; Dependabot doesn't see images in `run:`, so bump
+  # the tag and digest together by hand.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          # .git/config is mounted into a third-party image below; keep the token out of it.
+          persist-credentials: false
+
+      # --redact keeps secret values out of the log, --verbose prints where each
+      # finding is. Exit 1 on a leak or an error, so the job fails closed.
+      - name: Gitleaks
+        run: >-
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro"
+          ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git /repo --redact --verbose --no-banner
+
   lint-infra:
     runs-on: ubuntu-latest
     steps:
@@ -461,7 +484,7 @@ jobs:
   # re-run across a migration fails by design (DB ahead of the image).
   # The cd-pipeline branch may deploy until the user prunes it. Logic lives in
   # .github/scripts/deploy.sh (tested by lint-infra, which must pass, as must
-  # lint-openapi and the data-pipeline tests). On main, e2e must pass.
+  # lint-openapi, secret-scan and the data-pipeline tests). On main, e2e must pass.
   deploy:
     runs-on: ubuntu-latest
     needs:
@@ -471,6 +494,7 @@ jobs:
         e2e-frontend,
         lint-infra,
         lint-openapi,
+        secret-scan,
         unit-tests-data-pipeline,
       ]
     if: >-
@@ -479,6 +503,7 @@ jobs:
       && needs.build-web.result == 'success'
       && needs.lint-infra.result == 'success'
       && needs.lint-openapi.result == 'success'
+      && needs.secret-scan.result == 'success'
       && needs.unit-tests-data-pipeline.result == 'success'
       && (github.ref == 'refs/heads/main' && needs.e2e-frontend.result == 'success'
           || github.ref == 'refs/heads/cd-pipeline')
