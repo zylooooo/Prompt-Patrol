@@ -343,8 +343,11 @@ locals {
     LOG_LEVEL                    = "info"
     DETECTOR_MODEL_VERSION       = "desklib-academic-lora-v1"
     DETECTOR_CALIBRATION_VERSION = "desklib-temp1.944-v1"
-    DETECTOR_THRESHOLD           = "0.9608"
-    ABSTENTION_BAND              = "0.01"
+    # asyncpg verifies the RDS cert against this bundle (DB_URL's ssl=verify-full).
+    # Shipped in both images from apps/api/app/certs/.
+    PGSSLROOTCERT      = "/app/certs/rds-global-bundle.pem"
+    DETECTOR_THRESHOLD = "0.9608"
+    ABSTENTION_BAND    = "0.01"
   } : { name = k, value = v }]
 }
 

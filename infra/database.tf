@@ -62,12 +62,16 @@ resource "aws_db_instance" "main" {
 # Follows the DB: a pause removes the version from state (the stale value stays
 # AWSCURRENT in AWS until the next unpause writes a new one with the new DB). replace_triggered_by covers a DB replacement or new
 # endpoint without a pause.
-# ssl=require: encrypt only, no cert verification (hardening after CD step 7).
+# ssl=verify-full: the cert must chain to PGSSLROOTCERT (compute.tf) and match
+# the endpoint. The value is write-only, so editing this string alone never
+# reaches AWS: the live secret was moved from ssl=require by hand
+# (put-secret-value) on 2026-10-20 to avoid a password rotation. The next
+# version bump or unpause writes this string.
 resource "aws_secretsmanager_secret_version" "db_url" {
   count = var.paused ? 0 : 1
 
   secret_id                = aws_secretsmanager_secret.app["DB_URL"].id
-  secret_string_wo         = "postgresql+asyncpg://promptpatrol:${ephemeral.random_password.db.result}@${aws_db_instance.main[count.index].address}:5432/promptpatrol?ssl=require"
+  secret_string_wo         = "postgresql+asyncpg://promptpatrol:${ephemeral.random_password.db.result}@${aws_db_instance.main[count.index].address}:5432/promptpatrol?ssl=verify-full"
   secret_string_wo_version = local.db_password_version
 
   lifecycle {
