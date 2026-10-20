@@ -65,3 +65,10 @@ mock_data "aws_route53_zone" {
     zone_id = "Z0734110WU65K27G8SYH"
   }
 }
+
+mock_resource "aws_sesv2_email_identity" {
+  defaults = {
+    arn                     = "arn:aws:ses:ap-southeast-1:420974348257:identity/prompt-patrol.com"
+    dkim_signing_attributes = { tokens = ["dkim1", "dkim2", "dkim3"] }
+  }
+}
