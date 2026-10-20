@@ -1,5 +1,7 @@
-# Weekly, one grouped PR per ecosystem to keep the noise down. Security
-# updates still open on their own as soon as an advisory lands.
+# Weekly, one grouped PR per ecosystem for minor/patch bumps to keep the noise
+# down. Majors are left out of the groups so each opens its own PR: one breaking
+# major can't block the safe bumps, and the failing CI points at a single cause.
+# Security updates still open on their own as soon as an advisory lands.
 version: 2
 updates:
   # Keeps the SHA pins in .github/workflows current (the `# vX.Y.Z` comments too).
@@ -10,6 +12,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: npm
     directory: /apps/web
@@ -18,9 +21,13 @@ updates:
     groups:
       web:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # Major must match .nvmrc (lint-frontend enforces it); bump them together by hand.
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint peers on typescript <6.1; drop once it supports TS 7.
+      - dependency-name: typescript
         update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
@@ -33,6 +40,7 @@ updates:
     groups:
       python:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Its own entry so the ML pins below are ignored here only.
   - package-ecosystem: pip
@@ -42,6 +50,7 @@ updates:
     groups:
       detector:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # ML-team owned and tied to the calibrated threshold; torch comes from the CPU index in Dockerfile.desklib.
       - dependency-name: torch
@@ -59,6 +68,7 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # Runtime versions are pinned to match CI (Python 3.13, Node from .nvmrc); patch only.
       - dependency-name: python

@@ -5,7 +5,7 @@ from datetime import datetime
 from models import User
 
 
-class SessionFailure(str, enum.Enum):
+class SessionFailure(enum.StrEnum):
     not_signed_in = "not_signed_in"
     session_unknown = "session_unknown"
     session_revoked = "session_revoked"

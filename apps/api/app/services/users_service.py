@@ -42,7 +42,7 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-class LoginRejection(str, enum.Enum):
+class LoginRejection(enum.StrEnum):
     """
     Why a validated Auth0 identity was refused. Distinguishing these lets the
     login page say something true, and lets a removed person still trying the
