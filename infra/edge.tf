@@ -244,6 +244,16 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   code    = <<-EOT
     function handler(event) {
       var request = event.request;
+      // Any other host (the cloudfront.net default) loads the SPA but can't
+      // log in: callback, cookie and CSRF origin are all app_hostname's.
+      // ponytail: drops the query string, rebuild it from request.querystring if a deep link ever needs it.
+      if (request.headers.host.value !== '${local.app_hostname}') {
+        return {
+          statusCode: 301,
+          statusDescription: 'Moved Permanently',
+          headers: { location: { value: 'https://${local.app_hostname}' + request.uri } }
+        };
+      }
       if (request.uri.split('/').pop().indexOf('.') === -1) {
         request.uri = '/index.html';
       }
@@ -256,8 +266,9 @@ resource "aws_cloudfront_function" "spa_rewrite" {
 # apps/web/nginx.conf (change both together). connect-src lists both S3 hosts
 # of the batches bucket: the pinned boto3 signs the global host and an upgrade
 # may switch to the regional one, and a CSP miss is silent (the upload just
-# fails in the browser). HSTS is 1 year with no includeSubDomains/preload
-# because this hostname is fixed and not ours to commit a whole domain on.
+# fails in the browser). HSTS is 1 year with no includeSubDomains/preload:
+# it covers app_hostname only, leaving the rest of prompt-patrol.com free to
+# serve anything (preload is near-irreversible, so it needs a deliberate call).
 # override = true so these win over anything the origin sends.
 resource "aws_cloudfront_response_headers_policy" "security" {
   name = "prompt-patrol-security"

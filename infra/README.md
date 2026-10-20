@@ -20,7 +20,8 @@ One root, one state, files split by area per the
 | `endpoints.tf`                      | VPC endpoints and their security group                      |
 | `ecr.tf`                            | ECR repositories, lifecycle policies, scan-on-push rule     |
 | `compute.tf`                        | ECS cluster, services, IAM, security groups, purge schedule |
-| `edge.tf`                           | ALB, VPC origin, SPA bucket, CloudFront                     |
+| `edge.tf`                           | ALB, VPC origin, SPA bucket, CloudFront, domain + ACM cert  |
+| `email.tf`                          | SES domain identity, DKIM/DMARC records, Auth0's SES user   |
 | `github-oidc.tf`                    | GitHub OIDC provider and the deploy role                    |
 | `tests/`                            | `terraform test` files (mock provider, run in CI)           |
 
@@ -320,8 +321,43 @@ IP. It lifts on its own once the rate drops.
 the CSP in both places together (HSTS differs on purpose: 1 year at
 CloudFront, 86400 in nginx, and none locally since it is plain http).
 `connect-src` lists the batches bucket's global and regional hosts so the
-browser's presigned PUT passes CSP; the bucket's CORS rule (in `storage.tf`) allows `PUT` from the CloudFront origin.
+browser's presigned PUT passes CSP; the bucket's CORS rule (in `storage.tf`) allows `PUT` from `frontend_url`.
 Both are only enforced by a real browser, so test batch upload in one.
+
+## Domain and email
+
+`prompt-patrol.com` was registered by hand in Route 53 (auto-renew off on
+purpose; it lapses 2027-10-20). The registrar made the hosted zone, so
+Terraform reads it (`data.aws_route53_zone.main`) instead of managing it.
+
+**App hostname.** `local.app_hostname` (`app.prompt-patrol.com`) is the app's
+identity: it is the CloudFront alias, the ACM cert's name (us-east-1, DNS
+validated, renews itself), and `frontend_url`. Every other host, including
+the distribution's `*.cloudfront.net` name, gets a 301 to it from
+`spa_rewrite`. Changing it is a cutover, in this order: add the new URLs in
+Auth0 (callback, logout, web origin), write `AUTH0_REDIRECT_URI`, change
+`app_hostname` and apply, then roll api and worker to the new revision (the
+services ignore `task_definition`, so the apply alone changes nothing that is
+running):
+
+```bash
+for s in api worker; do
+  aws ecs update-service --profile prompt-patrol --region ap-southeast-1 \
+    --cluster prompt-patrol --service $s --task-definition prompt-patrol-$s
+done
+```
+
+The api refuses to start when `FRONTEND_URL` and `AUTH0_REDIRECT_URI`
+disagree on host, so keep the gap between the secret and the apply short.
+Also update the smoke test's `FRONTEND_URL` in `.github/workflows/ci.yml`.
+
+**Email.** Auth0 sends the invite and password emails through SES as
+`no-reply@prompt-patrol.com`. The IAM user `prompt-patrol-auth0-ses` may send
+only as that address. Its access key is made by hand
+(`aws iam create-access-key`) and pasted into Auth0 > Branding > Email
+Provider, so it never enters state. Rotate it the same way, then delete the
+old key. SES must be out of the sandbox before Auth0 is switched to it: the
+sandbox only delivers to verified addresses.
 
 ## The state bucket is not managed here
 
