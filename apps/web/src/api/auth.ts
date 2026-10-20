@@ -1,5 +1,4 @@
 import type { UserRole } from "../types";
-import { clearStoredData } from "./stub";
 import { ApiError, apiRequest } from "./client";
 
 export interface User {
@@ -42,8 +41,19 @@ export function hadSignedInSession(): boolean {
   return localStorage.getItem(LOGIN_HINT_KEY) !== null;
 }
 
+// Left behind by the retired localStorage stub (screening history and the user
+// roster). Nothing writes them now, but browsers that ran the stub still hold
+// them, so sign-out keeps clearing them for the next person on the machine.
+const STUB_ERA_KEYS = [
+  "pp.history.v2",
+  "pp.history.seeded.v2",
+  "pp.users.v3",
+  "pp.users.v2",
+  "pp.supervision.v2",
+];
+
 export function clearPreviousUserData(): void {
-  clearStoredData();
+  for (const key of STUB_ERA_KEYS) localStorage.removeItem(key);
 }
 
 export function clearSignedOutState(): void {

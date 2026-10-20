@@ -39,7 +39,7 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
     )
     db.add(session_row)
     # ponytail: only purges this user's rows; users who never log in again are
-    # left to the scheduled purge job that lands with the ECS deploy.
+    # covered by purge_expired_sessions, run daily by scripts.purge_sessions.
     await db.execute(
         delete(UserSession).where(
             UserSession.user_id == user_id,
@@ -48,6 +48,27 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
     )
     await db.commit()
     return raw_token
+
+
+# Deletes every user's session rows past retention, in batches, and returns the count.
+async def purge_expired_sessions(db: AsyncSession, batch_size: int = 5000) -> int:
+    cutoff = datetime.now(UTC) - SESSION_RETENTION
+    total = 0
+    while True:
+        result = cast(
+            CursorResult,
+            await db.execute(
+                delete(UserSession).where(
+                    UserSession.id.in_(
+                        select(UserSession.id).where(UserSession.absolute_expires_at < cutoff).limit(batch_size)
+                    )
+                )
+            ),
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            return total
+        total += result.rowcount
 
 
 # Validates a session, refreshes its activity timestamp, and returns it.

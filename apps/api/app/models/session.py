@@ -16,5 +16,5 @@ class UserSession(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    absolute_expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)

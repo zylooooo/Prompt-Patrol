@@ -269,3 +269,15 @@ mlflow
 
 # Postman environments holding real session cookies
 postman/environments/*.local.environment.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Safety net only: secrets never belong in tfvars (see infra/README.md)
+*.secret.tfvars
+# Personal AWS account reference (local only)
+infra/AWS-ACCOUNTS.md

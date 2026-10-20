@@ -19,6 +19,8 @@ UPLOAD_URL_EXPIRY_SECONDS = 900
 # Each iteration receives up to 10 messages, so this is 2000 messages max.
 # This is a best-effort cleanup, does not guarantee correctness.
 MAX_CANCEL_DRAIN_ITERATIONS = 200
+# The queue default is 600 s (the worker needs it); the drain hides what it receives for only 30 s.
+CANCEL_DRAIN_VISIBILITY_SECONDS = 30
 
 
 def _s3_client():
@@ -73,15 +75,21 @@ def purge_batch_messages(*batch_ids: str) -> int:
     server-side "delete where batch_id=X", so this receives 10 at a time and
     deletes only the ones belonging to these batches.
 
-    A non-matching message is left completely alone, not deleted, not
-    reset visible. A message with unparsable JSON is skipped the same way - one poison
-    message anywhere in the shared queue shouldn't be able to fail every
-    instructor's cancel request. The Worker's own per-message cancelled_at check
+    A non-matching message is left alone, not deleted; it becomes visible
+    again after CANCEL_DRAIN_VISIBILITY_SECONDS (30 s). A message with
+    unparsable JSON is skipped the same way - one poison message anywhere in
+    the shared queue shouldn't be able to fail every instructor's cancel
+    request. The Worker's own per-message cancelled_at check
     is the correctness backstop for whatever this misses."""
     client = _sqs_client()
     removed = 0
     for _ in range(MAX_CANCEL_DRAIN_ITERATIONS):
-        response = client.receive_message(QueueUrl=SQS_BATCHES_QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+        response = client.receive_message(
+            QueueUrl=SQS_BATCHES_QUEUE_URL,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=0,
+            VisibilityTimeout=CANCEL_DRAIN_VISIBILITY_SECONDS,
+        )
         messages = response.get("Messages", [])
         if not messages:
             break

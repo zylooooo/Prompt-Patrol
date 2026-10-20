@@ -1,4 +1,11 @@
-import { checkAnswer, getCapabilities, hasScreeningAccess } from "../checks";
+import {
+  checkAnswer,
+  getCapabilities,
+  getDetectorStatus,
+  getEntry,
+  hasScreeningAccess,
+  listHistory,
+} from "../checks";
 import type { User } from "../auth";
 import { ApiError } from "../client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -241,15 +248,6 @@ describe("checkAnswer", () => {
     });
   });
 
-  // Asserted against the stored history rather than `stub.listHistory`, which
-  // seeds demo rows on first call and filters by owner — neither of which is
-  // what this needs to know. The question is only whether the result was
-  // written, because that write is what the History page reads.
-  const storedHistory = () =>
-    JSON.parse(localStorage.getItem("pp.history.v2") ?? "[]") as {
-      checkId?: string;
-    }[];
-
   it("writes nothing to localStorage — the server stores the check now", async () => {
     // Until 2026-08-18 this mirrored every result into `pp.history.v2` because
     // the server computed and forgot. It persists now, so a local copy would be
@@ -258,7 +256,7 @@ describe("checkAnswer", () => {
 
     await checkAnswer(INSTRUCTOR, { answerText: ANSWER });
 
-    expect(storedHistory().some((e) => e.checkId === "check-1")).toBe(false);
+    expect(localStorage.length).toBe(0);
   });
 
   it("does not record anything when the detector fails", async () => {
@@ -271,14 +269,11 @@ describe("checkAnswer", () => {
       503,
     );
 
-    // Not "history is empty" — resolving the actor seeds demo rows on the way
-    // through, as it always has. The claim is narrower and is the one that
-    // matters: the check that failed is not in there.
     await expect(
       checkAnswer(INSTRUCTOR, { answerText: ANSWER }),
     ).rejects.toBeInstanceOf(ApiError);
 
-    expect(storedHistory().some((e) => e.checkId === "check-1")).toBe(false);
+    expect(localStorage.length).toBe(0);
   });
 
   it("carries the server's failure code so the panel can name it", async () => {
@@ -373,5 +368,156 @@ describe("hasScreeningAccess", () => {
       checkAnswer(ta([]), { answerText: ANSWER }),
     ).rejects.toBeInstanceOf(ApiError);
     expect(mock).not.toHaveBeenCalled();
+  });
+});
+
+describe("getDetectorStatus", () => {
+  it("passes ready and loading through", async () => {
+    route(() => ({ status: "loading", model_version: "v0" }));
+    expect(await getDetectorStatus()).toBe("loading");
+  });
+
+  it("reads any status it cannot name as unavailable", async () => {
+    route(() => ({ status: "degraded", model_version: "v0" }));
+    expect(await getDetectorStatus()).toBe("unavailable");
+  });
+});
+
+// GET /api/checks rows are CheckSummary, not the full CheckResult.
+const summary = (over: Record<string, unknown>) => ({
+  check_id: "check-1",
+  actor_id: "actor-1",
+  batch_id: null,
+  batch_file_name: null,
+  external_ref: null,
+  verdict: "human_written",
+  raw_score: 0.2,
+  confidence: null,
+  strictness_applied: "lenient",
+  model_version: "roberta-base-openai-detector-v0",
+  answer_text: ANSWER,
+  created_at: "2026-08-17T10:00:00+00:00",
+  ...over,
+});
+
+describe("listHistory", () => {
+  it("follows the cursor instead of showing the first page as the whole list", async () => {
+    const mock = route((url) =>
+      url.includes("cursor=")
+        ? { items: [summary({ check_id: "check-2" })], next_cursor: null }
+        : { items: [summary({})], next_cursor: "page-2" },
+    );
+
+    const history = await listHistory(INSTRUCTOR);
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(mock.mock.calls[1][0]).toContain("cursor=page-2");
+    expect(history.map((e) => e.kind === "single" && e.checkId)).toEqual([
+      "check-1",
+      "check-2",
+    ]);
+  });
+
+  it("reads a summary row onto the screens' names, defaulting what it lacks", async () => {
+    route(() => ({ items: [summary({ external_ref: "stu-1" })], next_cursor: null }));
+
+    const [entry] = await listHistory(INSTRUCTOR);
+
+    expect(entry).toMatchObject({
+      kind: "single",
+      checkId: "check-1",
+      externalRef: "stu-1",
+      verdict: "human_written",
+      rawScore: 0.2,
+      answerText: ANSWER,
+      abstainReason: null,
+      explanation: null,
+      detector: {
+        modelVersion: "roberta-base-openai-detector-v0",
+        calibrationVersion: null,
+        strictnessApplied: "lenient",
+        thresholdApplied: null,
+      },
+    });
+  });
+
+  it("folds a batch's rows into one run, in the slot of its first row", async () => {
+    const batch = { batch_id: "batch-1", batch_file_name: "week3.csv" };
+    route(() => ({
+      items: [
+        summary({ check_id: "b-human", ...batch, created_at: "2026-08-17T10:02:00+00:00" }),
+        summary({ check_id: "solo" }),
+        summary({
+          check_id: "b-ai",
+          ...batch,
+          verdict: "ai_generated",
+          raw_score: 0.9,
+          created_at: "2026-08-17T10:01:00+00:00",
+        }),
+      ],
+      next_cursor: null,
+    }));
+
+    const history = await listHistory(INSTRUCTOR);
+
+    expect(history.map((e) => e.kind)).toEqual(["batch", "single"]);
+    const run = history[0];
+    if (run.kind !== "batch") throw new Error("expected a batch run");
+    expect(run).toMatchObject({
+      id: "batch-1",
+      fileName: "week3.csv",
+      createdAt: "2026-08-17T10:01:00+00:00",
+      counts: { ai_generated: 1, uncertain: 0, human_written: 1 },
+    });
+    // Flagged rows first, so the instructor sees what needs review.
+    expect(run.rows.map((r) => r.checkId)).toEqual(["b-ai", "b-human"]);
+  });
+});
+
+describe("getEntry", () => {
+  it("returns the full check when the id is a check", async () => {
+    route(() => CHECK);
+
+    const entry = await getEntry(INSTRUCTOR, "check-1");
+
+    expect(entry).toMatchObject({ kind: "single", checkId: "check-1" });
+  });
+
+  it("falls back to the history for a batch id the checks route does not know", async () => {
+    // `route` answers every call with one status; this needs a 404 then a 200.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const missing = url.endsWith("/batch-1");
+        return Promise.resolve({
+          ok: !missing,
+          status: missing ? 404 : 200,
+          json: () =>
+            Promise.resolve(
+              missing
+                ? { error: "not_found", message: "Check not found.", request_id: "r" }
+                : {
+                    items: [summary({ batch_id: "batch-1", batch_file_name: "w.csv" })],
+                    next_cursor: null,
+                  },
+            ),
+        });
+      }),
+    );
+
+    const entry = await getEntry(INSTRUCTOR, "batch-1");
+
+    expect(entry).toMatchObject({ kind: "batch", id: "batch-1", fileName: "w.csv" });
+  });
+
+  it("does not swallow a failure that is not a 404", async () => {
+    route(
+      () => ({ error: "internal", message: "Boom.", request_id: "r" }),
+      500,
+    );
+
+    await expect(getEntry(INSTRUCTOR, "check-1")).rejects.toMatchObject({
+      status: 500,
+    });
   });
 });

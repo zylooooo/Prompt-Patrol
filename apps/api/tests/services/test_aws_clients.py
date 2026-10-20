@@ -113,3 +113,15 @@ def test_download_of_a_key_nothing_was_put_to_is_file_not_found():
         stub.add_client_error("get_object", service_error_code="NoSuchKey", http_status_code=404)
         with pytest.raises(FileNotFoundError):
             download_object("batches/never-put.csv")
+
+
+def test_purge_batch_messages_hides_received_messages_for_only_30_seconds():
+    """The queue's own timeout is 600 s for the worker; a cancel must not
+    freeze other instructors' rows that long. See DECISION LOG [0.29.0]."""
+    fake_sqs = MagicMock()
+    fake_sqs.receive_message.side_effect = [{"Messages": [_sqs_message("other", "r1")]}, {"Messages": []}]
+
+    with patch("services.aws_clients._sqs_client", return_value=fake_sqs):
+        purge_batch_messages("target")
+
+    assert all(c.kwargs["VisibilityTimeout"] == 30 for c in fake_sqs.receive_message.call_args_list)

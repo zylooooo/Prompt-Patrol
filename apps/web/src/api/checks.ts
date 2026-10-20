@@ -16,9 +16,9 @@ import {
   STRICTNESS_TEXT,
   VERDICT_TEXT,
 } from "../types";
-import * as stub from "./stub";
 import type { User } from "./auth";
 import { ApiError, apiRequest } from "./client";
+import { validateCheckInput } from "./validation";
 
 export const checkKeys = {
   all: ["checks"] as const,
@@ -340,7 +340,7 @@ export async function checkAnswer(
   input: CheckInput,
 ): Promise<SingleCheck> {
   requireScreeningAccess(actor);
-  stub.validateCheckInput(input);
+  validateCheckInput(input);
   const strictness = input.strictness ?? "standard";
 
   return toSingleCheck(
