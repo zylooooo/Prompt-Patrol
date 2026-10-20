@@ -568,5 +568,5 @@ jobs:
       # need a new SSM parameter or cloudfront:GetDistribution on the role.
       - name: Smoke test through CloudFront
         env:
-          FRONTEND_URL: https://d27u3j75sp5oz1.cloudfront.net
+          FRONTEND_URL: https://app.prompt-patrol.com
         run: bash .github/scripts/deploy.sh smoke apps/web/dist

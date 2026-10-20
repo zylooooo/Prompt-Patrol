@@ -191,8 +191,8 @@ run "running" {
     error_message = "SPA bucket: private, readable only by this distribution via OAC."
   }
   assert {
-    condition     = output.frontend_url == "https://${aws_cloudfront_distribution.web.domain_name}" && output.auth0_callback_url == "https://${aws_cloudfront_distribution.web.domain_name}/api/auth/callback"
-    error_message = "frontend_url / auth0_callback_url come from the distribution domain."
+    condition     = output.frontend_url == "https://${local.app_hostname}" && output.auth0_callback_url == "https://${local.app_hostname}/api/auth/callback" && contains(aws_cloudfront_distribution.web.aliases, local.app_hostname)
+    error_message = "frontend_url / auth0_callback_url come from app_hostname, which is a distribution alias."
   }
 
   # --- Services --------------------------------------------------------------------

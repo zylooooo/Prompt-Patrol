@@ -41,3 +41,27 @@ mock_resource "aws_service_discovery_service" {
     arn = "arn:aws:servicediscovery:ap-southeast-1:420974348257:service/srv-0123456789abcdef"
   }
 }
+
+mock_resource "aws_acm_certificate" {
+  defaults = {
+    arn = "arn:aws:acm:us-east-1:420974348257:certificate/00000000-0000-0000-0000-000000000000"
+    domain_validation_options = [{
+      domain_name           = "app.prompt-patrol.com"
+      resource_record_name  = "_x.app.prompt-patrol.com."
+      resource_record_type  = "CNAME"
+      resource_record_value = "_y.acm-validations.aws."
+    }]
+  }
+}
+
+mock_resource "aws_acm_certificate_validation" {
+  defaults = {
+    certificate_arn = "arn:aws:acm:us-east-1:420974348257:certificate/00000000-0000-0000-0000-000000000000"
+  }
+}
+
+mock_data "aws_route53_zone" {
+  defaults = {
+    zone_id = "Z0734110WU65K27G8SYH"
+  }
+}

@@ -1,10 +1,58 @@
 # Edge: CloudFront in front of the SPA bucket and, via a VPC origin, the
 # internal ALB. The ALB and VPC origin are hourly-billed, so they follow
-# var.paused. The distribution and SPA bucket never do: the distribution's
-# domain is the app's identity (FRONTEND_URL, Auth0 allowed URLs).
+# var.paused. The distribution and SPA bucket never do: app_hostname, its
+# alias, is the app's identity (FRONTEND_URL, AUTH0_REDIRECT_URI, Auth0
+# allowed URLs; change them together).
 
 locals {
-  frontend_url = "https://${aws_cloudfront_distribution.web.domain_name}"
+  app_hostname = "app.prompt-patrol.com"
+  frontend_url = "https://${local.app_hostname}"
+}
+
+# --- Custom domain -----------------------------------------------------------
+
+# Registered by hand in Route 53 (Registrar created the zone), so read, not managed.
+data "aws_route53_zone" "main" {
+  name = "prompt-patrol.com"
+}
+
+# CloudFront only accepts ACM certificates from us-east-1.
+resource "aws_acm_certificate" "web" {
+  provider          = aws.us_east_1
+  domain_name       = local.app_hostname
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# One host, so exactly one validation record (no SANs to loop over).
+resource "aws_route53_record" "cert_validation" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = one(aws_acm_certificate.web.domain_validation_options).resource_record_name
+  type    = one(aws_acm_certificate.web.domain_validation_options).resource_record_type
+  records = [one(aws_acm_certificate.web.domain_validation_options).resource_record_value]
+  ttl     = 300
+}
+
+resource "aws_acm_certificate_validation" "web" {
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.web.arn
+  validation_record_fqdns = [aws_route53_record.cert_validation.fqdn]
+}
+
+# A only: the distribution is IPv4-only (is_ipv6_enabled = false).
+resource "aws_route53_record" "app" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = local.app_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.web.domain_name
+    zone_id                = aws_cloudfront_distribution.web.hosted_zone_id
+    evaluate_target_health = false
+  }
 }
 
 # --- Internal ALB ------------------------------------------------------------
@@ -316,7 +364,12 @@ resource "aws_cloudfront_distribution" "web" {
     }
   }
 
+  aliases = [local.app_hostname]
+
+  # sni-only: "vip" is a dedicated IP at $600/month.
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn      = aws_acm_certificate_validation.web.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
   }
 }
