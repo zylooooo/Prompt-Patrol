@@ -1,16 +1,16 @@
-fastapi==0.141.1
-uvicorn==0.52.1
-boto3==1.35.99
+fastapi==0.143.3
+uvicorn==0.54.0
+boto3==1.43.114
 # Not used directly: botocore pulls it in unpinned. Floor for PYSEC-2026-4175/4176/4177.
 urllib3>=2.8.0
-python-dotenv==1.2.2
-sqlalchemy[asyncio]==2.0.51
-asyncpg==0.31.0
-alembic==1.19.0
-authlib==1.7.2
+python-dotenv==1.2.4
+sqlalchemy[asyncio]==2.1.5
+asyncpg==0.32.0
+alembic==1.20.0
+authlib==1.9.1
 itsdangerous==2.2.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
 httpx==0.28.1
 aiosqlite==0.22.1
-ruff==0.14.5
+ruff==0.17.1

@@ -14,13 +14,13 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-class UserRoleEnum(str, enum.Enum):
+class UserRoleEnum(enum.StrEnum):
     root_admin = "root_admin"
     instructor = "instructor"
     teaching_assistant = "teaching_assistant"
 
 
-class UserStatusEnum(str, enum.Enum):
+class UserStatusEnum(enum.StrEnum):
     """The single authoritative lifecycle state. Never derive it from a timestamp."""
 
     active = "active"

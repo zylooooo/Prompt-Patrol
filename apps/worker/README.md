@@ -29,7 +29,7 @@ Each pass of `poll_once`:
    retried. Don't catch-and-delete here — the unacked message is the retry
    mechanism.
 3. Drains the dead-letter queue without waiting. A row that failed
-   `maxReceiveCount` times (3, in `apps/api/localstack-init.sh`) lands there,
+   `maxReceiveCount` times (5, in `apps/api/localstack-init.sh`) lands there,
    and the worker records it as a `batch_row_failure`, so the batch shows that
    row as `failed` instead of `pending` forever.
 
