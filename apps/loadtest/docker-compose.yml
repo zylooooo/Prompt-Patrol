@@ -1,0 +1,115 @@
+# Disposable stack for the PP-533 harness smoke test (apps/loadtest/run.sh smoke).
+#
+# Plumbing check only: the measured runs go against AWS, because local numbers
+# measure the laptop, not the product (EXPERIMENT_LOG.md, Entry 1).
+#
+# Standalone, copied from apps/e2e/docker-compose.yml for the same reasons that
+# file gives. Differences: no host ports (k6 runs on the compose network, so the
+# stack can't collide with dev/e2e), no frontend, and two profile-gated helper
+# containers (k6, tools).
+name: prompt-patrol-loadtest
+
+services:
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      - SERVICES=s3,sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ../api/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # tmpfs, so every run starts from an empty database.
+  postgres:
+    image: postgres:18-alpine
+    env_file:
+      - ../e2e/.env
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # The e2e stub, exactly as apps/e2e/docker-compose.yml defines it. No curl in this image.
+  detector:
+    image: python:3.13-slim
+    command: ["python", "/stub.py"]
+    volumes:
+      - ../e2e/detector-stub.py:/stub.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    env_file:
+      - ../e2e/.env
+    environment:
+      # k6 follows the presigned PUT from inside the network, and the host is
+      # part of the signature.
+      AWS_ENDPOINT_URL_PUBLIC: http://localstack:4566
+    # entrypoint.sh minus reload: ENVIRONMENT=dev (needed by scripts.e2e_seed)
+    # makes main.py run uvicorn's file-watcher, which would share the 0.5 CPU.
+    # Keep in step with entrypoint.sh and main.run_app (host/port/log level are
+    # the .env values, which equal uvicorn's defaults).
+    command: ["sh", "-c", "alembic upgrade head && exec python -c \"import uvicorn; uvicorn.run('main:app', host='0.0.0.0', port=8000, log_config=None)\""]
+    cpus: 0.5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      detector:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build:
+      # Repo root, not apps/ - the worker Dockerfile's COPYs are repo-root-relative.
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    env_file:
+      - ../e2e/.env
+    environment:
+      AWS_ENDPOINT_URL_PUBLIC: http://localstack:4566
+    cpus: 0.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+      detector:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: [tools]
+    cpus: 1
+    volumes:
+      - ./:/loadtest:ro
+      - ${RUN_DIR:-./results/_scratch}:/results
+
+  # make_batch_csv.py and render.py; no host Python needed.
+  tools:
+    image: python:3.13-slim
+    profiles: [tools]
+    volumes:
+      - ../..:/repo
+    working_dir: /repo/apps/loadtest
