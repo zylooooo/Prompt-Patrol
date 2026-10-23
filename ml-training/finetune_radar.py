@@ -29,6 +29,9 @@ MLFLOW_EXPERIMENT = "E2-finetune"
 DATASETS = ("mohler", "sprag", "engsaf")
 METHODS = ("lora", "dora", "full")
 
+##  two epochs whose val partial AUROC differ by no more than this count as tied, see train_model()
+PAUROC_TIE = 0.002
+
 ##  reworded AI answers (all label 1). their train rows are added to training with --extended,
 ##  their test rows are always scored as separate robustness numbers, never mixed into the headline metrics
 EXTENDED_SETS = {
@@ -86,6 +89,18 @@ def select_data(train_on: list[str], extended: bool):
 
     train = pd.concat([train, *extra_train], ignore_index=True)
     return train.reset_index(drop=True), val.reset_index(drop=True), test.reset_index(drop=True), robustness
+
+##  desklib's way of balancing (--balance): randomly drops rows from the larger class until AI and human counts are equal.
+##  the mix of raw, spliced and generator rows inside each class is kept in expectation.
+##  only for the like-for-like desklib-recipe run, the default keeps every row and weights the loss instead
+##
+##  train:  training rows
+##  seed:   which rows are dropped
+##  returns the balanced, shuffled rows
+def balance_train(train: pd.DataFrame, seed: int) -> pd.DataFrame:
+    n = int(train["label"].value_counts().min())
+    parts = [g.sample(n, random_state=seed) for _, g in train.groupby("label")]
+    return pd.concat(parts).sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
 ##  puts LoRA or DoRA adapters on RADAR, or leaves every weight trainable for a full fine-tune
 ##  the classifier head is always fully trainable, since untouched RADAR's head ranks our answers backwards
@@ -154,9 +169,11 @@ def param_groups(model, method: str, lr: float, weight_decay: float, layer_decay
 def pauroc(y, logits, max_fpr: float = 0.01) -> float:
     return float(roc_auc_score(y, logits, max_fpr=max_fpr))
 
-##  trains the model, scoring val after every epoch, and puts back the weights from the epoch with the best val partial AUROC
+##  trains the model, scoring val after every epoch, and puts back the weights from the epoch with the best val partial AUROC.
+##  epochs whose partial AUROC is within PAUROC_TIE of the best count as tied, and the tie goes to the higher plain val AUROC,
+##  so the choice isn't made by noise when partial AUROC barely moves (it sits near its 0.5 floor early in training)
 ##  loss: binary cross-entropy on radar_logit(), with AI answers weighted by (human count / AI count),
-##  so both classes count equally without throwing away any rows (desklib balanced by dropping AI rows instead)
+##  so both classes count equally without throwing away any rows (desklib balanced by dropping AI rows instead, see --balance)
 ##  lr schedule: linear warm-up over the first 10% of steps, then linear decay to zero
 ##
 ##  model:      the prepared model
@@ -181,7 +198,7 @@ def train_model(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, 
     print(f"train: {n_human} human, {n_ai} AI -> AI loss weight {pos_weight.item():.3f}")
 
     rng = np.random.default_rng(args.seed)
-    best_score, best_epoch, best_state, history = -1.0, -1, None, []
+    best_score, best_auroc, best_epoch, best_state, history = -1.0, -1.0, -1, None, []
     for epoch in range(1, args.epochs + 1):
         model.train()
         start, running = time.perf_counter(), 0.0
@@ -217,14 +234,16 @@ def train_model(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, 
         for key in ("train_loss", "val_loss", "val_auroc", "val_pauroc", "lr", "seconds"):
             log_metric(key.replace("_", "/", 1) if key.startswith(("train_", "val_")) else f"train/{key}", row[key], epoch)
 
-        if row["val_pauroc"] > best_score:
-            best_score, best_epoch = row["val_pauroc"], epoch
+        clearly_better = row["val_pauroc"] > best_score + PAUROC_TIE
+        tied_but_better = abs(row["val_pauroc"] - best_score) <= PAUROC_TIE and row["val_auroc"] > best_auroc
+        if clearly_better or tied_but_better:
+            best_score, best_auroc, best_epoch = row["val_pauroc"], row["val_auroc"], epoch
             best_state = {k: v.detach().cpu().clone() for k, v in model.named_parameters() if v.requires_grad}
 
     result = model.load_state_dict(best_state, strict=False)
     if result.unexpected_keys:
         raise RuntimeError(f"best-epoch restore matched no parameters for: {result.unexpected_keys[:3]}")
-    print(f"restored epoch {best_epoch} (val partial AUROC {best_score:.4f})")
+    print(f"restored epoch {best_epoch} (val partial AUROC {best_score:.4f}, val AUROC {best_auroc:.4f})")
     return best_epoch, best_score, history
 
 ##  one temperature T that makes sigmoid(logit / T) best match the val labels (lowest log loss).
@@ -296,7 +315,7 @@ def log_evaluation(prefix: str, out: dict) -> None:
         mlflow.log_metrics({f"test/{prefix}robust_{name}_flag_rate": row["flag_rate"], f"test/{prefix}robust_{name}_auroc": row["auroc"]})
 
 ##  the run, in order:
-##      1. pick the data (and the extended rows with --extended), load untouched RADAR
+##      1. pick the data (and the extended rows with --extended, balanced by dropping rows with --balance), load untouched RADAR
 ##      2. score val, test and the robustness sets with the UNTOUCHED model first -> baseline on exactly the same rows
 ##      3. add adapters (lora/dora) or unfreeze everything (full), train, keep the best epoch by val partial AUROC
 ##      4. score everything with the tuned model, calibrate on val, fix the threshold on val, score test once
@@ -308,6 +327,7 @@ def main() -> None:
     ap.add_argument("--method", choices=METHODS, default="lora")
     ap.add_argument("--train-on", default="", help="comma-separated datasets to train on (default: all)")
     ap.add_argument("--extended", action="store_true", help="add the paraphrased and human-edited train rows")
+    ap.add_argument("--balance", action="store_true", help="desklib's recipe: drop rows until AI and human counts match")
     ap.add_argument("--no-class-weights", dest="class_weights", action="store_false", help="plain loss, no class weighting")
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--batch-size", type=int, default=16)
@@ -337,6 +357,10 @@ def main() -> None:
     run_name = args.run_name or f"{tuned_name}-{mode}"
 
     train, val, test, robustness = select_data(train_on, args.extended)
+    if args.balance:
+        before = train["label"].value_counts().to_dict()
+        train = balance_train(train, args.seed)
+        print(f"balanced train: {before} -> {train['label'].value_counts().to_dict()}")
     if args.max_train_rows:
         train = train.sample(min(args.max_train_rows, len(train)), random_state=args.seed).reset_index(drop=True)
     for name, df in (("train", train), ("val", val), ("test", test)):
@@ -360,7 +384,8 @@ def main() -> None:
         mlflow.log_params({
             "base_model": f"{radar.MODEL_ID}@{radar.REVISION[:12]}",
             "data": "v0.1+spliced" + ("+paraphrased+human_edited(train)" if args.extended else ""),
-            "train_on": ",".join(train_on) or "all", "class_weights": args.class_weights, "target_fpr": args.target_fpr,
+            "train_on": ",".join(train_on) or "all", "balanced": args.balance, "class_weights": args.class_weights,
+            "target_fpr": args.target_fpr,
             "method": args.method, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
             "weight_decay": args.weight_decay, "layer_decay": args.layer_decay if args.method == "full" else None,
             "lora_r": args.r if args.method != "full" else None, "lora_alpha": args.alpha if args.method != "full" else None,

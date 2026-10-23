@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import numpy as np
 import torch
 
@@ -75,10 +76,13 @@ def default_device() -> torch.device:
 ##  raises RuntimeError if any weight in the file wasn't loaded, or the model doesn't have exactly 2 outputs.
 ##  a weight that fails to load is replaced with random numbers and only prints a warning,
 ##  so a library update could otherwise give a model with a random classifier head without anyone noticing
+##  DISABLE_SAFETENSORS_CONVERSION stops transformers downloading a second 1.4GB copy (model.safetensors) in the background:
+##  it lands under another revision that the pinned REVISION never loads, so it only fills the disk (and the cluster quota)
 ##
 ##  device: where to run it (cuda/mps/cpu), leave empty to use default_device()
 ##  returns (model, tokenizer, device)
 def load_radar(device: torch.device | str | None = None):
+    os.environ.setdefault("DISABLE_SAFETENSORS_CONVERSION", "1")
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     device = torch.device(device) if device else default_device()
