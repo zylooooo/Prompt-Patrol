@@ -10,6 +10,8 @@ import { SharedArray } from "k6/data";
 
 const PHASE = __ENV.PHASE || "smoke";
 const BASE_URL = __ENV.BASE_URL || "http://api:8000";
+// Event-loop probe target. On AWS run.sh sets /api/detector: CloudFront serves /health from S3.
+const HEALTH_PATH = __ENV.HEALTH_PATH || "/health";
 const SESSION_TOKEN = __ENV.SESSION_TOKEN || "";
 const RATE_PER_MIN = Number(__ENV.RATE_PER_MIN || 0);
 const SERVICE_TIME_S = Number(__ENV.SERVICE_TIME_S || 0);
@@ -318,7 +320,7 @@ export function pollBatches(data: { batchIds: string[] }) {
 }
 
 export function health() {
-  http.get(`${BASE_URL}/health`, { tags: { kind: "health" } });
+  http.get(`${BASE_URL}${HEALTH_PATH}`, api("health"));
 }
 
 // ---- summary --------------------------------------------------------------------
