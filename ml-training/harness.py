@@ -185,6 +185,28 @@ def evaluate_model(df: pd.DataFrame, model: str, min_words: int | None = MIN_WOR
     return out
 
 
+def validation_table(df: pd.DataFrame, min_words: int | None = MIN_WORDS, models=None,
+                     fpr: float = metrics.HEADLINE_FPR) -> pd.DataFrame:
+    """One row per run, from the VALIDATION rows only: for choosing a setting without touching test.
+
+    `val_auroc` is threshold-free. `val_tpr` / `val_fpr` are at the threshold fitted on these same
+    val rows at `fpr`, so val_tpr is in-sample (a ranking aid, not a result to report). Rank a
+    sweep by val_auroc and use val_tpr as a check, since the goal is TPR at a low FPR.
+    """
+    runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])
+    if models is not None:
+        runs = runs[runs["model"].isin(list(models))]
+    rows = []
+    for r in runs.itertuples(index=False):
+        d = _select(df, r.model, r.run_id)
+        val = _rows(d, "val", min_words)
+        op = metrics.operating_point_metrics(val["y_true"], val["y_prob"], _frozen_threshold(d, min_words, fpr))
+        rows.append({"model": r.model, "run_id": r.run_id, "seed": r.seed, "min_words": min_words or 0,
+                     "n_val": len(val), "val_auroc": metrics.ranking_metrics(val["y_true"], val["y_prob"])["auroc"],
+                     "val_tpr": op["recall"], "val_fpr": op["fpr"]})
+    return pd.DataFrame(rows)
+
+
 def compare_models(df: pd.DataFrame, models=None, min_words=(None, MIN_WORDS), **kwargs) -> pd.DataFrame:
     """One row per run and filter, for the comparison table. Each run has its own frozen threshold."""
     runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])

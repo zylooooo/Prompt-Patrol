@@ -232,6 +232,20 @@ def test_slice_summary_of_one_run_has_no_spread_and_checks_the_model(run_df):
         harness.slice_summary(run_df, "missing")
 
 
+def test_validation_table_uses_only_validation_rows(two_seed_df):
+    out = harness.validation_table(two_seed_df, min_words=10)
+    assert len(out) == 2 and set(out["seed"]) == {1, 2}
+    r1 = two_seed_df[(two_seed_df["run_id"] == "r1") & (two_seed_df["split"] == "val") & (two_seed_df["n_words"] >= 10)]
+    row = out[out["run_id"] == "r1"].iloc[0]
+    assert row["n_val"] == len(r1)
+    assert row["val_auroc"] == pytest.approx(metrics.roc_auc_score(r1["y_true"], r1["y_prob"]))
+    assert row["val_fpr"] <= 0.01 + 1e-9  # the threshold is fitted on these rows at 1% FPR
+    # test rows are never read: scrambling them changes nothing
+    scrambled = two_seed_df.copy()
+    scrambled.loc[scrambled["split"] == "test", "y_prob"] = 0.5
+    pd.testing.assert_frame_equal(harness.validation_table(scrambled, min_words=10), out)
+
+
 def test_write_results_writes_one_csv_per_table(two_seed_df, tmp_path):
     table = harness.compare_models(two_seed_df, bootstrap_n=20)
     summary = harness.aggregate_seeds(table)
