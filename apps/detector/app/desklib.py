@@ -29,6 +29,21 @@ ADAPTER_DIR = Path(os.getenv("DESKLIB_ADAPTER_DIR", "/app/model/desklib-lora-ada
 TEMPERATURE = float(os.getenv("DESKLIB_TEMPERATURE", "1.944"))
 MAX_TOKENS = 256
 MODEL_VERSION = "desklib-academic-lora-v1"
+# torch picks its own default from the CPU topology (often physical cores only), and the PP-533
+# load test saw the detector use half its 2 vCPU. One thread per CPU this process may run on is
+# safe because baseline._lock lets only one forward pass run at a time.
+# process_cpu_count ignores a cgroup CPU quota (docker --cpus), so set this to match one locally.
+TORCH_THREADS = int(os.getenv("DETECTOR_TORCH_THREADS") or os.process_cpu_count() or 1)
+
+
+def _cpu_model() -> str:
+    """The host CPU, logged at startup: Fargate doesn't promise a CPU generation, and PP-533 saw the
+    same code score ~35% faster after a redeploy. A load-test comparison is only fair on one model."""
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            return next((line.split(":", 1)[1].strip() for line in f if line.startswith("model name")), "unknown")
+    except OSError:
+        return "unknown"
 
 
 def _model_class():
@@ -68,11 +83,20 @@ def load():
     if not (ADAPTER_DIR / "adapter_config.json").exists():
         raise FileNotFoundError(f"LoRA adapter not found in {ADAPTER_DIR}")
 
+    import torch
     from huggingface_hub import snapshot_download
     from peft import PeftModel
     from safetensors.torch import load_file
     from transformers import AutoConfig, AutoTokenizer
 
+    torch.set_num_threads(TORCH_THREADS)
+    logger.info(
+        "torch threads: intra-op %d, inter-op %d, CPUs available %s, CPU model %s",
+        torch.get_num_threads(),
+        torch.get_num_interop_threads(),
+        os.process_cpu_count(),
+        _cpu_model(),
+    )
     logger.info("Loading %s with adapter %s", DESKLIB_REPO, ADAPTER_DIR)
     model_dir = snapshot_download(DESKLIB_REPO)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)

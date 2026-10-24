@@ -22,3 +22,14 @@ variable "loadtest_enabled" {
   type        = bool
   default     = false
 }
+
+variable "detector_torch_threads" {
+  description = "PP-533 A/B: torch intra-op threads for the detector (DETECTOR_TORCH_THREADS). null = the code's default, one per vCPU."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.detector_torch_threads == null || try(var.detector_torch_threads >= 1, false)
+    error_message = "detector_torch_threads must be at least 1, or null for the default."
+  }
+}

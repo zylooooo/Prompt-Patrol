@@ -84,6 +84,10 @@ Outside Docker the model downloads to your HuggingFace cache on first start.
 For desklib, also set `DETECTOR_BACKEND=desklib` and
 `DESKLIB_ADAPTER_DIR=../model/desklib-lora-adapter`.
 
+desklib runs torch with one thread per CPU the process may use, logged at
+startup as `torch threads: ...`. `DETECTOR_TORCH_THREADS` overrides it; set it
+when Docker caps CPU with `--cpus`, which that count does not see.
+
 ## Tests
 
 ```sh

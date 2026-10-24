@@ -154,6 +154,62 @@ same sitting.
 **Next.** Deploy the two-core detector change (and 4 GB), check the
 `torch threads` log line, then re-run calibrate + ramp-idle.
 
+### Entry 5 — 2026-10-24: plan for the two-core A/B (Phase 7), before any run
+
+**Question.** On the same Fargate CPU, how much does running torch on both
+vCPUs cut S and raise capacity, and does the detector fit in 4 GB? AC4 and the
+freeze are already answered; this sitting doesn't re-test them.
+
+**Why an A/B on new code, not old vs. new.** A deploy moves the detector to a
+new task, maybe on a new CPU (Entry 4: S moved 0.909 → 0.578 s with no code
+change). The current task can't report its CPU, so "calibrate now, deploy,
+calibrate again" would repeat Phase 6's confound. Both arms run the new code;
+only the thread count changes, and each arm logs its CPU model.
+
+**Changes made for this** (uncommitted until the user commits):
+- `desklib.py`: the startup line now reads `torch threads: intra-op N,
+  inter-op M, CPUs available K, CPU model <model name>` (from `/proc/cpuinfo`).
+- `infra`: detector memory 8192 → 4096 MiB; new `detector_torch_threads`
+  variable sets `DETECTOR_TORCH_THREADS` (null = one per vCPU). CD copies the
+  latest task-definition revision and swaps only the image, so a value set by
+  Terraform sticks across deploys. Services ignore task-definition changes in
+  Terraform, so a Terraform-only change needs
+  `aws ecs update-service --service detector --force-new-deployment` to roll.
+
+**Decided in advance.**
+
+| Measure | Keep the change if |
+|---|---|
+| S, 1 vs 2 threads, same CPU model | 2 threads cuts S by > 10% |
+| Detector CPU peak | goes from ~50% to near 100% (the mechanism) |
+| ramp-idle breaking point | reported per CPU model, as a range |
+| Memory at 4 GB | peak < ~85% in the overload step, no task restarts |
+
+**Prediction.** S drops 1.5–1.9× with 2 threads (1.9× locally on one
+physical core + its hyperthread; Fargate's 2 vCPU are likely the same shape,
+so the gain may be smaller). Memory peaks near 3 GB of 4.
+
+**Sitting order.**
+1. Before the push: `terraform apply -var loadtest_enabled=true
+   -var detector_torch_threads=1`, so the CD deploy of the new code copies
+   threads = 1.
+2. Push and deploy. **Arm A** (1 thread): read the log line (CPU model,
+   `intra-op 1`), calibrate first, then ramp-idle. Check A matches today
+   (CPU caps ~50%).
+3. `terraform apply ... -var detector_torch_threads=2` +
+   `update-service --force-new-deployment`. **Arm B**: read the log line. Same
+   CPU model → calibrate + ramp-idle. Different → force a new deployment until
+   it matches, or record the mismatch and call the comparison confounded.
+4. If time: ramp-batch on B.
+
+**After the A/B (Phase 8): the full suite again on the final setup.** Calibrate
+→ ramp-idle → ramp-batch → headline-idle/loaded ×3 → freeze, CPU model logged
+first. Headline at R = 40 (same load as the first AC4, so "how the system
+behaves at the old load") and at 60% of the new under-batch break ("how much
+more it takes"). The first AC4 and the final one are each a snapshot of one
+setup on one host; the A/B and Phase 6 say what caused each step, the final
+suite says where the system ends up.
+
 ## Runs
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
 - 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s

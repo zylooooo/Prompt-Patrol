@@ -429,16 +429,19 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 # No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib is
-# baked into Dockerfile.desklib. The size is a knob: lower it once the
-# service's MemoryUtilization shows real use. startPeriod 300 (the ECS
-# maximum) covers the model load, as in compose.
+# baked into Dockerfile.desklib. 4 GB, down from 8: the PP-533 load test
+# peaked at ~3 GB (one model copy), so this leaves no room for a second
+# uvicorn worker. var.detector_torch_threads pins the thread count for the
+# PP-533 1-vs-2-thread A/B; CD copies the latest revision, so it sticks
+# across deploys. startPeriod 300 (the ECS maximum) covers the model load,
+# as in compose.
 resource "aws_ecs_task_definition" "detector" {
   count                    = var.paused ? 0 : 1
   family                   = "prompt-patrol-detector"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = "2048"
-  memory                   = "8192"
+  memory                   = "4096"
   execution_role_arn       = aws_iam_role.execution.arn
 
   runtime_platform {
@@ -451,10 +454,12 @@ resource "aws_ecs_task_definition" "detector" {
     image        = "${aws_ecr_repository.service["detector"].repository_url}:${local.image_tag}"
     essential    = true
     portMappings = [{ containerPort = 8001, protocol = "tcp" }]
-    environment = [
+    environment = concat([
       { name = "DETECTOR_HOST", value = "0.0.0.0" },
       { name = "DETECTOR_PORT", value = "8001" },
-    ]
+      ], var.detector_torch_threads == null ? [] : [
+      { name = "DETECTOR_TORCH_THREADS", value = tostring(var.detector_torch_threads) },
+    ])
     healthCheck = {
       command     = ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
       interval    = 30
