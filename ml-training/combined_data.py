@@ -78,6 +78,48 @@ def load_combined(
     return frames
 
 
+EXTENDED = "v0.1-extended"
+
+
+def load_extended(corpus: str = EXTENDED, data_dir: Path = DATA_DIR) -> dict[str, pd.DataFrame]:
+    """
+    The extended corpus written by build_extended_corpus.py: v0.1 + spliced + paraphrased +
+    human-edited answers. Same shape as load_combined(): {"train": df, "val": df, "test": df}.
+
+    train is balanced 1:1 (all human answers plus an equal number of AI answers); val and test hold
+    every row. Every row has a `slice` (human, raw-ai, spliced-25/50/75, paraphrased-light/heavy,
+    edited-genuine/simulated) and `core`, which is True for the original combined set, so
+    `frames["test"][frames["test"]["core"]]` is the old 2,281-answer test set.
+    """
+    frames = {}
+    for part in PARTITIONS:
+        path = Path(data_dir) / f"{corpus}-{part}.parquet"
+        if not path.exists():
+            raise FileNotFoundError(f"{path} not found - run `dvc pull` in ml-training/ first")
+        frame = pd.read_parquet(path).reset_index(drop=True)
+        if (frame["partition"] != part).any():
+            raise ValueError(f"{path.name} holds rows from another partition")
+        frames[part] = frame
+
+    everything = pd.concat(frames.values(), ignore_index=True)
+    if not everything["answer_id"].is_unique:
+        raise ValueError("answer_id is not unique across train, val and test")
+    spans = everything.groupby("question_id")["partition"].nunique()
+    if len(leaked := spans[spans > 1]):
+        raise ValueError(f"{len(leaked)} question(s) span partitions: {list(leaked.index[:5])}")
+    return frames
+
+
+def load_corpus(name: str = "extended") -> dict[str, pd.DataFrame]:
+    """`extended` is the corpus we train and evaluate on from now on; `combined` is the earlier
+    v0.1 + spliced set, kept so old results can be reproduced."""
+    if name == "extended":
+        return load_extended()
+    if name == "combined":
+        return load_combined()
+    raise ValueError(f"unknown corpus {name!r}; choose 'extended' or 'combined'")
+
+
 def slice_flag_rates(frame: pd.DataFrame, probs, threshold: float) -> list[dict]:
     """
     Share of each slice flagged as AI at the frozen threshold. For `human`

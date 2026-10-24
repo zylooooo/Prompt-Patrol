@@ -219,6 +219,40 @@ from a parquet file instead of from a GPU, so a rerun is never needed to answer 
 question. Full fine-tunes skip `model/` deliberately — ~500 MB per run would make the
 shared repo unusable, and those runs are reproducible from the config and the git sha.
 
+### Per-answer scores for the evaluation harness
+
+Every fine-tuning and zero-shot run also writes `outputs/<run_name>_scores.parquet` and
+uploads it to MLflow under `predictions/`. The shared harness reads these files, so every
+run's metrics are computed the same way. [`scores.py`](scores.py) writes and checks them:
+
+```python
+from scores import save_scores, score_rows
+
+save_scores(run_name, args.seed, [
+    score_rows("radar-untouched", "val", val, base_val_logits, expit(base_val_logits)),
+    score_rows("radar-untouched", "test", test, base_test_logits, expit(base_test_logits)),
+    score_rows("radar-lora", "val", val, val_logits, expit(val_logits / T)),
+    score_rows("radar-lora", "test", test, test_logits, expit(test_logits / T)),
+])
+```
+
+One row per answer, val and test only, for the untouched model and the tuned one:
+
+| Column | Meaning |
+| --- | --- |
+| `run_id` | MLflow run id (taken from the active run) |
+| `model` | `<family>-untouched` or `<family>-<method>`, e.g. `desklib-lora`, `meld-untouched` |
+| `seed` | random seed of the run |
+| `split` | `val` or `test` |
+| `answer_id`, `question_id` | ids; `question_id` is what the bootstrap resamples by |
+| `y_true` | 1 = AI (spliced answers included), 0 = human |
+| `logit` | raw model output, before temperature scaling |
+| `y_prob` | the score the threshold is applied to: `sigmoid(logit)` untouched, the calibrated probability tuned |
+
+`save_scores` refuses train rows, a model missing val or test, repeated `answer_id`s, and an
+`-untouched` model whose `y_prob` is not `sigmoid(logit)`. `load_scores(path)` reads a file
+back with the same checks.
+
 ## Reading results back
 
 ```bash

@@ -1,14 +1,13 @@
 """
-Official Prompt Patrol metrics.
+Prompt Patrol metrics.
 
 Every detector, fine-tuned or zero-shot, is scored through evaluate() so the
-comparison table is apples-to-apples. Metric names here are the contract:
+comparison table is fair (one-to-one). Metric names here are the contract:
 they are what lands in MLflow and what the report reads back.
 
 Protocol note: the headline number is TPR at a FIXED low FPR, and the
 threshold that fixes it MUST be chosen on validation, then frozen and applied
-to test. Choosing it on test inflates the number and is not defensible in the
-report. evaluate() reports both so the gap is visible.
+to test.
 """
 
 from __future__ import annotations
@@ -212,35 +211,92 @@ def abstention_metrics(y_true, y_prob, threshold, abstain_low, abstain_high):
     y_true, y_prob = _as_arrays(y_true, y_prob)
     abstain = (y_prob >= abstain_low) & (y_prob <= abstain_high)
     covered = ~abstain
+    human, ai = y_true == 0, y_true == 1
 
     out = {
         "abstain_low": float(abstain_low),
         "abstain_high": float(abstain_high),
         "abstain_rate": float(abstain.mean()),
         "coverage": float(covered.mean()),
+        "n_answered": float(covered.sum()),
+        # how much of each class lands in the band: the workload the band creates
+        "human_abstain_rate": float(abstain[human].mean()) if human.any() else float("nan"),
+        "ai_abstain_rate": float(abstain[ai].mean()) if ai.any() else float("nan"),
     }
     if covered.sum() == 0:
-        return out | {"selective_accuracy": float("nan"), "selective_fpr": float("nan")}
+        return out | {"selective_accuracy": float("nan"), "selective_fpr": float("nan"),
+                      "selective_error": float("nan")}
 
     sub = operating_point_metrics(y_true[covered], y_prob[covered], threshold)
     return out | {
         "selective_accuracy": sub["accuracy"],
         "selective_fpr": sub["fpr"],
         "selective_recall": sub["recall"],
+        # the residual risk among answers the tool commits to
+        "selective_error": 1.0 - sub["accuracy"],
     }
+
+
+# half-widths of the "too close to call" band tried by default (same scale as y_prob)
+BAND_WIDTHS = (0.0, 0.0025, 0.005, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2)
+
+
+def risk_coverage_curve(y_true, y_prob, threshold, widths=BAND_WIDTHS):
+    """
+    Risk-coverage table for the symmetric band the app uses: an answer within
+    `half_width` of the threshold is "uncertain", anything else is flagged
+    (above) or cleared (below). One row per width, from abstention_metrics:
+    coverage (share the tool commits to), the residual risk on those answers
+    (selective_fpr, selective_recall, selective_error), and how much of each
+    class falls in the band.
+
+    To CHOOSE a band, compute this on the validation split with a threshold
+    fitted on validation, never on test.
+    """
+    rows = []
+    for width in widths:
+        row = abstention_metrics(y_true, y_prob, threshold, threshold - width, threshold + width)
+        rows.append({"half_width": float(width)} | row)
+    return rows
 
 
 # --------------------------------------------------------------------------
 # uncertainty
 # --------------------------------------------------------------------------
 
-def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42):
+def _cluster_members(groups, n_rows):
+    """Row indices of each group (e.g. each question), as a list of arrays."""
+    groups = np.asarray(groups).ravel()
+    if groups.shape[0] != n_rows:
+        raise ValueError(f"groups has {groups.shape[0]} entries but there are {n_rows} rows")
+    _, inverse = np.unique(groups, return_inverse=True)
+    inverse = inverse.ravel()
+    order = np.argsort(inverse, kind="stable")
+    return np.split(order, np.cumsum(np.bincount(inverse))[:-1])
+
+
+def _cluster_draw(members, rng):
+    """One cluster-bootstrap sample: groups drawn with replacement, each taken whole."""
+    pick = rng.integers(0, len(members), size=len(members))
+    return np.concatenate([members[k] for k in pick])
+
+
+def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42, groups=None):
     """
-    Stratified bootstrap CIs for several metrics in ONE resampling pass.
+    Bootstrap CIs for several metrics in ONE resampling pass.
 
     `fns` maps a metric name to fn(y_true, y_prob) -> float. Sharing the
     resamples across metrics is both cheaper and more honest: the intervals
     are then correlated the same way the point estimates are.
+
+    `groups` (one entry per row, normally the question id) switches to a
+    cluster bootstrap: whole questions are resampled, not single answers.
+    Answers to the same question are alike, so resampling answers treats them
+    as independent and makes the interval too narrow. Without `groups` the old
+    behaviour is kept (answers resampled within each class).
+
+    The intervals reflect which questions are in the split. They do not include
+    the noise in the threshold fitted on validation, or in training (seeds).
 
     With ~2.3k answers the test split is small enough that any headline
     number quoted without an interval reads as overclaiming.
@@ -248,13 +304,17 @@ def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42):
     y_true, y_prob = _as_arrays(y_true, y_prob)
     rng = np.random.default_rng(seed)
     pos, neg = np.where(y_true == 1)[0], np.where(y_true == 0)[0]
+    members = None if groups is None else _cluster_members(groups, len(y_true))
 
     samples = {name: [] for name in fns}
     for _ in range(n):
-        idx = np.concatenate([
-            rng.choice(pos, size=len(pos), replace=True),
-            rng.choice(neg, size=len(neg), replace=True),
-        ])
+        if members is not None:
+            idx = _cluster_draw(members, rng)
+        else:
+            idx = np.concatenate([
+                rng.choice(pos, size=len(pos), replace=True),
+                rng.choice(neg, size=len(neg), replace=True),
+            ])
         yt, yp = y_true[idx], y_prob[idx]
         for name, fn in fns.items():
             try:
@@ -264,6 +324,8 @@ def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42):
 
     out = {}
     for name, draws in samples.items():
+        # a question-level resample can miss a class entirely: that draw has no rate
+        draws = [d for d in draws if np.isfinite(d)]
         if not draws:
             out[name] = (float("nan"), float("nan"))
             continue
@@ -272,6 +334,55 @@ def bootstrap_cis(y_true, y_prob, fns, n=BOOTSTRAP_N, alpha=0.05, seed=42):
             float(np.percentile(draws, 100 * (1 - alpha / 2))),
         )
     return out
+
+
+def paired_bootstrap_diff(y_true, probs_a, probs_b, thresholds_a, thresholds_b, groups, fn,
+                          n=BOOTSTRAP_N, alpha=0.05, seed=42):
+    """
+    Is model A really different from model B? The difference fn(A) - fn(B) with a cluster
+    bootstrap CI, where A and B are scored on the SAME resampled questions in every draw.
+
+    Sharing the resample is what makes the comparison fair and sharper than comparing two
+    separate intervals: a hard question is hard for both models, and that cancels.
+
+    `probs_a` / `probs_b` are lists of score arrays, one per matched training seed (all over the
+    same rows as `y_true`), with one frozen threshold per array. `fn(y, p, threshold)` is the
+    metric. The metric is averaged over the seeds of each model before the difference is taken.
+    If the interval contains 0, the gap is not distinguishable from noise.
+    """
+    y_true = np.asarray(y_true).astype(int).ravel()
+    probs_a = [np.asarray(p, dtype=float).ravel() for p in probs_a]
+    probs_b = [np.asarray(p, dtype=float).ravel() for p in probs_b]
+    members = _cluster_members(groups, len(y_true))
+
+    def stat(idx):
+        a = np.mean([fn(y_true[idx], p[idx], t) for p, t in zip(probs_a, thresholds_a)])
+        b = np.mean([fn(y_true[idx], p[idx], t) for p, t in zip(probs_b, thresholds_b)])
+        return float(a - b)
+
+    point = stat(np.arange(len(y_true)))
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(n):
+        try:
+            diff = stat(_cluster_draw(members, rng))
+        except ValueError:
+            continue
+        if np.isfinite(diff):
+            draws.append(diff)
+
+    if not draws:
+        return {"diff": point, "ci_low": float("nan"), "ci_high": float("nan"),
+                "share_a_better": float("nan"), "n_draws": 0}
+    return {
+        "diff": point,
+        "ci_low": float(np.percentile(draws, 100 * alpha / 2)),
+        "ci_high": float(np.percentile(draws, 100 * (1 - alpha / 2))),
+        # share of resamples in which A beat B (for a metric where higher is better)
+        "share_a_better": float(np.mean(np.asarray(draws) > 0)),
+        "n_draws": len(draws),
+    }
+
 
 # --------------------------------------------------------------------------
 # the standard bundle
@@ -288,10 +399,14 @@ def evaluate(
     abstain_high=None,
     bootstrap_n=BOOTSTRAP_N,
     seed=42,
+    groups=None,
 ):
     """
     The full metric set for one split. `threshold` must come from validation.
     Returns a flat dict of MLflow-safe metric names.
+
+    Pass `groups` (the question id of each row) so the confidence intervals
+    resample whole questions instead of single answers; see bootstrap_cis.
     """
     y_true, y_prob = _as_arrays(y_true, y_prob)
 
@@ -338,7 +453,7 @@ def evaluate(
                     lambda t, p: oracle_tpr_at_fpr(t, p, headline_fpr),
                 "auroc": lambda t, p: float(roc_auc_score(t, p)),
             },
-            n=bootstrap_n, seed=seed,
+            n=bootstrap_n, seed=seed, groups=groups,
         )
         for name, (lo, hi) in cis.items():
             out[f"{name}_ci_low"], out[f"{name}_ci_high"] = lo, hi
