@@ -6,13 +6,13 @@ on:
   pull_request:
     branches: [main]
 
-# main and cd-pipeline can deploy: one group per commit there, so a run whose
+# main, cd-pipeline and load-tests can deploy: one group per commit there, so a run whose
 # deploy awaits approval never blocks the next push, and nothing cancels a
 # deploy mid-migration (the deploy job's own group serializes deploys). Other
 # branches share a group and cancel superseded runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline') && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/cd-pipeline' }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline' || github.ref == 'refs/heads/load-tests') && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/cd-pipeline' && github.ref != 'refs/heads/load-tests' }}
 
 # Read-only by default; jobs that need more say so.
 permissions:
@@ -175,7 +175,7 @@ jobs:
   e2e-frontend:
     runs-on: ubuntu-latest
     needs: [unit-tests-frontend, unit-tests]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/e2e-test')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/e2e-test' || github.ref == 'refs/heads/load-tests')
     defaults:
       run:
         working-directory: apps/web
@@ -350,10 +350,12 @@ jobs:
         unit-tests-frontend,
         unit-tests-detector,
       ]
-    # TEMPORARY: cd-pipeline publishes too, to test the approved deploy end to
-    # end. Remove it here, in `build-web`, in `deploy`, and from the production environment's
+    # TEMPORARY: cd-pipeline (to test the approved deploy end to end) and
+    # load-tests (to deploy without waiting on PR review) publish too. Remove
+    # them here, in `build-web`, `e2e-frontend`, `deploy`, the top-level
+    # concurrency block, and from the production environment's
     # deployment-branch rule before merging into main.
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline' || github.ref == 'refs/heads/load-tests'
     permissions:
       contents: read
       packages: write
@@ -364,7 +366,7 @@ jobs:
       detector-digest: ${{ steps.detector.outputs.digest }}
     env:
       # Pushes keep every build in GHCR, tagged with the commit SHA. PRs only build.
-      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline') }}
+      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline' || github.ref == 'refs/heads/load-tests') }}
       IMAGE_PREFIX: ghcr.io/zylooooo/prompt-patrol
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -448,7 +450,7 @@ jobs:
   # deploy role. Kept 30 days, the same as the re-run (rollback) window.
   build-web:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cd-pipeline' || github.ref == 'refs/heads/load-tests')
     defaults:
       run:
         working-directory: apps/web
@@ -487,7 +489,8 @@ jobs:
   # CloudFront.
   # Rollback = re-run the deploy job of an earlier run made after step 7. A
   # re-run across a migration fails by design (DB ahead of the image).
-  # The cd-pipeline branch may deploy until the user prunes it. Logic lives in
+  # cd-pipeline and load-tests may deploy until the user prunes them (load-tests
+  # must also pass e2e). Logic lives in
   # .github/scripts/deploy.sh (tested by lint-infra, which must pass, as must
   # lint-openapi, secret-scan and the data-pipeline tests). On main, e2e must pass.
   deploy:
@@ -511,6 +514,7 @@ jobs:
       && needs.secret-scan.result == 'success'
       && needs.unit-tests-data-pipeline.result == 'success'
       && (github.ref == 'refs/heads/main' && needs.e2e-frontend.result == 'success'
+          || github.ref == 'refs/heads/load-tests' && needs.e2e-frontend.result == 'success'
           || github.ref == 'refs/heads/cd-pipeline')
     environment: production
     # A newer pending deploy replaces an older one; a running one finishes.
