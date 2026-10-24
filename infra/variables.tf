@@ -16,3 +16,9 @@ variable "db_deletion_protection" {
   type        = bool
   default     = false
 }
+
+variable "loadtest_enabled" {
+  description = "PP-533 load-test window: EC2 load generator + WAF allow rule for its EIP. Pre-go-live only; turn off after each sitting."
+  type        = bool
+  default     = false
+}

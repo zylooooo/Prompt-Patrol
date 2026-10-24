@@ -70,3 +70,16 @@ output "migrate_command" {
 output "provision_admin_command" {
   value = "${local.run_api_task} --overrides '{\"containerOverrides\":[{\"name\":\"api\",\"command\":[\"python\",\"-m\",\"scripts.provision_user\",\"add\",\"promptpatrol@outlook.com\",\"root_admin\"]}]}'"
 }
+
+# PP-533 load generator; null while var.loadtest_enabled is off (or paused).
+output "loadtest_instance_id" {
+  value = one(aws_instance.loadtest[*].id)
+}
+
+output "loadtest_public_ip" {
+  value = one(aws_eip.loadtest[*].public_ip)
+}
+
+output "loadtest_bucket" {
+  value = one(aws_s3_bucket.loadtest_transfer[*].bucket)
+}

@@ -1,0 +1,21 @@
+#!/bin/bash
+# No secrets here: user_data is readable from the instance and the state.
+cat > /etc/loadtest.env <<'ENV'
+LOADTEST_BASE_URL=${base_url}
+LOADTEST_CLUSTER=${cluster}
+LOADTEST_QUEUE_URL=${queue_url}
+LOADTEST_ALB_SUFFIX=${alb_suffix}
+LOADTEST_WORKER_LOG_GROUP=${worker_log_group}
+LOADTEST_BUCKET=${bucket}
+AWS_REGION=ap-southeast-1
+AWS_DEFAULT_REGION=ap-southeast-1
+ENV
+chmod 0644 /etc/loadtest.env
+
+# The EIP is associated separately and may land after cloud-init starts, so
+# there may be no internet yet: retry for ~10 minutes.
+for i in $(seq 1 60); do
+  dnf install -y docker && systemctl enable --now docker && break
+  sleep 10
+done
+command -v docker >/dev/null || { echo "docker install failed" >&2; exit 1; }
