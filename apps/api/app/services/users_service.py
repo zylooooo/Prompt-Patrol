@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import enum
@@ -352,7 +353,7 @@ async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason:
     ).scalars()
     if batch_ids := [str(batch_id) for batch_id in cancelled]:
         try:
-            purge_batch_messages(*batch_ids)
+            await asyncio.to_thread(purge_batch_messages, *batch_ids)
         except Exception:
             logger.exception("Could not purge queued rows for deleted user %s.", deleted.id)
 
