@@ -40,6 +40,13 @@ def test_enqueue_row_sends_json_body():
     assert "MessageBody" in fake_sqs.send_message.call_args.kwargs
 
 
+def test_sqs_client_is_built_once_and_reused():
+    # PP-533: a fresh client per enqueued row cost ~20 s per 500-row batch.
+    from services.aws_clients import _sqs_client
+
+    assert _sqs_client() is _sqs_client()
+
+
 def _sqs_message(batch_id: str, receipt: str) -> dict:
     return {"Body": json.dumps({"batch_id": batch_id}), "ReceiptHandle": receipt}
 
