@@ -211,6 +211,27 @@ def test_compare_pair_flags_few_runs_and_checks_its_inputs(corpus):
         harness.compare_pair(df, "a", "a", metric="accuracy")
 
 
+def test_slice_summary_averages_over_every_run_of_a_model(two_seed_df):
+    out = harness.slice_summary(two_seed_df, "demo-lora", min_words=None).set_index("slice_value")
+    assert set(out.index) == {"human", "raw-ai"}
+    assert out.loc["human", "rate_type"] == "FPR" and out.loc["raw-ai", "rate_type"] == "TPR"
+    assert (out["n_runs"] == 2).all()
+    per_run = [harness.slice_table(two_seed_df, "demo-lora", min_words=None, run_id=r).set_index("slice_value")
+               for r in ("r1", "r2")]
+    tprs = [t.loc["raw-ai", "deployed_tpr"] for t in per_run]
+    assert out.loc["raw-ai", "rate_mean"] == pytest.approx(np.mean(tprs))
+    assert out.loc["raw-ai", "rate_std"] == pytest.approx(np.std(tprs, ddof=1))
+    assert out.loc["raw-ai", "rate_min"] == pytest.approx(min(tprs))
+    assert out.loc["raw-ai", "rate_max"] == pytest.approx(max(tprs))
+
+
+def test_slice_summary_of_one_run_has_no_spread_and_checks_the_model(run_df):
+    out = harness.slice_summary(run_df, "demo-untouched", min_words=None)
+    assert (out["n_runs"] == 1).all() and out["rate_std"].isna().all()
+    with pytest.raises(ValueError, match="no runs of"):
+        harness.slice_summary(run_df, "missing")
+
+
 def test_write_results_writes_one_csv_per_table(two_seed_df, tmp_path):
     table = harness.compare_models(two_seed_df, bootstrap_n=20)
     summary = harness.aggregate_seeds(table)

@@ -266,6 +266,34 @@ def slice_table(df: pd.DataFrame, model: str, by: str = "slice", min_words: int 
                                              threshold=_frozen_threshold(d, min_words)))
 
 
+def slice_summary(df: pd.DataFrame, model: str, by: str = "slice", min_words: int | None = MIN_WORDS) -> pd.DataFrame:
+    """Per-group rate averaged over ALL runs of a model, however many there are.
+
+    One row per group: `rate` is the TPR for groups of AI answers and the FPR for the human group
+    (`rate_type` says which), with the mean, std, min and max over the runs. Each run uses its own
+    frozen threshold. The std is NaN when there is only one run, and `unstable` is True if any run
+    saw a group too small to trust.
+    """
+    run_ids = list(df.loc[df["model"] == model, "run_id"].drop_duplicates())
+    if not run_ids:
+        raise ValueError(f"no runs of {model!r} in the scores")
+    tables = []
+    for run_id in run_ids:
+        t = slice_table(df, model, by=by, min_words=min_words, run_id=run_id)
+        is_ai = t["deployed_tpr"].notna()
+        tables.append(pd.DataFrame({
+            "slice_value": t["slice_value"], "n": t["n"], "unstable": t["unstable"],
+            "rate_type": np.where(is_ai, "TPR", "FPR"),
+            "rate": np.where(is_ai, t["deployed_tpr"], t["deployed_fpr"]),
+        }))
+    out = pd.concat(tables).groupby("slice_value").agg(
+        rate_type=("rate_type", "first"), n=("n", "first"), n_runs=("rate", "size"),
+        rate_mean=("rate", "mean"), rate_std=("rate", "std"),
+        rate_min=("rate", "min"), rate_max=("rate", "max"), unstable=("unstable", "any"),
+    ).reset_index()
+    return out[["slice_value", "rate_type", "n", "n_runs", "rate_mean", "rate_std", "rate_min", "rate_max", "unstable"]]
+
+
 def risk_coverage(df: pd.DataFrame, model: str, min_words: int | None = MIN_WORDS, split: str = "val",
                   widths=metrics.BAND_WIDTHS, run_id: str | None = None) -> pd.DataFrame:
     """Risk-coverage table for the uncertain band. Choose the band on val (the default), not on test."""
