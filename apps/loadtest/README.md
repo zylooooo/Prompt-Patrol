@@ -46,14 +46,20 @@ Run each phase for **desklib** (the production model).
 | 6 | after the `create_batch` fix: `freeze --variant async`, `headline-loaded --variant async --runs 3` | Before/after for the fix |
 | — | `render` | Rebuild `figures/` and `RESULTS.md` from `results/` (no stack needed) |
 
-How `run.sh` targets AWS (load generator, session cookie, WAF allow rule) is
-defined in the AWS spec and is not built yet.
+Every AWS phase runs on the load generator with `--target aws` (see the session
+runbook below). Before k6 starts, `run.sh` checks that the session is valid, the
+batches queue is empty, the detector has one running task and reports `ready`;
+any failure aborts the run (`status: aborted`, with the reason). After k6 it
+waits about 3 minutes and pulls CloudWatch data into `stats.csv` / `alb.csv`. A
+restarted detector task marks the run `aborted`; load-generator CPU above 70%
+marks it `invalid` (`load generator saturated`).
 
 Choosing R (Phase 4): the suggested default is about 50% of the under-batch
 breaking point from Phase 3b, plus a "realistic classroom" rate. Write the reasoning
 in the `rate-choice` block of `RESULTS.md` and in the log.
 
-Options: `--model baseline|desklib` (default desklib), `--rate PER_MIN`, `--runs N`,
+Options: `--target local|aws` (default local), `--model baseline|desklib` (default
+desklib; AWS serves desklib only), `--rate PER_MIN`, `--runs N`,
 `--variant sync|async` (default sync), `--service-time S` (otherwise taken from the
 newest ok calibrate run for that model).
 
@@ -78,8 +84,115 @@ other = the run broke.
   yours and survives every re-render.
 
 Locally, k6's session token comes from a seeded dev session in the throwaway
-database. It is never written to disk; `run.sh` checks the run directory for it
-and marks the run `invalid` if it ever shows up.
+database. On AWS it is root_admin's `__Host-session` cookie, pasted at
+a hidden prompt (`read -rs`). Either way it is never written to disk or put on a
+command line; `run.sh` checks the run directory for it and marks the run
+`invalid` if it ever shows up.
 
 **After each AWS session, commit** `results/`, `figures/`, `RESULTS.md` and
 `EXPERIMENT_LOG.md`.
+
+## Session runbook (AWS)
+
+One sitting, at most 4 h (the session's absolute cap), with no gap over 30 min
+between phases (the idle limit; past it, log in again and paste the new value).
+Laptop commands run in Git Bash from the repo root (terraform via `-chdir=infra`);
+`aws` needs `aws login --profile prompt-patrol` (see `infra/README.md`) and, for
+step 4, the Session Manager plugin for the AWS CLI.
+No CD deploys during a sitting: a task restart aborts the run in progress.
+
+1. **Laptop: harness check and tarball.** `pack` writes
+   `apps/loadtest/results/_pack/loadtest.tgz` (the harness without `results/`
+   and `figures/`, the trial data, and a `GIT_SHA` file that stands in for git
+   on the instance).
+
+   ```bash
+   bash apps/loadtest/run.sh smoke
+   bash apps/loadtest/run.sh pack
+   ```
+
+2. **Start the load generator and upload the tarball.** This also adds the WAF
+   allow rule for the instance's Elastic IP.
+
+   ```bash
+   terraform -chdir=infra apply -var loadtest_enabled=true
+   aws s3 cp apps/loadtest/results/_pack/loadtest.tgz "s3://$(terraform -chdir=infra output -raw loadtest_bucket)/loadtest.tgz"
+   ```
+
+3. **Browser:** log in to https://app.prompt-patrol.com as root_admin.
+   DevTools → Application → Cookies → copy the `__Host-session` value. Keep this
+   tab open and idle, and don't log out until the sitting ends: logging out
+   revokes the cookie k6 is using.
+
+4. **Shell on the instance, run the phases.** Everything runs as root (docker
+   and the harness live under `/root/pp`).
+
+   Run this one from PowerShell (in the repo root): Git Bash's terminal has TTY
+   problems with the Session Manager plugin.
+
+   ```powershell
+   aws ssm start-session --target "$(terraform -chdir=infra output -raw loadtest_instance_id)"
+   ```
+
+   Then, on the instance (first check cloud-init finished: `docker version`
+   works and `cat /etc/loadtest.env` shows the values):
+
+   ```bash
+   sudo -i
+   docker version && cat /etc/loadtest.env
+   set -a; . /etc/loadtest.env; set +a
+   mkdir -p /root/pp && cd /root/pp
+   aws s3 cp "s3://$LOADTEST_BUCKET/loadtest.tgz" . && tar -xzf loadtest.tgz
+   cd apps/loadtest
+   # Paste the cookie once for the sitting (hidden, not in history). Without it,
+   # every run.sh call prompts.
+   read -rs -p "Paste the __Host-session value: " SESSION_TOKEN; export SESSION_TOKEN; echo
+
+   bash run.sh calibrate --target aws
+   vi EXPERIMENT_LOG.md   # write the Phase 2 prediction under ## Notes
+   # Dry run of the whole path (WAF, cookie, presigned PUT, CloudWatch), kept apart.
+   QUICK=1 bash run.sh ramp-idle --target aws
+   mkdir -p results/_dryrun && mv results/*_desklib_ramp-idle results/_dryrun/
+   bash run.sh ramp-idle --target aws
+   bash run.sh ramp-batch --target aws
+   bash run.sh headline-idle --target aws --rate R --runs 3
+   bash run.sh headline-loaded --target aws --rate R --runs 3
+   bash run.sh freeze --target aws --rate R
+   ```
+
+   `pack` leaves out `results/`, so a fresh instance has no calibrate run: every
+   sitting either runs `calibrate` first or passes `--service-time S` (from the
+   committed calibrate run) to the ramp and headline-loaded phases.
+   One phase at a time: the queue-empty preflight refuses to start while an
+   earlier batch is still draining. `session invalid, log in again` means the
+   cookie expired: repeat step 3 and the `read` line.
+
+5. **Bring the results back.** On the instance:
+
+   ```bash
+   aws s3 cp --recursive results/ "s3://$LOADTEST_BUCKET/results/"
+   aws s3 cp EXPERIMENT_LOG.md "s3://$LOADTEST_BUCKET/EXPERIMENT_LOG.md"
+   ```
+
+   On the laptop (the instance's `EXPERIMENT_LOG.md` replaces the local one: it
+   started as a copy of it and holds this sitting's lines and prediction):
+
+   ```bash
+   b="$(terraform -chdir=infra output -raw loadtest_bucket)"
+   aws s3 cp --recursive "s3://$b/results/" apps/loadtest/results/
+   aws s3 cp "s3://$b/EXPERIMENT_LOG.md" apps/loadtest/EXPERIMENT_LOG.md
+   bash apps/loadtest/run.sh render
+   ```
+
+   Then commit as above.
+
+6. **Stop the load generator.** This removes the instance, its Elastic IP, the
+   WAF allow rule and the transfer bucket *with its contents*, so check step 5's
+   results are on the laptop first.
+
+   ```bash
+   terraform -chdir=infra apply -var loadtest_enabled=false
+   ```
+
+   Then **log out of root_admin in the browser**. This deletes the session row,
+   so the copied cookie stops working now instead of at the 4 h cap.

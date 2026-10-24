@@ -54,3 +54,5 @@ stack no longer support the real model or the memory guard.
 
 ## Runs
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
+- 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s
+- 2026-10-24T03:07Z `20261024-030558_stub_smoke` smoke stub sync **ok** p50=13.7 p95=52.9 err=0.0% 504=0 drain=5s
