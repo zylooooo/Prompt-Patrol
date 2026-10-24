@@ -30,7 +30,9 @@ LR=2e-4
 R=64
 ALPHA=128
 EPOCHS=5
-COMMON="--lr $LR --r $R --alpha $ALPHA --epochs $EPOCHS"
+# pinned to the old corpus (v0.1 + spliced) and every answer length, so this still reproduces the
+# reported final runs. New runs on the extended corpus use extended_desklib.sh.
+COMMON="--data combined --min-words 0 --lr $LR --r $R --alpha $ALPHA --epochs $EPOCHS"
 
 echo "################ in-distribution ################"
 python finetune_desklib_lora.py $COMMON --run-name desklib-lora-final-in-distribution \
