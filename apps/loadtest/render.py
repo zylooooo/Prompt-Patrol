@@ -295,7 +295,8 @@ def _fig(title, nrows=1, ncols=1, w=7.5, h=3.6, **kw):
 def _save(fig, out_dir, n, slug, runs, written):
     import matplotlib.pyplot as plt
     models = ", ".join(sorted({name(r.model) for r in runs}))
-    cpu = ((runs[0].meta.get("host") or {}) if runs else {}).get("cpu_model") or "unknown host"
+    host = (runs[0].meta.get("host") or {}) if runs else {}
+    cpu = ("AWS " + host["region"] if runs[0].aws and host.get("region") else host.get("cpu_model")) or "unknown host"
     foot = f"{models} · {cpu} · runs: {', '.join(r.id for r in runs)}"
     # Reserve a strip under the layout for the footnote, so it can't collide with the bottom legend.
     w, h = fig.get_size_inches()
