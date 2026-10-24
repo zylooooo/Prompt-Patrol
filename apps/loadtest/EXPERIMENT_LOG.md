@@ -126,6 +126,34 @@ headline-loaded with `--variant async` (Phase 6). (2) Confirm the detector's
 thread count, use both cores, re-run calibrate and ramp-idle. (3) Get the real
 demand figure.
 
+### Entry 4 — 2026-10-24: Phase 6, after the `create_batch` fix
+
+**The fix.** The root cause wasn't heavy work. `enqueue_row` built a new boto3
+client for every row (~15 ms of CPU each, plus a fresh TLS connection), and
+ran it all on the event loop. Now the clients are built once (854dae9) and the
+S3/SQS calls run in a thread (85c23bb). The detector code is unchanged.
+
+**Freeze is gone** (`20261024-110150_desklib_freeze`). The event-loop probe had
+p95 30 ms, max 256 ms (was 18.2 s / 20.2 s), and 0 504s. `POST /api/batches`
+itself still takes 3.5–4.3 s (was 19–21 s), but nothing else waits for it.
+
+**The detector got faster on its own.** The deploy restarted the detector task
+on the same code, and it now scores in S = 0.578 s (calibrate
+`20261024-122353`), down from 0.909 s. CPU still peaked at 50%, so it's still
+one core, just a faster one. Most likely the new task landed on a newer
+Fargate host CPU. So the loaded runs (p95 1.01–1.05 s, drain 401–421 s, 0
+errors, 3 runs) can't be compared with the 2.66 s before the fix: most of that
+gain is the hardware, not the fix. Those 3 runs and the calibrate are kept in
+`results/_phase6/` so they don't mix into the AC4 medians or C, which were
+measured on the slower detector.
+
+**What this means.** Fargate doesn't promise a CPU generation, so S can move
+by ~35% between deploys. Any before/after comparison needs a calibrate in the
+same sitting.
+
+**Next.** Deploy the two-core detector change (and 4 GB), check the
+`torch threads` log line, then re-run calibrate + ramp-idle.
+
 ## Runs
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
 - 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s
@@ -142,3 +170,9 @@ demand figure.
 - 2026-10-24T07:52Z `20261024-072737_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=2103.1 p95=2710.1 err=0.0% 504=0 drain=1020s
 - 2026-10-24T08:00Z `20261024-075221_desklib_freeze` freeze desklib sync **ok** p50=2187.9 p95=11115.4 err=0.6% 504=1 drain=-
 - 2026-10-24T08:47Z `20261024-080436_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=4022.1 p95=5023.0 err=0.0% 504=0 drain=1884s
+- 2026-10-24T10:55Z `20261024-105310_stub_smoke` smoke stub sync **ok** p50=14.2 p95=44.9 err=0.0% 504=0 drain=6s
+- 2026-10-24T11:10Z `20261024-110150_desklib_freeze` freeze desklib async **ok** p50=718.3 p95=1082.2 err=0.0% 504=0 drain=-
+- 2026-10-24T11:34Z `20261024-111010_desklib_headline-loaded` headline-loaded desklib async **ok** p50=594.8 p95=1030.9 err=0.0% 504=0 drain=412s
+- 2026-10-24T11:59Z `20261024-113436_desklib_headline-loaded` headline-loaded desklib async **ok** p50=583.5 p95=1011.9 err=0.0% 504=0 drain=401s
+- 2026-10-24T12:23Z `20261024-115902_desklib_headline-loaded` headline-loaded desklib async **ok** p50=584.4 p95=1046.1 err=0.0% 504=0 drain=421s
+- 2026-10-24T12:28Z `20261024-122353_desklib_calibrate` calibrate desklib async **ok** p50=578.2 p95=659.4 err=0.0% 504=0 drain=-
