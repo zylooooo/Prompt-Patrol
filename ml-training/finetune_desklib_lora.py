@@ -290,6 +290,10 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--owner", default="malcolm")
     ap.add_argument("--run-name", default="")
+    ap.add_argument("--model-name", default="desklib-lora",
+                    help="the `model` written on the scores rows. Give every setting its own name "
+                         "(e.g. desklib-lora-qkv-r64-e8) so the harness never groups different settings "
+                         "together; the seeds of one setting share a name")
     ap.add_argument("--run-role", default="train", choices=["train", "sweep"],
                     help="sweep runs are excluded from headline tables; pick the config by VAL, never test")
     args = ap.parse_args()
@@ -385,8 +389,8 @@ def main() -> None:
         if base_val_logits is not None:
             parts += [score_rows("desklib-untouched", "val", val, base_val_logits, expit(base_val_logits)),
                       score_rows("desklib-untouched", "test", test, base_test_logits, expit(base_test_logits))]
-        parts += [score_rows("desklib-lora", "val", val, val_logits, val_p),
-                  score_rows("desklib-lora", "test", test, test_logits, test_p)]
+        parts += [score_rows(args.model_name, "val", val, val_logits, val_p),
+                  score_rows(args.model_name, "test", test, test_logits, test_p)]
         scores_path = save_scores(run_name, args.seed, parts)
         if train_on:
             print("note: 'test' here is every row of the held-out datasets, including their train/val partitions, "
