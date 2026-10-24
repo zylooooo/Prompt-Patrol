@@ -201,6 +201,10 @@ class Run:
         self.model = "stub" if m.get("detector") == "stub" else m.get("model", "?")
         self.status = m.get("status", "?")
 
+    @property
+    def aws(self):
+        return self.meta.get("target") == "aws"  # older runs have no target: local
+
     @functools.cached_property
     def rows(self):
         return load_requests(self.dir / "requests.csv.gz")
@@ -212,7 +216,8 @@ class Run:
     @functools.cached_property
     def stats(self):
         return [{"t": to_ms(r["epoch_s"]), "name": r["name"].replace("prompt-patrol-loadtest-", "").rsplit("-", 1)[0],
-                 "cpu": float(r["cpu_pct"] or 0), "mem": mem_gib(r["mem_usage"])}
+                 "cpu": float(r["cpu_pct"]) if r.get("cpu_pct") else None, "mem": mem_gib(r["mem_usage"]),
+                 "mem_pct": float(r["mem_pct"].rstrip("%")) if r.get("mem_pct") else None}
                 for r in read_csv(self.dir / "stats.csv")]
 
     def t0(self):
@@ -524,6 +529,7 @@ def fig_timeline(loaded, out_dir, written):
 
 def fig_resources(loaded, out_dir, written):
     containers = ["detector", "worker", "api"]
+    aws = all(r.aws for r in loaded)
     fig, axes = _fig("Phase 4 · Container CPU and memory while a 500-row batch drains",
                      2, len(loaded), h=5.0, sharex="col")
     for col, run in enumerate(loaded):
@@ -534,17 +540,24 @@ def fig_resources(loaded, out_dir, written):
                 continue
             t = [(x["t"] - t_ref) / 1000 for x in s]
             axes[0][col].plot(t, [x["cpu"] for x in s], color=SERIES[slot], lw=1.5, label=ctr)
-            axes[1][col].plot(t, [x["mem"] for x in s], color=SERIES[slot], lw=1.5, label=ctr)
+            axes[1][col].plot(t, [x["mem_pct" if aws else "mem"] for x in s], color=SERIES[slot], lw=1.5, label=ctr)
+        lg = [x for x in stats if x["name"] == "loadgen"] if aws else []
+        if lg:  # the generator is not under test: above ~70% CPU it may be the bottleneck
+            axes[0][col].plot([(x["t"] - t_ref) / 1000 for x in lg], [x["cpu"] for x in lg],
+                              color=MUTED, lw=1.5, label="load generator")
+            axes[0][col].axhline(70, color=MUTED, lw=1, ls=(0, (4, 3)))
         for row in (0, 1):
             _batch_markers(axes[row][col], run, label=row == 0)
             axes[row][col].set_ylim(bottom=0)
         axes[0][col].set_title(name(run.model))
-        axes[0][col].set_ylabel("CPU (% of one core)" if col == 0 else "")
-        axes[1][col].set_ylabel("Memory (GiB)" if col == 0 else "")
+        axes[0][col].set_ylabel(("CPU (% of task reservation)" if aws else "CPU (% of one core)") if col == 0 else "")
+        axes[1][col].set_ylabel(("Memory (% of task)" if aws else "Memory (GiB)") if col == 0 else "")
         axes[1][col].set_xlabel("Time since batch submission (s)")
     h, lab = axes[0][0].get_legend_handles_labels()
     _legend(axes[-1][0], handles=h, labels=lab, ncol=3,
-               title="CPU 100% = one core; the detector is limited to 2 cores (200%)", title_fontsize=7.5)
+               title=("CPU 100% = the task's full reservation; dashed line: 70% load-generator CPU"
+                      if aws else "CPU 100% = one core; the detector is limited to 2 cores (200%)"),
+               title_fontsize=7.5)
     _save(fig, out_dir, 6, "resources", loaded, written)
 
 
@@ -657,8 +670,59 @@ LIMITATIONS = """- **Local ≠ AWS.** The stack runs on one laptop under Docker 
   AWS than measured here."""
 
 
+LIMITATIONS_AWS = """- **1-minute metric resolution.** CloudWatch / Container Insights points are one per minute, so
+  short spikes in CPU and memory are averaged away.
+- **One task per service, no autoscaling.** api, worker and detector each run a single Fargate
+  task; the results describe that fixed size, not what scaling out would give.
+- **No last-mile client latency.** The load generator sits in the same Region as the stack, so
+  numbers exclude the network between an instructor's browser and CloudFront.
+- **Short-answer workload.** Answers come from the project's short-answer corpus. Longer
+  answers cost the detector more per check, so capacity for long answers will be lower.
+- **Campus-shared IP vs. WAF rate limit.** `rate-writes` is per IP. Instructors on the campus
+  network probably share one public IP, so together they get ~1 write/s (checks, batch submits,
+  user admin) before WAF returns 403. At current usage this is likely fine, but it is a real
+  production limit. The load generator is exempted from the rule, so these runs do not show it."""
+
+
+def method_aws(runs):
+    """Method section for runs against the deployed AWS stack."""
+    metas = [r.meta for r in runs]
+    distinct = lambda f: ", ".join(sorted({str(f(m)) for m in metas if f(m)})) or "—"
+    size = {}  # service -> "api 0.5 vCPU / 1024 MiB", from whichever runs recorded limits
+    for m in metas:
+        lim = m.get("limits") or {}
+        for svc in ("api", "worker", "detector"):
+            c, mem = lim.get(f"{svc}_cpus"), lim.get(f"{svc}_mem_mib")
+            if c is not None and mem is not None:
+                size[svc] = f"{svc} {c} vCPU / {mem} MiB"
+    sizes = "; ".join(size[k] for k in ("api", "worker", "detector") if k in size) or "—"
+    sha = lambda m: m.get("git_sha") and m["git_sha"][:7] + (" (dirty)" if m.get("git_dirty") else "")
+    host = lambda k: lambda m: (m.get("host") or {}).get(k)
+    return f"""## Method
+
+- **Stack.** The deployed AWS stack: CloudFront, then WAF (the load generator's Elastic IP is
+  exempted from the rate rules), then a VPC origin to the internal ALB, then one Fargate task per
+  service (api, worker, detector), with RDS Postgres and SQS/S3 behind them. Requests authenticate
+  with a real session cookie, so the measured path is the production path minus Auth0.
+- **Task sizes** (from `meta.json`): {sizes}.
+- **Load generator:** an EC2 {distinct(host("instance_type"))} instance in {distinct(host("region"))}
+  (same Region as the stack), running k6 {distinct(lambda m: m.get("k6_version"))} with an open
+  workload model (arrival-rate executors), so a slow server cannot slow the arrivals down.
+- **Code under test:** git {distinct(sha)}.
+- **Workload.** `POST /api/checks` with a random short answer (strictness `standard`). Each run
+  starts with 20 serial warm-up checks that are excluded from every number. Latency figures use
+  successful checks only (201 with a verdict) so a fast error never looks like good latency;
+  failures count in the error rate. Phases: 1 calibrate (100 serial checks, S = median),
+  3 stepped ramp at 0.1–1.25 × 60/S req/min (2 min plateaus, idle and under 500-row batches),
+  4 headline constant rate (idle 10 min; loaded until one 500-row batch drains), 5–6 batch
+  submission freeze before/after the `create_batch` fix.
+"""
+
+
 def method(runs):
     """Method section from the charted runs only; "—" until there are some."""
+    if runs and all(r.aws for r in runs):
+        return method_aws(runs)
     metas = [r.meta for r in runs] or [{}]
     distinct = lambda f: ", ".join(sorted({str(f(m)) for m in metas if f(m) is not None})) or "—"
     host = lambda m: m.get("host") and "{}, {} logical CPUs, {}".format(
@@ -773,7 +837,8 @@ def render_md(charted, excluded, not_charted, data, written):
             hand("discussion", "what the numbers say: onset vs. prediction, batch impact, freeze, surprises."),
             "", "## AC4 verdict", "", ac4_table(groups), "",
             hand("verdict", "PASS/FAIL per model and the fix the team would choose if it fails."),
-            "", "## Limitations", "", LIMITATIONS, "", "## Runs not charted", ""]
+            "", "## Limitations", "",
+            LIMITATIONS_AWS if charted and all(r.aws for r in charted) else LIMITATIONS, "", "## Runs not charted", ""]
     out += [f"- `{r.id}`: {why}" for r, why in not_charted] or ["_None._"]
     out += ["", "## Excluded runs", ""]
     out += [table(["Run", "Phase", "Status", "Reason"],

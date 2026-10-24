@@ -118,5 +118,33 @@ class Main(unittest.TestCase):
             self.assertNotIn("_scratch", text)
 
 
+class MainAws(unittest.TestCase):
+    def render_aws(self, limits):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        run = Path(tmp.name, "results", "20261024-120000_desklib_headline-idle")
+        run.mkdir(parents=True)
+        (run / "meta.json").write_text(json.dumps({
+            "run_id": run.name, "phase": "headline-idle", "model": "desklib", "detector": "real",
+            "status": "ok", "quick": False, "target": "aws", "limits": limits,
+            "host": {"os": "Linux", "instance_type": "t3.small", "region": "ap-southeast-1"},
+        }))
+        main(results_dir=run.parent, out_dir=Path(tmp.name))
+        return Path(tmp.name, "RESULTS.md").read_text(encoding="utf-8")
+
+    def test_method_aws(self):
+        text = self.render_aws({"api_cpus": 0.5, "api_mem_mib": 1024, "detector_cpus": 2, "detector_mem_mib": 8192})
+        self.assertIn("CloudFront", text)
+        self.assertIn("t3.small", text)
+        self.assertIn("api 0.5 vCPU / 1024 MiB", text)
+        self.assertNotIn("Docker Compose", text)
+
+    def test_limitations_aws(self):
+        text = self.render_aws(None)  # failed limits collection must not crash
+        self.assertIn("last-mile", text)
+        self.assertIn("rate-writes", text)
+        self.assertNotIn("tmpfs", text)
+
+
 if __name__ == "__main__":
     unittest.main()
