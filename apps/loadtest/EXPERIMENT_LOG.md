@@ -173,8 +173,9 @@ only the thread count changes, and each arm logs its CPU model.
   variable sets `DETECTOR_TORCH_THREADS` (null = one per vCPU). CD copies the
   latest task-definition revision and swaps only the image, so a value set by
   Terraform sticks across deploys. Services ignore task-definition changes in
-  Terraform, so a Terraform-only change needs
-  `aws ecs update-service --service detector --force-new-deployment` to roll.
+  Terraform, so a Terraform-only change needs `aws ecs update-service
+  --task-definition prompt-patrol-detector --force-new-deployment` (the
+  family name picks the latest revision) to roll.
 
 **Decided in advance.**
 
@@ -196,11 +197,19 @@ so the gain may be smaller). Memory peaks near 3 GB of 4.
 2. Push and deploy. **Arm A** (1 thread): read the log line (CPU model,
    `intra-op 1`), calibrate first, then ramp-idle. Check A matches today
    (CPU caps ~50%).
-3. `terraform apply ... -var detector_torch_threads=2` +
-   `update-service --force-new-deployment`. **Arm B**: read the log line. Same
-   CPU model → calibrate + ramp-idle. Different → force a new deployment until
-   it matches, or record the mismatch and call the comparison confounded.
+3. `terraform apply -var loadtest_enabled=true` (variable left unset = one
+   thread per vCPU, the setup that would ship) + `aws ecs update-service
+   --cluster prompt-patrol --service detector --task-definition
+   prompt-patrol-detector --force-new-deployment`. The `--task-definition`
+   matters: the service still points at CD's threads = 1 revision, and
+   `--force-new-deployment` alone would restart that one. **Arm B**: read the
+   log line (`intra-op 2`). Same CPU model → calibrate + ramp-idle. Different →
+   force a new deployment until it matches, or record the mismatch and call
+   the comparison confounded.
 4. If time: ramp-batch on B.
+
+Arm runs go in `results/_phase7/threads1/` and `results/_phase7/threads2/`
+(`--variant` only takes sync|async, and render.py must not pool them).
 
 **After the A/B (Phase 8): the full suite again on the final setup.** Calibrate
 → ramp-idle → ramp-batch → headline-idle/loaded ×3 → freeze, CPU model logged
