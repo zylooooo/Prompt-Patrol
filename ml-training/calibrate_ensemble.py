@@ -1,4 +1,5 @@
-## calibrates the desklib + RADAR combination for the detector: the LIVE desklib (apps/detector) plus a RADAR LoRA adapter.
+## calibrates the desklib + RADAR combination for the detector: the LIVE desklib (apps/detector) plus a fine-tuned RADAR,
+## either a LoRA adapter (what the detector ships) or a full fine-tune saved with finetune_radar.py --save-model.
 ## picks the RADAR seed and fits the 1% FPR threshold on validation only, then compares with live desklib on test once,
 ## and writes the files the detector's ensemble backend ships with
 
@@ -76,17 +77,36 @@ def desklib_logits(texts: np.ndarray, device: torch.device, batch_size: int = 32
     model.to("cpu")
     return out
 
-##  scores answers with RADAR + one LoRA adapter merged in, the same way the detector will: clean_text, then radar.py
+##  a RADAR folder from the cluster is either a LoRA adapter (adapter_config.json) or a full fine-tune (config.json)
 ##
-##  adapter:    the (fp16) adapter folder
+##  folder: the RADAR folder
+##  returns True for a full fine-tune
+def is_full_model(folder: Path) -> bool:
+    if (folder / "adapter_config.json").exists():
+        return False
+    if (folder / "config.json").exists() and (folder / "model.safetensors").exists():
+        return True
+    raise SystemExit(f"{folder} is neither a LoRA adapter nor a saved full model")
+
+##  scores answers with a fine-tuned RADAR, the same way the detector will: clean_text, then radar.py
+##  a full fine-tune is loaded from its folder (saved in half precision, run in full precision, as on the detector's CPU);
+##  a LoRA adapter is merged into RADAR at the pinned revision
+##
+##  folder:     the full model folder, or the (fp16) adapter folder
 ##  texts:      the answers
 ##  device:     where to run it
 ##  returns raw logits (AI minus human), one per answer, in order
-def radar_logits(adapter: Path, texts: np.ndarray, device: torch.device) -> np.ndarray:
-    from peft import PeftModel
+def radar_logits(folder: Path, texts: np.ndarray, device: torch.device) -> np.ndarray:
+    if is_full_model(folder):
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    model, tokenizer, _ = radar.load_radar("cpu")
-    model = PeftModel.from_pretrained(model, str(adapter)).merge_and_unload().to(device).eval()
+        tokenizer = AutoTokenizer.from_pretrained(folder)
+        model = AutoModelForSequenceClassification.from_pretrained(folder).float().to(device).eval()
+    else:
+        from peft import PeftModel
+
+        model, tokenizer, _ = radar.load_radar("cpu")
+        model = PeftModel.from_pretrained(model, str(folder)).merge_and_unload().to(device).eval()
     cleaned = [clean_text(str(t)) for t in texts]
     logits = radar.predict_logits(model, tokenizer, cleaned, device)
     del model
@@ -117,18 +137,22 @@ def write_scores(name: str, frames: dict, logit: dict, run_id: str) -> Path:
     return path
 
 ##  the run, in order:
-##      1. make fp16 copies of the RADAR adapters, score extended val + test with live desklib and with each RADAR seed
+##      1. score extended val + test with live desklib and with each RADAR seed (full models as saved in fp16; adapters
+##         get an fp16 copy first)
 ##      2. VALIDATION ONLY: refit each RADAR seed's temperature, combine with desklib, keep the seed whose combination
 ##         catches the most AI at exactly 1% FPR, and fit the combination's 1% FPR threshold
 ##      3. TEST, once: live desklib (at today's 0.9608, and at a threshold refit on the same val) vs the combination,
 ##         per-slice catch rates, and the harness's paired test
-##      4. --release: copy the chosen fp16 adapter to apps/detector/model/radar-lora-adapter/ and write ensemble.json there.
-##         without --release nothing outside ml-training/outputs/ is touched
+##      4. --release: write ensemble.json to apps/detector/model/ with the chosen RADAR. a LoRA adapter's fp16 copy goes to
+##         radar-lora-adapter/, which the detector loads. a full model goes to radar-full-model/, which the detector only
+##         loads with outputs/full-radar-detector.patch applied (its ~680MB model.safetensors is too big for git: `dvc add`
+##         it, `dvc push` it to DagsHub, and commit the .dvc pointer). without --release nothing outside
+##         ml-training/outputs/ is touched
 ##  every step uses answers of at least MIN_WORDS words for fitting and metrics (the app doesn't score shorter ones)
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Calibrate live desklib + RADAR LoRA for the detector.")
-    ap.add_argument("--adapters", default="outputs/radar-lora-extended-s1_adapter,outputs/radar-lora-extended-s2_adapter,"
-                                              "outputs/radar-lora-extended-s3_adapter", help="comma-separated RADAR adapter folders")
+    ap = argparse.ArgumentParser(description="Calibrate live desklib + a fine-tuned RADAR for the detector.")
+    ap.add_argument("--radar", default=",".join(f"outputs/radar-lora-extended-s{k}_adapter" for k in (1, 2, 3)),
+                    help="comma-separated RADAR folders, one per seed: LoRA adapters (default) or full models (--save-model)")
     ap.add_argument("--device", default=None, help="cuda, mps or cpu (default: best available)")
     ap.add_argument("--release", action="store_true", help="write the chosen adapter and ensemble.json into apps/detector/model/")
     args = ap.parse_args()
@@ -145,9 +169,10 @@ def main() -> None:
     t_d = live_desklib.TEMPERATURE
 
     seeds = []
-    for src in [Path(a) for a in args.adapters.split(",") if a]:
-        fp16 = fp16_copy(src, OUT_DIRECTORY / f"{src.name}_fp16")
-        print(f"\nScoring with RADAR + {src.name} (fp16 copy, {(fp16 / 'adapter_model.safetensors').stat().st_size / 1e6:.0f} MB)...")
+    for src in [Path(a) for a in args.radar.split(",") if a]:
+        fp16 = src if is_full_model(src) else fp16_copy(src, OUT_DIRECTORY / f"{src.name}_fp16")
+        weights = fp16 / ("model.safetensors" if fp16 is src else "adapter_model.safetensors")
+        print(f"\nScoring with RADAR {src.name} (fp16, {weights.stat().st_size / 1e6:.0f} MB)...")
         zr = {s: radar_logits(fp16, data[s]["answer"].to_numpy(), device) for s in data}
         t_r = fit_temperature(zr["val"][used["val"]], y["val"][used["val"]])
         z = {s: combine(zd[s], zr[s], t_d, t_r) for s in data}
@@ -229,12 +254,18 @@ def main() -> None:
           f"DETECTOR_THRESHOLD={settings['threshold']}  DETECTOR_CALIBRATION_VERSION={settings['calibration_version']}")
 
     if args.release:
-        target = DETECTOR_MODEL / "radar-lora-adapter"
+        full = is_full_model(best["src"])
+        target = DETECTOR_MODEL / ("radar-full-model" if full else "radar-lora-adapter")
         target.mkdir(parents=True, exist_ok=True)
-        for f in ("adapter_config.json", "adapter_model.safetensors"):
+        files = ("config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors") if full else \
+            ("adapter_config.json", "adapter_model.safetensors")
+        for f in files:
             shutil.copy(best["fp16"] / f, target / f)
         (DETECTOR_MODEL / "ensemble.json").write_text(json.dumps(settings, indent=2))
         print(f"RELEASED: {target}/ and {DETECTOR_MODEL / 'ensemble.json'}")
+        if full:
+            print("next: git apply outputs/full-radar-detector.patch, then dvc add "
+                  "apps/detector/model/radar-full-model/model.safetensors && dvc push, and commit the .dvc pointer")
 
 
 if __name__ == "__main__":
