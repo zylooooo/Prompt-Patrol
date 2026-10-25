@@ -24,9 +24,9 @@ variable "loadtest_enabled" {
 }
 
 variable "detector_torch_threads" {
-  description = "PP-533 A/B: torch intra-op threads for the detector (DETECTOR_TORCH_THREADS). null = the code's default, one per vCPU."
+  description = "Torch intra-op threads for the detector (DETECTOR_TORCH_THREADS). PP-533: a second thread on 2 vCPU added nothing (Phase 7). null = the code's default, one per CPU the task sees."
   type        = number
-  default     = null
+  default     = 1
 
   validation {
     condition     = var.detector_torch_threads == null || try(var.detector_torch_threads >= 1, false)

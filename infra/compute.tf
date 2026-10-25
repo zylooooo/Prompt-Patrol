@@ -431,9 +431,10 @@ resource "aws_ecs_task_definition" "worker" {
 # No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib is
 # baked into Dockerfile.desklib. 4 GB, down from 8: the PP-533 load test
 # peaked at ~3 GB (one model copy), so this leaves no room for a second
-# uvicorn worker. var.detector_torch_threads pins the thread count for the
-# PP-533 1-vs-2-thread A/B; CD copies the latest revision, so it sticks
-# across deploys. startPeriod 300 (the ECS maximum) covers the model load,
+# uvicorn worker. 2 vCPU stays: PP-533 Phase 9 measured 1 vCPU 58% slower on
+# the same CPU. var.detector_torch_threads pins torch to one thread, as a second
+# added nothing (Phase 7); CD copies the latest revision, so it sticks across
+# deploys. startPeriod 300 (the ECS maximum) covers the model load,
 # as in compose.
 resource "aws_ecs_task_definition" "detector" {
   count                    = var.paused ? 0 : 1
