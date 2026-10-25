@@ -167,6 +167,7 @@ calibrate again" would repeat Phase 6's confound. Both arms run the new code;
 only the thread count changes, and each arm logs its CPU model.
 
 **Changes made for this** (uncommitted until the user commits):
+
 - `desklib.py`: the startup line now reads `torch threads: intra-op N,
   inter-op M, CPUs available K, CPU model <model name>` (from `/proc/cpuinfo`).
 - `infra`: detector memory 8192 → 4096 MiB; new `detector_torch_threads`
@@ -179,18 +180,19 @@ only the thread count changes, and each arm logs its CPU model.
 
 **Decided in advance.**
 
-| Measure | Keep the change if |
-|---|---|
-| S, 1 vs 2 threads, same CPU model | 2 threads cuts S by > 10% |
-| Detector CPU peak | goes from ~50% to near 100% (the mechanism) |
-| ramp-idle breaking point | reported per CPU model, as a range |
-| Memory at 4 GB | peak < ~85% in the overload step, no task restarts |
+| Measure                           | Keep the change if                                 |
+| --------------------------------- | -------------------------------------------------- |
+| S, 1 vs 2 threads, same CPU model | 2 threads cuts S by > 10%                          |
+| Detector CPU peak                 | goes from ~50% to near 100% (the mechanism)        |
+| ramp-idle breaking point          | reported per CPU model, as a range                 |
+| Memory at 4 GB                    | peak < ~85% in the overload step, no task restarts |
 
 **Prediction.** S drops 1.5–1.9× with 2 threads (1.9× locally on one
 physical core + its hyperthread; Fargate's 2 vCPU are likely the same shape,
 so the gain may be smaller). Memory peaks near 3 GB of 4.
 
 **Sitting order.**
+
 1. Before the push: `terraform apply -var loadtest_enabled=true
    -var detector_torch_threads=1`, so the CD deploy of the new code copies
    threads = 1.
@@ -234,6 +236,7 @@ Memory peaked at 70% of 4 GB. Headline at 40: idle p95 699/665 ms, loaded 1,150 
 `POST /api/batches` 3.1 s, probe p95 20 ms, 0 504s. Report: `report-phase7-8/RESULTS.md`.
 
 **Process notes.**
+
 - ramp-batch left ~1,500 rows queued, so the first Phase 8 queue aborted on the preflight.
   The 6 ramp-batch batches (already measured) were cancelled through `POST /api/batches/{id}/cancel`.
 - The cookie's 4 h cap (18:12 UTC) limited the sitting to one or two runs per cell. Not
@@ -252,6 +255,7 @@ the same CPU model; cut to 1 vCPU if S stays within 10% of 0.59 s. (3) Check the
 hypothesis.
 
 ## Runs
+
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
 - 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s
 - 2026-10-24T03:07Z `20261024-030558_stub_smoke` smoke stub sync **ok** p50=13.7 p95=52.9 err=0.0% 504=0 drain=5s

@@ -66,7 +66,7 @@ def _model_class():
         def tie_weights(self, *args, **kwargs):
             pass
 
-        def forward(self, input_ids, attention_mask=None, labels=None):
+        def forward(self, input_ids, attention_mask, labels=None):
             hidden = self.model(input_ids, attention_mask=attention_mask)[0]
             mask = attention_mask.unsqueeze(-1).expand(hidden.size()).float()
             pooled = (hidden * mask).sum(dim=1) / torch.clamp(mask.sum(dim=1), min=1e-9)
