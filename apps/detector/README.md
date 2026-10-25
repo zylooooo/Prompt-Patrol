@@ -58,6 +58,34 @@ The override also sets the matching model version, threshold and abstention
 band on the API and worker. Switching the detector image without them leaves
 the API judging desklib scores against the baseline's thresholds.
 
+### desklib + RADAR (`ensemble`, opt-in)
+
+`DETECTOR_BACKEND=ensemble` (`app/ensemble.py`, `Dockerfile.ensemble`) scores
+each answer with the desklib backend above **and** with RADAR
+(`TrustSafeAI/RADAR-Vicuna-7B`, pinned revision) plus the project's LoRA
+adapter in `model/radar-lora-adapter/`. Each logit is divided by its own
+temperature, the two are averaged, and the sigmoid of that is the calibrated
+probability. The text is cleaned once with `app/clean.py` and both models cut
+it at 256 tokens.
+
+The weights, temperatures and threshold come from `model/ensemble.json`,
+written by `ml-training/calibrate_ensemble.py`: it picked the RADAR seed and
+fitted the 1% FPR threshold on validation only, then tested once. Against the
+live desklib on the extended test set (answers of 10+ words), it catches 63.9%
+of AI answers vs 51.4%, and 69% vs 41% of heavily paraphrased ones, at a
+false-positive rate of 1.57% vs 1.18%. `ensemble.json` names the desklib
+version and temperature it was calibrated with, and the service refuses to
+start if they don't match this image's desklib: retrain or swap desklib, and
+the calibration has to be rerun.
+
+The cost: about 1.5x desklib's CPU time per answer, and ~3.7 GB of memory once
+loaded (~4.2 GB peak while desklib loads), so give Docker about 10 GB, and a
+Fargate task 8 GB. RADAR is licensed for non-commercial use only.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.ensemble.yml up -d --build
+```
+
 ## Why the images look the way they do
 
 - **The model is baked in.** The Dockerfile downloads the weights at build
@@ -82,7 +110,10 @@ cd app && python main.py            # serves on :8001; DETECTOR_PORT to change
 
 Outside Docker the model downloads to your HuggingFace cache on first start.
 For desklib, also set `DETECTOR_BACKEND=desklib` and
-`DESKLIB_ADAPTER_DIR=../model/desklib-lora-adapter`.
+`DESKLIB_ADAPTER_DIR=../model/desklib-lora-adapter`. For the ensemble, set
+`DETECTOR_BACKEND=ensemble`, the same `DESKLIB_ADAPTER_DIR`,
+`RADAR_ADAPTER_DIR=../model/radar-lora-adapter` and
+`ENSEMBLE_SETTINGS=../model/ensemble.json`.
 
 ## Tests
 
