@@ -219,6 +219,38 @@ more it takes"). The first AC4 and the final one are each a snapshot of one
 setup on one host; the A/B and Phase 6 say what caused each step, the final
 suite says where the system ends up.
 
+### Entry 6 — 2026-10-24: Phases 7 and 8, what the runs found
+
+**Phase 7 (A/B, both arms on a Xeon 6975P-C).** Two threads didn't help. S was 0.591 s
+(1 thread) vs 0.589 s (2), and ramp-idle onset/break were 112/127 per min in both arms.
+Detector CPU went 50% → 95%, so the mechanism works but the second thread does no useful
+work, probably because the 2 vCPU are two hyperthreads of one core. By the rule set in
+Entry 5 (S must drop > 10%), two threads are rejected.
+
+**Phase 8 (arm B's task, no redeploy).** Arm B's calibrate, ramp-idle and ramp-batch count
+here (copied to `results/_phase8/`). Under batch: onset 81, break 102, so R2 = 61/min.
+Memory peaked at 70% of 4 GB. Headline at 40: idle p95 699/665 ms, loaded 1,150 ms with a
+455 s drain. At 61: idle 705 ms, loaded 1,738 ms with a 651 s drain. Freeze at 61:
+`POST /api/batches` 3.1 s, probe p95 20 ms, 0 504s. Report: `report-phase7-8/RESULTS.md`.
+
+**Process notes.**
+- ramp-batch left ~1,500 rows queued, so the first Phase 8 queue aborted on the preflight.
+  The 6 ramp-batch batches (already measured) were cancelled through `POST /api/batches/{id}/cancel`.
+- The cookie's 4 h cap (18:12 UTC) limited the sitting to one or two runs per cell. Not
+  run: repeats of headline-loaded at 40 and 61, idle 61 #2–3, idle 40 #3.
+- `20261024-173709` aborted (queue not empty after freeze), even though the runner had
+  checked that the queue was empty. Probably a short window where SQS's approximate counts
+  read 0. The next run (`173710`) was checked: worker CPU 0 and detector CPU ~60% (what
+  61/min of checks alone needs), so no batch overlapped it.
+
+**Surprise.** At 127/min, p95 was ~17 s with 0 504s. The 10 s budget only wraps the detector
+call. Hypothesis: the API's default DB pool (15) caps in-flight checks, and the rest queue
+outside the budget. Unconfirmed.
+
+**Next.** (1) Set `detector_torch_threads = 1`. (2) Calibrate + ramp-idle at 1 vCPU / 4 GB on
+the same CPU model; cut to 1 vCPU if S stays within 10% of 0.59 s. (3) Check the DB-pool
+hypothesis.
+
 ## Runs
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
 - 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s
@@ -241,3 +273,16 @@ suite says where the system ends up.
 - 2026-10-24T11:59Z `20261024-113436_desklib_headline-loaded` headline-loaded desklib async **ok** p50=583.5 p95=1011.9 err=0.0% 504=0 drain=401s
 - 2026-10-24T12:23Z `20261024-115902_desklib_headline-loaded` headline-loaded desklib async **ok** p50=584.4 p95=1046.1 err=0.0% 504=0 drain=421s
 - 2026-10-24T12:28Z `20261024-122353_desklib_calibrate` calibrate desklib async **ok** p50=578.2 p95=659.4 err=0.0% 504=0 drain=-
+- 2026-10-24T13:55Z `20261024-135358_stub_smoke` smoke stub sync **ok** p50=14.3 p95=40.1 err=0.0% 504=0 drain=5s
+- 2026-10-24T14:18Z `20261024-141311_desklib_calibrate` calibrate desklib async **ok** p50=590.9 p95=726.4 err=0.0% 504=0 drain=-
+- 2026-10-24T14:44Z `20261024-142055_desklib_ramp-idle` ramp-idle desklib async **ok** p50=630.0 p95=14881.1 err=0.0% 504=0 drain=-
+- 2026-10-24T15:44Z `20261024-153917_desklib_calibrate` calibrate desklib async **ok** p50=589.5 p95=716.8 err=0.0% 504=0 drain=-
+- 2026-10-24T16:08Z `20261024-154425_desklib_ramp-idle` ramp-idle desklib async **ok** p50=627.1 p95=14888.1 err=0.0% 504=0 drain=-
+- 2026-10-24T16:32Z `20261024-160818_desklib_ramp-batch` ramp-batch desklib async **ok** p50=5164.1 p95=16188.6 err=1.3% 504=1 drain=-,-,-,-,-,-
+- 2026-10-24T16:56Z `20261024-164324_desklib_headline-loaded` headline-loaded desklib async **ok** p50=751.3 p95=1149.6 err=0.0% 504=0 drain=455s
+- 2026-10-24T17:10Z `20261024-165641_desklib_headline-idle` headline-idle desklib async **ok** p50=584.1 p95=698.6 err=0.0% 504=0 drain=-
+- 2026-10-24T17:28Z `20261024-171051_desklib_headline-loaded` headline-loaded desklib async **ok** p50=1333.5 p95=1738.4 err=0.0% 504=0 drain=651s
+- 2026-10-24T17:36Z `20261024-172818_desklib_freeze` freeze desklib async **ok** p50=1335.3 p95=1718.4 err=0.0% 504=0 drain=-
+- 2026-10-24T17:37Z `20261024-173709_desklib_headline-loaded` headline-loaded desklib async **aborted** p50=? p95=? err=?% 504=? drain=- (batches queue not empty)
+- 2026-10-24T17:51Z `20261024-173710_desklib_headline-idle` headline-idle desklib async **ok** p50=591.4 p95=704.5 err=0.0% 504=0 drain=-
+- 2026-10-24T18:05Z `20261024-175120_desklib_headline-idle` headline-idle desklib async **ok** p50=587.5 p95=665.3 err=0.0% 504=0 drain=-
