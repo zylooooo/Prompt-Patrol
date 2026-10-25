@@ -99,13 +99,15 @@ def balance_train(train: pd.DataFrame, seed: int) -> pd.DataFrame:
 # model
 # --------------------------------------------------------------------------
 
-def build_lora_model(scorer, r: int, alpha: int, dropout: float, targets: list[str]):
+def build_lora_model(scorer, r: int, alpha: int, dropout: float, targets: list[str], dora: bool = False):
     from peft import LoraConfig, get_peft_model
 
     # LoRA on the DeBERTa attention projections; the 1-logit classifier head is
     # trained in full (and saved with the adapter) because it was fit for the
     # original task and should be free to adapt.
-    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout,
+    # dora=True splits each adapted weight into a direction (the low-rank update) and a learned
+    # magnitude (DoRA); everything else is the same as LoRA
+    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, use_dora=dora,
                      target_modules=targets, modules_to_save=["classifier"])
     model = get_peft_model(scorer.model, cfg)
 
@@ -285,6 +287,9 @@ def main() -> None:
     ap.add_argument("--alpha", type=int, default=32)
     ap.add_argument("--dropout", type=float, default=0.05)
     ap.add_argument("--targets", default="query_proj,value_proj")
+    ap.add_argument("--dora", action="store_true",
+                    help="use DoRA instead of plain LoRA (peft use_dora); give the run its own --model-name, "
+                         "e.g. desklib-dora")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-train-rows", type=int, default=0, help="debug: cap the train rows")
     ap.add_argument("--device", default="cuda")
@@ -329,7 +334,7 @@ def main() -> None:
         # reporting.py drops run_role="smoke" from every table, so a pipeline check
         # (capped train rows) can never be mistaken for a result
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
-                         "tuning_method": "lora",
+                         "tuning_method": "dora" if args.dora else "lora",
                          "model_family": "deberta", "data_mode": mode})
         mlflow.log_params({
             "base_model": "desklib/ai-text-detector-academic-v1.01", "data": args.data,
@@ -338,7 +343,7 @@ def main() -> None:
             "calibrated": not args.no_calibrate, "target_fpr": args.target_fpr,
             "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
             "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
-            "lora_targets": args.targets, "max_len": MAX_LEN, "seed": args.seed,
+            "lora_targets": args.targets, "dora": args.dora, "max_len": MAX_LEN, "seed": args.seed,
             "train_n": len(train), "val_n": len(val), "test_n": len(test),
         })
         payload = {"run": run_name, "mode": mode, "args": vars(args),
@@ -355,7 +360,7 @@ def main() -> None:
             log_split_metrics({f"baseline_{k}": v for k, v in base["results"].items()}, "test")
             payload["baseline"] = jsonable(base)
 
-        model = build_lora_model(scorer, args.r, args.alpha, args.dropout, args.targets.split(","))
+        model = build_lora_model(scorer, args.r, args.alpha, args.dropout, args.targets.split(","), args.dora)
         model.to(device)
         print("\nTraining...")
         best_epoch, best_auc = train_lora(model, tokenizer, train, val, args, device,
