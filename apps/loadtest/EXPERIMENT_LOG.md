@@ -254,6 +254,53 @@ outside the budget. Unconfirmed.
 the same CPU model; cut to 1 vCPU if S stays within 10% of 0.59 s. (3) Check the DB-pool
 hypothesis.
 
+### Entry 7 — 2026-10-25: plan for the 1 vCPU test (Phase 9), written while calibrate ran
+
+**Question.** Can the detector drop from 2 vCPU to 1 vCPU (4 GB kept) without losing AC4 headroom?
+Saves ~$36/month.
+
+**Two things found before any run.**
+
+- **A 1 vCPU task sees 2 CPUs.** Rev 26 (`cpu = 1024`, threads unset) logged `intra-op 2, CPUs available 2`.
+  Fargate enforces the 1 vCPU as a quota, and `process_cpu_count` ignores it, so torch ran two
+  threads inside one vCPU's quota. Rev 27 pins `DETECTOR_TORCH_THREADS=1`; every run here is on it.
+- **1 vCPU tasks landed on older CPUs.** 7 redeploys gave one 8175M and six 8259CL, never the
+  6975P-C that Phases 7–8 used. So the "same CPU, S within 10% of 0.59 s" rule from Entry 6 can't
+  be tested. Decision (user): run on what 1 vCPU gets (8259CL), then a control: 2 vCPU / 1 thread
+  on an 8259CL, calibrate only. 1 vCPU vs the control is the vCPU effect; the control vs Phase 7
+  arm A is the CPU effect.
+
+**Runs.** calibrate → ramp-batch with `--service-time 0.589` (Phase 8's step grid, so the breaks
+compare step for step) → headline-loaded at R = 40. Then the control calibrate.
+
+**Prediction.** The 8259CL (Cascade Lake, 2019) is older than the 6975P-C, so S rises to
+~0.8–1.0 s, near the first AC4's 0.909 s. On 1 vCPU, uvicorn and the tokenizer share the vCPU
+with inference, so add a few percent. Under-batch break ~60–75/min. Headline-loaded at 40 still
+passes, p95 ~2–3 s. The control lands within ~5% of the 1 vCPU S if the second vCPU really
+adds nothing.
+
+**Decided in advance.** Cut to 1 vCPU if (a) 1 vCPU S is within 10% of the control's S (the
+vCPU costs nothing on the same CPU), and (b) headline-loaded at 40 passes AC4. If (a) fails, keep
+2 vCPU / 1 thread.
+
+### Entry 8 — 2026-10-25: Phase 9, what the runs found
+
+**The prediction was wrong.** 1 vCPU S was 1.233 s (predicted 0.8–1.0). The control (2 vCPU /
+1 thread, also an 8259CL, rev 28) was 0.779 s, so 1 vCPU is 58% slower on the same CPU. Rule (a)
+fails: **1 vCPU rejected; the detector stays at 2 vCPU / 4 GB with threads = 1.**
+
+Under batch, onset and break were both 51/min (Phase 8: 81/102), with 87 504s at 51. Headline at
+40 passed (p95 8.54 s, 0 504s), but 40 is 78% of the break and the batch took 3,199 s to drain.
+The control vs Phase 7 arm A (same config, 6975P-C, 0.591 s) puts the CPU effect at 32%.
+
+**Process notes.**
+
+- The 504s came back at 51/min, which fits the DB-pool hypothesis (15 queued × 1.23 s > 10 s).
+- The control landed on an 8259CL on its third try (8488C twice first). Results are in
+  `results/_phase9/` and `results/_phase9-control/`. Report: `report-phase9/RESULTS.md`.
+- The repo's Terraform defaults are still `detector_cpu = "2048"` and threads unset; the live
+  rev 28 got threads = 1 through `-var`. Set the default before the next plain apply.
+
 ## Runs
 
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
@@ -290,3 +337,7 @@ hypothesis.
 - 2026-10-24T17:37Z `20261024-173709_desklib_headline-loaded` headline-loaded desklib async **aborted** p50=? p95=? err=?% 504=? drain=- (batches queue not empty)
 - 2026-10-24T17:51Z `20261024-173710_desklib_headline-idle` headline-idle desklib async **ok** p50=591.4 p95=704.5 err=0.0% 504=0 drain=-
 - 2026-10-24T18:05Z `20261024-175120_desklib_headline-idle` headline-idle desklib async **ok** p50=587.5 p95=665.3 err=0.0% 504=0 drain=-
+- 2026-10-25T05:41Z `20261025-053526_desklib_calibrate` calibrate desklib async **ok** p50=1233.0 p95=1417.6 err=0.0% 504=0 drain=-
+- 2026-10-25T05:53Z `20261025-054208_desklib_ramp-batch` ramp-batch desklib async **ok** p50=9916.3 p95=10019.4 err=50.0% 504=95 drain=-,-,-,-,-,- (safety abort (error rate > 50%))
+- 2026-10-25T06:58Z `20261025-060128_desklib_headline-loaded` headline-loaded desklib async **ok** p50=6727.1 p95=8539.2 err=0.0% 504=0 drain=3200s
+- 2026-10-25T07:15Z `20261025-071021_desklib_calibrate` calibrate desklib async **ok** p50=778.7 p95=888.5 err=0.0% 504=0 drain=-
