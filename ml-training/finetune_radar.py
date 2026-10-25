@@ -1,4 +1,4 @@
-## fine-tunes RADAR on the combined corpus with LoRA, DoRA or a full fine-tune (PP-548)
+## fine-tunes RADAR with LoRA, DoRA or a full fine-tune (PP-548), on the team's extended corpus (v0.1-extended) by default
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
 import radar
-from combined_data import DATA_DIR, KEEP, load_combined, slice_flag_rates
+from combined_data import DATA_DIR, KEEP, load_corpus, slice_flag_rates
 from metrics import calibration_metrics, evaluate, threshold_at_fpr
 from scores import OUT_DIRECTORY, save_scores, score_rows
 from tracking import _git_state, log_dict_artifact, log_split_metrics, setup_mlflow
@@ -32,8 +32,9 @@ METHODS = ("lora", "dora", "full")
 ##  two epochs whose val partial AUROC differ by no more than this count as tied, see train_model()
 PAUROC_TIE = 0.002
 
-##  reworded AI answers (all label 1). their train rows are added to training with --extended,
-##  their test rows are always scored as separate robustness numbers, never mixed into the headline metrics
+##  only used with --data combined (the old v0.1 + spliced corpus): the reworded AI answers (all label 1), scored as separate
+##  robustness sets. the extended corpus already holds them inside val and test as slices
+##  (paraphrased-light/heavy, edited-genuine/simulated), so there they are part of the normal metrics and slice report
 EXTENDED_SETS = {
     "paraphrased": DATA_DIR / "v0.1-paraphrased.parquet",
     "human_edited": DATA_DIR / "v0.1-human_edited.parquet",
@@ -54,19 +55,19 @@ def set_seed(seed: int) -> None:
 ##  picks the train, val and test rows
 ##      - train_on empty:   every dataset; test = the test partition (in-distribution: same datasets, unseen questions)
 ##      - train_on given:   train/val use only those datasets; test = every row of the other datasets (never seen at all)
-##  with extended, the train rows of the paraphrased and human-edited sets (same datasets) are added to train only,
-##  so val and test stay exactly the rows desklib and MELD were scored on
 ##
 ##  train_on:   dataset names to train on (mohler/sprag/engsaf), empty for all
-##  extended:   add the reworded AI answers to training
-def select_data(train_on: list[str], extended: bool):
+##  data:       "extended" (v0.1-extended, the team's corpus from 23 Oct) or "combined" (the old v0.1 + spliced)
+##  returns (train, val, test, robustness) where robustness = {set name: rows scored as extra test sets}, only filled for combined.
+##  a set with no held-out rows is left out (human-edited answers only exist for mohler, so --train-on mohler has none to test)
+def select_data(train_on: list[str], data: str):
     if bad := set(train_on) - set(DATASETS):
         raise SystemExit(f"unknown dataset(s) {sorted(bad)}; choose from {DATASETS}")
 
     if set(train_on) == set(DATASETS):
         raise SystemExit("--train-on names every dataset, so nothing is held out; leave it out instead")
 
-    frames = load_combined()
+    frames = load_corpus(data)
     in_train_sets = (lambda df: df["dataset"].isin(train_on)) if train_on else (lambda df: pd.Series(True, index=df.index))
 
     if train_on:
@@ -76,18 +77,15 @@ def select_data(train_on: list[str], extended: bool):
     else:
         train, val, test = frames["train"], frames["val"], frames["test"]
 
-    robustness, extra_train = {}, []
-    for name, path in EXTENDED_SETS.items():
+    robustness = {}
+    for name, path in EXTENDED_SETS.items() if data == "combined" else ():
         if not path.exists():
             raise FileNotFoundError(f"{path} not found - run `dvc pull` in ml-training/ first")
         rows = pd.read_parquet(path).assign(slice=name, ai_fraction=1.0)[KEEP + ["slice", "ai_fraction"]]
         held_out = rows[~in_train_sets(rows)] if train_on else rows[rows["partition"] == "test"]
         if len(held_out):
             robustness[name] = held_out.reset_index(drop=True)
-        if extended:
-            extra_train.append(rows[(rows["partition"] == "train") & in_train_sets(rows)])
 
-    train = pd.concat([train, *extra_train], ignore_index=True)
     return train.reset_index(drop=True), val.reset_index(drop=True), test.reset_index(drop=True), robustness
 
 ##  desklib's way of balancing (--balance): randomly drops rows from the larger class until AI and human counts are equal.
@@ -260,33 +258,52 @@ def fit_temperature(val_logits: np.ndarray, val_labels: np.ndarray) -> float:
 
     return float(np.exp(minimize_scalar(nll, bounds=(-3, 4), method="bounded").x))
 
-##  the evaluation protocol: everything is chosen on val, frozen, then test is scored once
-##      1. temperature T fitted on val (skipped for the untouched model, which stays as published)
-##      2. the 1% FPR threshold fitted on val's (calibrated) probabilities
-##      3. test metrics, per-slice flag rates and robustness numbers, all at that frozen threshold
+##  the evaluation protocol (same as desklib's and the harness): everything is chosen on val, frozen, then test is scored once
+##      1. only answers of at least min_words words are used for steps 2-4 (the app marks shorter ones uncertain without scoring them)
+##      2. temperature T fitted on val (skipped for the untouched model, which stays as published)
+##      3. the 1% FPR threshold fitted on val's (calibrated) probabilities
+##      4. test metrics with confidence intervals that resample whole questions (answers to one question aren't independent),
+##         per-slice flag rates and, for --data combined, robustness numbers, all at that frozen threshold
+##  the probabilities returned cover EVERY val and test row, so the scores file keeps them all and the harness can filter either way
 ##
 ##  val, test:          the rows
-##  val_logits, test_logits, robust_logits: the model's logits for each, robust_logits = {set name: logits}
+##  val_logits, test_logits: the model's logits for each row
+##  robustness:         {set name: rows} extra test sets (empty for the extended corpus)
+##  robust_logits:      {set name: logits} for those sets
 ##  calibrate:          fit a temperature (tuned model) or not (untouched model)
 ##  target_fpr:         the false-positive budget
-def evaluate_protocol(val, test, val_logits, test_logits, robust_logits: dict, calibrate: bool, target_fpr: float):
-    T = fit_temperature(val_logits, val["label"].to_numpy()) if calibrate else 1.0
+##  min_words:          shortest answer used for the threshold and metrics, 0 keeps every answer
+##  returns (results dict, val probabilities, test probabilities)
+def evaluate_protocol(val, test, val_logits, test_logits, robustness: dict, robust_logits: dict, calibrate: bool,
+                      target_fpr: float, min_words: int):
+    vmask = (val["n_words"] >= min_words).to_numpy()
+    tmask = (test["n_words"] >= min_words).to_numpy()
+    test_used = test[tmask].reset_index(drop=True)
+
+    T = fit_temperature(val_logits[vmask], val["label"].to_numpy()[vmask]) if calibrate else 1.0
     val_p, test_p = expit(val_logits / T), expit(test_logits / T)
-    threshold = threshold_at_fpr(val["label"], val_p, target_fpr)
-    human = test_logits[test["label"].to_numpy() == 0]
+    threshold = threshold_at_fpr(val["label"].to_numpy()[vmask], val_p[vmask], target_fpr)
+
+    human = test_logits[tmask & (test["label"].to_numpy() == 0)]
     robust = {}
     for name, logits in robust_logits.items():
+        logits = logits[(robustness[name]["n_words"] >= min_words).to_numpy()]
         y = np.r_[np.zeros(len(human)), np.ones(len(logits))]
         robust[name] = {"n": len(logits), "flag_rate": float((expit(logits / T) >= threshold).mean()),
                         "auroc": float(roc_auc_score(y, np.r_[human, logits]))}
+
     out = {
         "temperature": T,
         "threshold": threshold,
-        "results": evaluate(test["label"], test_p, threshold, headline_fpr=target_fpr),
-        "test_pauroc": pauroc(test["label"], test_logits, target_fpr),
-        "uncalibrated_ece": calibration_metrics(test["label"], expit(test_logits))["ece"],
-        "slices": slice_flag_rates(test, test_p, threshold),
+        "results": evaluate(test_used["label"], test_p[tmask], threshold, headline_fpr=target_fpr,
+                            groups=test_used["question_id"].to_numpy()),
+        "test_pauroc": pauroc(test_used["label"], test_logits[tmask], target_fpr),
+        "uncalibrated_ece": calibration_metrics(test_used["label"], expit(test_logits[tmask]))["ece"],
+        "slices": slice_flag_rates(test_used, test_p[tmask], threshold),
         "robustness": robust,
+        "min_words": min_words,
+        "val_used": int(vmask.sum()),
+        "test_used": int(tmask.sum()),
     }
     return out, val_p, test_p
 
@@ -296,11 +313,13 @@ def evaluate_protocol(val, test, val_logits, test_logits, robust_logits: dict, c
 ##  out:    result of evaluate_protocol()
 def print_report(title: str, out: dict) -> None:
     r = out["results"]
-    print(f"\n=== {title} ===  (T={out['temperature']:.3f}, threshold={out['threshold']:.4f})")
+    print(f"\n=== {title} ===  (T={out['temperature']:.3f}, threshold={out['threshold']:.4f}, "
+          f"answers of >= {out['min_words']} words: val {out['val_used']}, test {out['test_used']})")
     print(f"  auroc {r['auroc']:.4f}  pauroc@1% {out['test_pauroc']:.4f}  deployed_tpr {r['deployed_tpr']:.4f}  "
           f"deployed_fpr {r['deployed_fpr']:.4f}  ece {r['ece']:.4f}")
     print("  " + "  ".join(f"{s['slice']}={s['flag_rate']:.3f}" for s in out["slices"]))
-    print("  robustness: " + "  ".join(f"{k} flag={v['flag_rate']:.3f} auroc={v['auroc']:.3f}" for k, v in out["robustness"].items()))
+    if out["robustness"]:
+        print("  robustness: " + "  ".join(f"{k} flag={v['flag_rate']:.3f} auroc={v['auroc']:.3f}" for k, v in out["robustness"].items()))
 
 ##  logs one evaluated model to MLflow: test metrics, partial AUROC, slice flag rates and robustness, under a name prefix
 ##
@@ -315,18 +334,24 @@ def log_evaluation(prefix: str, out: dict) -> None:
         mlflow.log_metrics({f"test/{prefix}robust_{name}_flag_rate": row["flag_rate"], f"test/{prefix}robust_{name}_auroc": row["auroc"]})
 
 ##  the run, in order:
-##      1. pick the data (and the extended rows with --extended, balanced by dropping rows with --balance), load untouched RADAR
-##      2. score val, test and the robustness sets with the UNTOUCHED model first -> baseline on exactly the same rows
-##      3. add adapters (lora/dora) or unfreeze everything (full), train, keep the best epoch by val partial AUROC
+##      1. pick the data (--data, balanced by dropping rows with --balance), load untouched RADAR
+##      2. score val, test (and for --data combined the robustness sets) with the UNTOUCHED model first -> baseline on exactly the same rows
+##      3. add adapters (lora/dora) or unfreeze everything (full), train, keep the best epoch by val partial AUROC (answers >= min_words)
 ##      4. score everything with the tuned model, calibrate on val, fix the threshold on val, score test once
 ##      5. log to MLflow, save the scores file for the harness, the thresholds, and the adapter (lora/dora only)
+##  naming, as the team agreed: the seed is in the run name (radar-lora-extended-s1), and at least 3 seeds per setting.
+##  --model-name is the `model` column the harness groups seeds by, so give each different setting (e.g. in a sweep) its own
 ##  --offline logs to a temporary local folder instead of DagsHub, for testing without adding a run to the shared board
 ##  --max-train-rows marks the run as run_role=smoke, which the report tables drop
 def main() -> None:
     ap = argparse.ArgumentParser(description="Fine-tune RADAR with LoRA, DoRA or a full fine-tune (PP-548).")
     ap.add_argument("--method", choices=METHODS, default="lora")
     ap.add_argument("--train-on", default="", help="comma-separated datasets to train on (default: all)")
-    ap.add_argument("--extended", action="store_true", help="add the paraphrased and human-edited train rows")
+    ap.add_argument("--data", default="extended", choices=["extended", "combined"],
+                    help="extended = v0.1-extended, the team's corpus (default); combined = the old v0.1 + spliced")
+    ap.add_argument("--min-words", type=int, default=10,
+                    help="only answers of at least this many words pick the epoch, fit the temperature and threshold, and enter "
+                         "the metrics (the app does not score shorter ones); 0 keeps every answer. all rows are saved either way")
     ap.add_argument("--balance", action="store_true", help="desklib's recipe: drop rows until AI and human counts match")
     ap.add_argument("--no-class-weights", dest="class_weights", action="store_false", help="plain loss, no class weighting")
     ap.add_argument("--epochs", type=int, default=5)
@@ -339,11 +364,12 @@ def main() -> None:
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--targets", default="all", help='"all" encoder linear layers, or a comma list such as "query,value"')
     ap.add_argument("--target-fpr", type=float, default=0.01)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=1, help="run seeds 1, 2 and 3 for every setting")
     ap.add_argument("--max-train-rows", type=int, default=0, help="smoke test: cap the train rows (tags the run as smoke)")
     ap.add_argument("--device", default=None, help="cuda, mps or cpu (default: best available)")
     ap.add_argument("--owner", default="faheem")
-    ap.add_argument("--run-name", default="")
+    ap.add_argument("--model-name", default="", help="the harness's `model` column, default radar-<method>[-balanced]")
+    ap.add_argument("--run-name", default="", help="default <model-name>-<data>[-train-<datasets>]-s<seed>")
     ap.add_argument("--run-role", default="train", choices=["train", "sweep"], help="sweep runs are left out of headline tables")
     ap.add_argument("--offline", action="store_true", help="log to a temporary local folder, not DagsHub")
     args = ap.parse_args()
@@ -353,10 +379,10 @@ def main() -> None:
     set_seed(args.seed)
     train_on = [d for d in args.train_on.split(",") if d]
     mode = f"train-{'+'.join(train_on)}" if train_on else "in-distribution"
-    tuned_name = f"radar-{args.method}{'-ext' if args.extended else ''}"
-    run_name = args.run_name or f"{tuned_name}-{mode}"
+    tuned_name = args.model_name or f"radar-{args.method}{'-balanced' if args.balance else ''}"
+    run_name = args.run_name or f"{tuned_name}-{args.data}{'-' + mode if train_on else ''}-s{args.seed}"
 
-    train, val, test, robustness = select_data(train_on, args.extended)
+    train, val, test, robustness = select_data(train_on, args.data)
     if args.balance:
         before = train["label"].value_counts().to_dict()
         train = balance_train(train, args.seed)
@@ -365,7 +391,9 @@ def main() -> None:
         train = train.sample(min(args.max_train_rows, len(train)), random_state=args.seed).reset_index(drop=True)
     for name, df in (("train", train), ("val", val), ("test", test)):
         print(f"{name}: {len(df)} rows ({df['label'].mean():.1%} AI) datasets={sorted(df['dataset'].unique())}")
-    print("robustness: " + ", ".join(f"{k}={len(v)}" for k, v in robustness.items()))
+    print(f"run {run_name}, model {tuned_name}, data {args.data}, answers of >= {args.min_words} words used for the metrics")
+    if robustness:
+        print("robustness: " + ", ".join(f"{k}={len(v)}" for k, v in robustness.items()))
 
     model, tokenizer, device = radar.load_radar(args.device)
 
@@ -383,7 +411,7 @@ def main() -> None:
                          "tuning_method": args.method, "model_family": "radar", "data_mode": mode, **_git_state()})
         mlflow.log_params({
             "base_model": f"{radar.MODEL_ID}@{radar.REVISION[:12]}",
-            "data": "v0.1+spliced" + ("+paraphrased+human_edited(train)" if args.extended else ""),
+            "data": args.data, "min_words": args.min_words, "model_name": tuned_name,
             "train_on": ",".join(train_on) or "all", "balanced": args.balance, "class_weights": args.class_weights,
             "target_fpr": args.target_fpr,
             "method": args.method, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
@@ -401,7 +429,8 @@ def main() -> None:
 
         print("\nScoring the untouched model (baseline, same rows)...")
         base_val, base_test, base_robust = score_all(model)
-        base, base_val_p, base_test_p = evaluate_protocol(val, test, base_val, base_test, base_robust, False, args.target_fpr)
+        base, base_val_p, base_test_p = evaluate_protocol(val, test, base_val, base_test, robustness, base_robust,
+                                                          False, args.target_fpr, args.min_words)
         print_report("BASELINE (untouched RADAR)", base)
         log_evaluation("baseline_", base)
 
@@ -412,13 +441,15 @@ def main() -> None:
         mlflow.log_params({"trainable_params": trainable})
 
         print("\nTraining...")
-        best_epoch, best_pauroc, history = train_model(model, tokenizer, train, val, args, device,
+        val_select = val[val["n_words"] >= args.min_words].reset_index(drop=True)
+        best_epoch, best_pauroc, history = train_model(model, tokenizer, train, val_select, args, device,
                                                        lambda k, v, s: mlflow.log_metric(k, v, step=s))
         mlflow.log_params({"best_epoch": best_epoch})
         mlflow.log_metric("val/best_pauroc", best_pauroc)
 
         val_logits, test_logits, robust_logits = score_all(model)
-        tuned, val_p, test_p = evaluate_protocol(val, test, val_logits, test_logits, robust_logits, True, args.target_fpr)
+        tuned, val_p, test_p = evaluate_protocol(val, test, val_logits, test_logits, robustness, robust_logits,
+                                                 True, args.target_fpr, args.min_words)
         print_report(f"TUNED ({tuned_name})", tuned)
         log_evaluation("", tuned)
         mlflow.log_metrics({"temperature": tuned["temperature"], "threshold": tuned["threshold"],
