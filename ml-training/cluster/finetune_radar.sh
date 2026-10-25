@@ -40,6 +40,9 @@ source "$HOME/venvs/prompt-patrol/bin/activate"
 
 cd "${PP_DIR:-$SLURM_SUBMIT_DIR/Prompt-Patrol}/ml-training" || exit 1
 
+##  python holds back output written to a file, so without this the log stays silent until a run ends. this makes `tail -f` live
+export PYTHONUNBUFFERED=1
+
 ##  what ran where, at the top of the log: the commit and branch (DagsHub tags them too), and the GPU
 echo "branch $(git rev-parse --abbrev-ref HEAD) at $(git rev-parse --short HEAD)$(git diff --quiet || echo ' (UNCOMMITTED CHANGES)')"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "no GPU visible"
