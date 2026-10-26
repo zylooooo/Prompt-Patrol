@@ -2,10 +2,10 @@ anthropic==1.15.0
 datasets==5.1.0
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 ftfy==6.3.1
-google-genai==2.31.0
+google-genai==2.33.0
 huggingface_hub==2.2.0
-openai==3.33.0
-pandas==3.0.6
+openai==3.37.0
+pandas==3.1.0
 python-dotenv==1.2.4
 PyYAML==6.0.3
 scikit-learn==1.9.1
