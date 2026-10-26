@@ -58,3 +58,42 @@ def test_a_missing_file_says_to_pull_the_data(tmp_path):
 def test_load_corpus_refuses_an_unknown_name():
     with pytest.raises(ValueError, match="unknown corpus"):
         combined_data.load_corpus("v9")
+
+
+def write_sources(tmp_path, **edits):
+    """Tiny cleaned source files whose ids match write_corpus()'s question ids after the dataset prefix."""
+    frames = {
+        "engsaf": pd.DataFrame({"id": ["a1", "a2"], "question_id": ["Q1", "Q1"], "question": ["What is a stack?"] * 2}),
+        "mohler": pd.DataFrame({"id": ["E01.Q02.A00", "E01.Q02.A01"], "question": ["Define a queue."] * 2}),
+        "sprag": pd.DataFrame({"id": ["s1"], "QuestionID": ["PythonQ003"], "QuestionText": ["How to sort a list?"]}),
+    }
+    for name, frame in frames.items():
+        edits.get(name, lambda f: f)(frame).to_parquet(tmp_path / f"{name}_cleaned.parquet", index=False)
+    return tmp_path
+
+
+def test_load_questions_maps_each_dataset_id_to_its_text(tmp_path):
+    questions = combined_data.load_questions(sources_dir=write_sources(tmp_path))
+    assert questions == {"engsaf/Q1": "What is a stack?", "mohler/E01.Q02": "Define a queue.",
+                         "sprag/PythonQ003": "How to sort a list?"}
+
+
+def test_load_questions_covers_every_question_in_the_frames(tmp_path):
+    frames = {"train": pd.DataFrame({"question_id": ["engsaf/Q1"]}), "test": pd.DataFrame({"question_id": ["sprag/PythonQ003"]})}
+    assert len(combined_data.load_questions(frames, sources_dir=write_sources(tmp_path))) == 3
+    frames["val"] = pd.DataFrame({"question_id": ["mohler/E09.Q09"]})
+    with pytest.raises(ValueError, match="no question text"):
+        combined_data.load_questions(frames, sources_dir=tmp_path)
+
+
+def test_load_questions_refuses_an_id_with_two_texts_and_ignores_blank_text(tmp_path):
+    write_sources(tmp_path, engsaf=lambda f: f.assign(question=["What is a stack?", "What is a heap?"]))
+    with pytest.raises(ValueError, match="more than one text"):
+        combined_data.load_questions(sources_dir=tmp_path)
+    write_sources(tmp_path, sprag=lambda f: f.assign(QuestionText=["  "]))
+    assert "sprag/PythonQ003" not in combined_data.load_questions(sources_dir=tmp_path)
+
+
+def test_load_questions_says_to_pull_the_data(tmp_path):
+    with pytest.raises(FileNotFoundError, match="dvc pull"):
+        combined_data.load_questions(sources_dir=tmp_path)

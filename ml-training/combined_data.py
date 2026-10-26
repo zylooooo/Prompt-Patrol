@@ -110,6 +110,46 @@ def load_extended(corpus: str = EXTENDED, data_dir: Path = DATA_DIR) -> dict[str
     return frames
 
 
+SOURCES_DIR = Path(__file__).parent / "data" / "sources"
+
+
+def load_questions(frames: dict[str, pd.DataFrame] | None = None, sources_dir: Path = SOURCES_DIR) -> dict[str, str]:
+    """
+    {question_id: question text} for the extended corpus, read from the cleaned source files because the
+    splits only carry the id. Ids look like `engsaf/Q0`, `mohler/E01.Q01` and `sprag/PythonQ057`.
+
+    With `frames` (what load_extended returns) every question id in them must have exactly one non-empty
+    text; the error names the ids that do not. Without it, the whole map is returned.
+    """
+    sources = {}
+    for name in ("engsaf", "mohler", "sprag"):
+        path = Path(sources_dir) / f"{name}_cleaned.parquet"
+        if not path.exists():
+            raise FileNotFoundError(f"{path} not found - run `dvc pull` in ml-training/ first")
+        sources[name] = pd.read_parquet(path)
+
+    engsaf, mohler, sprag = sources["engsaf"], sources["mohler"], sources["sprag"]
+    pairs = pd.concat([
+        pd.DataFrame({"question_id": "engsaf/" + engsaf["question_id"].astype(str), "text": engsaf["question"]}),
+        # mohler has no question column: the id is the answer id (E01.Q01.A00) without its answer part
+        pd.DataFrame({"question_id": "mohler/" + mohler["id"].str.rsplit(".", n=1).str[0], "text": mohler["question"]}),
+        pd.DataFrame({"question_id": "sprag/" + sprag["QuestionID"].astype(str), "text": sprag["QuestionText"]}),
+    ], ignore_index=True)
+    pairs["text"] = pairs["text"].astype("string").str.strip()
+    pairs = pairs.dropna(subset=["text"])
+    pairs = pairs[pairs["text"] != ""].drop_duplicates()
+
+    if len(clash := pairs.groupby("question_id")["text"].nunique().loc[lambda n: n > 1]):
+        raise ValueError(f"{len(clash)} question id(s) have more than one text: {list(clash.index[:5])}")
+    questions = dict(zip(pairs["question_id"], pairs["text"]))
+
+    if frames is not None:
+        needed = set().union(*(set(f["question_id"]) for f in frames.values()))
+        if missing := sorted(needed - set(questions)):
+            raise ValueError(f"{len(missing)} question id(s) have no question text: {missing[:5]}")
+    return questions
+
+
 def load_corpus(name: str = "extended") -> dict[str, pd.DataFrame]:
     """`extended` is the corpus we train and evaluate on from now on; `combined` is the earlier
     v0.1 + spliced set, kept so old results can be reproduced."""
