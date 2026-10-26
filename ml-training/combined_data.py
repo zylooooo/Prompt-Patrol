@@ -150,6 +150,19 @@ def load_questions(frames: dict[str, pd.DataFrame] | None = None, sources_dir: P
     return questions
 
 
+def with_question(frame: pd.DataFrame, questions: dict[str, str], sep: str) -> pd.DataFrame:
+    """
+    Copy of `frame` whose `answer` column reads "<question> <sep> <answer>": the text a question-aware
+    model sees. Every other column is untouched, so `n_words` still counts the answer alone and the
+    10-word rule means the same thing as in the answer-only runs.
+    """
+    if missing := sorted(set(frame["question_id"]) - set(questions)):
+        raise ValueError(f"{len(missing)} question id(s) have no question text: {missing[:5]}")
+    out = frame.copy()
+    out["answer"] = frame["question_id"].map(questions) + f" {sep} " + frame["answer"].astype(str)
+    return out
+
+
 def load_corpus(name: str = "extended") -> dict[str, pd.DataFrame]:
     """`extended` is the corpus we train and evaluate on from now on; `combined` is the earlier
     v0.1 + spliced set, kept so old results can be reproduced."""

@@ -47,7 +47,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import load_corpus, slice_flag_rates
+from combined_data import load_corpus, load_questions, slice_flag_rates, with_question
 from metrics import calibration_metrics, evaluate, threshold_at_fpr
 from scores import save_scores, score_rows
 
@@ -287,6 +287,10 @@ def main() -> None:
     ap.add_argument("--alpha", type=int, default=32)
     ap.add_argument("--dropout", type=float, default=0.05)
     ap.add_argument("--targets", default="query_proj,value_proj")
+    ap.add_argument("--question", action="store_true",
+                    help="give the model the question as well: the input becomes '<question> [SEP] <answer>'. "
+                         "Extended corpus only; the untouched baseline is skipped (it stays answer-only). "
+                         "Give the run its own --model-name, e.g. desklib-lora-question")
     ap.add_argument("--dora", action="store_true",
                     help="use DoRA instead of plain LoRA (peft use_dora); give the run its own --model-name, "
                          "e.g. desklib-dora")
@@ -303,6 +307,13 @@ def main() -> None:
                     help="sweep runs are excluded from headline tables; pick the config by VAL, never test")
     args = ap.parse_args()
 
+    if args.question:
+        if args.data != "extended":
+            raise SystemExit("--question needs --data extended (the question text is keyed by its question ids)")
+        if not args.no_baseline:
+            print("--question: skipping the untouched baseline, which stays answer-only (see the answer-only runs)")
+            args.no_baseline = True
+
     train_on = [d for d in args.train_on.split(",") if d]
     mode = f"train-{'+'.join(train_on)}" if train_on else "in-distribution"
     # the seed is in the default name: the scores file is named after the run, so repeats must not collide
@@ -311,7 +322,9 @@ def main() -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train, val, test = select_splits(load_corpus(args.data), train_on or None)
+    frames = load_corpus(args.data)
+    questions = load_questions(frames) if args.question else None  # fails here, before the model loads
+    train, val, test = select_splits(frames, train_on or None)
     if not args.no_balance:
         before = train["label"].value_counts().to_dict()
         train = balance_train(train, args.seed)
@@ -328,6 +341,9 @@ def main() -> None:
 
     scorer = Scorer(device=args.device)
     device, tokenizer = scorer.device, scorer.tokenizer
+    if args.question:
+        train, val, test = (with_question(f, questions, tokenizer.sep_token) for f in (train, val, test))
+        print(f"model input with the question, e.g.: {train['answer'].iloc[0][:200]!r}")
 
     setup_mlflow(MLFLOW_EXPERIMENT)
     with mlflow.start_run(run_name=run_name):
@@ -343,7 +359,7 @@ def main() -> None:
             "calibrated": not args.no_calibrate, "target_fpr": args.target_fpr,
             "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
             "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
-            "lora_targets": args.targets, "dora": args.dora, "max_len": MAX_LEN, "seed": args.seed,
+            "lora_targets": args.targets, "dora": args.dora, "question": args.question, "max_len": MAX_LEN, "seed": args.seed,
             "train_n": len(train), "val_n": len(val), "test_n": len(test),
         })
         payload = {"run": run_name, "mode": mode, "args": vars(args),

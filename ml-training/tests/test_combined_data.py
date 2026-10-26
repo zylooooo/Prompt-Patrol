@@ -97,3 +97,18 @@ def test_load_questions_refuses_an_id_with_two_texts_and_ignores_blank_text(tmp_
 def test_load_questions_says_to_pull_the_data(tmp_path):
     with pytest.raises(FileNotFoundError, match="dvc pull"):
         combined_data.load_questions(sources_dir=tmp_path)
+
+
+def test_with_question_prepends_the_question_and_keeps_every_other_column():
+    frame = pd.DataFrame({"question_id": ["q1", "q2"], "answer": ["a stack is lifo", "a queue is fifo"], "n_words": [4, 4],
+                          "label": [0, 1]})
+    out = combined_data.with_question(frame, {"q1": "What is a stack?", "q2": "What is a queue?"}, "[SEP]")
+    assert list(out["answer"]) == ["What is a stack? [SEP] a stack is lifo", "What is a queue? [SEP] a queue is fifo"]
+    pd.testing.assert_frame_equal(out.drop(columns="answer"), frame.drop(columns="answer"))
+    assert frame["answer"].iloc[0] == "a stack is lifo"  # the input frame is not changed
+
+
+def test_with_question_refuses_a_question_without_text():
+    frame = pd.DataFrame({"question_id": ["q1", "q9"], "answer": ["x", "y"]})
+    with pytest.raises(ValueError, match="no question text"):
+        combined_data.with_question(frame, {"q1": "What?"}, "[SEP]")
