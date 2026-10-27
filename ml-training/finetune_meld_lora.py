@@ -114,7 +114,8 @@ def add_lora(model, r: int, alpha: int, dropout: float, targets: list[str]):
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     print(f"trainable params: {trainable:,} of {total:,} ({trainable / total:.2%})")
-    hit = sorted({n.rsplit(".", 1)[-1] for n, p in model.backbone.named_parameters()
+    # names look like ...layers.0.attn.Wqkv.lora_A.default.weight; report the wrapped module (Wqkv)
+    hit = sorted({n.split(".lora_A")[0].rsplit(".", 1)[-1] for n, p in model.backbone.named_parameters()
                   if p.requires_grad and "lora_A" in n})
     print(f"LoRA applied to: {hit}")
     if not hit:
@@ -549,6 +550,10 @@ def main():
         tokenizer.save_pretrained(f"{stem}_adapter")
         torch.save({k: v.cpu() for k, v in model.state_dict().items() if not k.startswith("backbone.")},
                    f"{stem}_head.pt")
+        # otherwise the tuned weights live only on the cluster's scratch disk (not backed up, purged
+        # after 30 days); with the base checkpoint at meld_revision they can re-score new answers
+        mlflow.log_artifacts(f"{stem}_adapter", "model/adapter")
+        mlflow.log_artifact(f"{stem}_head.pt", "model")
         mlflow.log_artifact(f"{stem}_test_predictions.csv")
         log_dict_artifact(payload, "meld_lora_results.json")
         print(f"Wrote {stem}_results.json, _test_predictions.csv, chart artifacts, _adapter/, _head.pt "
