@@ -1,5 +1,6 @@
 """
-LoRA fine-tune MELD on the combined v0.1 + spliced corpus.
+LoRA fine-tune MELD on the extended corpus (v0.1-extended, see
+build_extended_corpus.py). `--data combined` reproduces the earlier v0.1 + spliced runs.
 
 MELD is not a normal sequence-classification checkpoint.  Its backbone emits
 token representations, then a custom prototype head reduces token scores with
@@ -11,10 +12,14 @@ The evaluation protocol matches the Desklib run:
   2. restore the epoch with the best validation AUROC;
   3. fit temperature and the 1% FPR threshold on val only;
   4. score test once with both values frozen.
+Steps 3-4 (and the baseline) use only answers of at least --min-words words
+(default 10, the app's own rule). Every val and test row is still scored and
+written to outputs/<run>_scores.parquet (scores.py), which harness.py reads.
 
 Examples:
-    python finetune_meld_lora.py --epochs 3
+    python finetune_meld_lora.py --epochs 3 --seed 1
     python finetune_meld_lora.py --train-on mohler
+    python finetune_meld_lora.py --data combined          # old v0.1 + spliced corpus
     python finetune_meld_lora.py --epochs 1 --max-train-rows 200 --run-name smoke
 """
 
@@ -37,8 +42,9 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import precision_recall_curve, roc_auc_score, roc_curve
 
-from combined_data import load_combined, slice_flag_rates
+from combined_data import load_corpus, slice_flag_rates
 from metrics import calibration_metrics, evaluate, slice_report, threshold_at_fpr
+from scores import save_scores, score_rows
 from meld_lora_plots import (plot_calibration, plot_pr, plot_roc,
                             plot_ppv_prevalence, plot_score_hist, plot_slices,
                             plot_training)
@@ -199,21 +205,33 @@ def fit_temperature(logits, labels):
     return float(np.exp(minimize_scalar(nll, bounds=(-3, 4), method="bounded").x))
 
 
-def evaluate_protocol(val, test, val_logits, test_logits, target_fpr, calibrate):
-    temperature = fit_temperature(val_logits, val["label"]) if calibrate else 1.0
+def evaluate_protocol(val, test, val_logits, test_logits, target_fpr, calibrate, min_words=0):
+    """val fits the temperature and threshold; test is scored once with both frozen.
+
+    Only answers of at least `min_words` words fit either value and enter the metrics (the app
+    marks shorter answers uncertain without scoring them). The probabilities returned cover every
+    val and test row, so the scores file can still be evaluated on all answers.
+    """
+    val_logits, test_logits = np.asarray(val_logits), np.asarray(test_logits)
+    vmask = (val["n_words"] >= min_words).to_numpy()
+    tmask = (test["n_words"] >= min_words).to_numpy()
+    val_used, test_used = val[vmask].reset_index(drop=True), test[tmask].reset_index(drop=True)
+    temperature = fit_temperature(val_logits[vmask], val_used["label"]) if calibrate else 1.0
     val_prob, test_prob = expit(val_logits / temperature), expit(test_logits / temperature)
-    threshold = threshold_at_fpr(val["label"], val_prob, target_fpr)
-    results = evaluate(test["label"], test_prob, threshold, headline_fpr=target_fpr)
-    slices = {"all": slice_flag_rates(test, test_prob, threshold)}
-    for dataset in sorted(test["dataset"].unique()):
-        mask = (test["dataset"] == dataset).to_numpy()
-        slices[dataset] = slice_flag_rates(test[mask].reset_index(drop=True), test_prob[mask], threshold)
-    raw = calibration_metrics(test["label"], expit(test_logits))
+    threshold = threshold_at_fpr(val_used["label"], val_prob[vmask], target_fpr)
+    results = evaluate(test_used["label"], test_prob[tmask], threshold, headline_fpr=target_fpr,
+                       groups=test_used["question_id"].to_numpy())
+    slices = {"all": slice_flag_rates(test_used, test_prob[tmask], threshold)}
+    for dataset in sorted(test_used["dataset"].unique()):
+        mask = (test_used["dataset"] == dataset).to_numpy()
+        slices[dataset] = slice_flag_rates(test_used[mask].reset_index(drop=True), test_prob[tmask][mask], threshold)
+    raw = calibration_metrics(test_used["label"], expit(test_logits[tmask]))
     return {
         "temperature": temperature, "threshold": threshold, "results": results,
         "slices": slices, "uncalibrated_ece": raw["ece"],
         "uncalibrated_brier": raw["brier"],
-    }, test_prob
+        "min_words": min_words, "val_used": len(val_used), "test_used": len(test_used),
+    }, val_prob, test_prob
 
 
 def calibration_bins(labels, probabilities, n_bins=10):
@@ -324,6 +342,11 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--data", default="extended", choices=["extended", "combined"],
+                    help="extended = v0.1-extended (default); combined = the earlier v0.1 + spliced")
+    ap.add_argument("--min-words", type=int, default=10,
+                    help="only answers of at least this many words fit the temperature and threshold and "
+                         "enter the metrics; 0 keeps every answer. All val and test rows are scored and saved")
     ap.add_argument("--train-on", default="")
     ap.add_argument("--no-balance", action="store_true")
     ap.add_argument("--no-calibrate", action="store_true")
@@ -347,14 +370,18 @@ def main():
 
     train_on = [d for d in args.train_on.split(",") if d]
     mode = f"train-{'+'.join(train_on)}" if train_on else "in-distribution"
-    run_name = args.run_name or f"meld-lora-{mode}"
+    # the seed is in the default name: the scores file is named after the run, so repeats must not collide
+    run_name = args.run_name or f"meld-lora-{args.data}-{mode}-s{args.seed}"
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    train_frame, val, test = select_splits(load_combined(), train_on or None)
+    train_frame, val, test = select_splits(load_corpus(args.data), train_on or None)
     if not args.no_balance:
         train_frame = balance_train(train_frame, args.seed)
     if args.max_train_rows:
         train_frame = train_frame.sample(min(args.max_train_rows, len(train_frame)), random_state=args.seed).reset_index(drop=True)
+    for name, df in (("train", train_frame), ("val", val), ("test", test)):
+        print(f"{name}: {len(df)} rows ({df['label'].mean():.1%} AI) datasets={sorted(df['dataset'].unique())}")
+        print("   " + ", ".join(f"{k}={v}" for k, v in df["slice"].value_counts().sort_index().items()))
 
     meld, scorer, model_dir = load_meld(args.device)
     model, tokenizer = scorer.model, scorer.tok
@@ -368,20 +395,22 @@ def main():
     with mlflow.start_run(run_name=run_name):
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
                          "tuning_method": "lora", "model_family": "meld", "data_mode": mode})
-        mlflow.log_params({"base_model": MELD_REPO, "data": "v0.1+spliced", "train_on": ",".join(train_on) or "all",
+        mlflow.log_params({"base_model": MELD_REPO, "data": args.data, "min_words": args.min_words,
+                           "train_on": ",".join(train_on) or "all",
                            "balanced": not args.no_balance, "calibrated": not args.no_calibrate,
                            "target_fpr": args.target_fpr, "epochs": args.epochs, "batch_size": args.batch_size,
                            "lr": args.lr, "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
                            "lora_targets": args.targets, "seed": args.seed, "train_n": len(train_frame),
                            "val_n": len(val), "test_n": len(test), "meld_model_dir": str(model_dir)})
         baseline_prob = None
-        baseline_logits = None
+        baseline_val_logits = baseline_logits = None
+        base = None
         if not args.no_baseline:
             baseline_val_logits = predict_logits(meld, model, tokenizer, val["answer"], device, cap, window)
             baseline_logits = predict_logits(meld, model, tokenizer, test["answer"], device, cap, window)
-            base, _ = evaluate_protocol(
+            base, _, _ = evaluate_protocol(
                 val, test, baseline_val_logits, baseline_logits,
-                args.target_fpr, False)
+                args.target_fpr, False, args.min_words)
             baseline_prob = expit(baseline_logits)
             log_split_metrics({f"baseline_{k}": v for k, v in base["results"].items()}, "test")
 
@@ -391,7 +420,12 @@ def main():
             lambda key, value, step: mlflow.log_metric(key, value, step=step))
         val_logits = predict_logits(meld, model, tokenizer, val["answer"], device, cap, window)
         test_logits = predict_logits(meld, model, tokenizer, test["answer"], device, cap, window)
-        tuned, test_prob = evaluate_protocol(val, test, val_logits, test_logits, args.target_fpr, not args.no_calibrate)
+        tuned, val_prob, test_prob = evaluate_protocol(val, test, val_logits, test_logits, args.target_fpr,
+                                                       not args.no_calibrate, args.min_words)
+        print(f"tuned: auroc={tuned['results']['auroc']:.4f} "
+              f"deployed_tpr={tuned['results']['deployed_tpr']:.4f} "
+              f"deployed_fpr={tuned['results']['deployed_fpr']:.4f} "
+              f"(answers of >= {args.min_words} words: val {tuned['val_used']}, test {tuned['test_used']})")
         log_split_metrics(tuned["results"], "test")
         mlflow.log_params({"best_epoch": best_epoch})
         mlflow.log_metrics({"val/best_auroc": best_auc, "temperature": tuned["temperature"],
@@ -405,29 +439,34 @@ def main():
             ["answer_id", "dataset", "slice", "label", "question_id", "generator", "n_words",
              "logit", "prob", "baseline_prob"]]
         predictions.to_csv(f"{stem}_test_predictions.csv", index=False)
+        # the charts and slice tables use the same answers as the headline metrics
+        used = (test["n_words"] >= args.min_words).to_numpy()
+        test_used, prob_used = test[used].reset_index(drop=True), test_prob[used]
+        baseline_used = baseline_prob[used] if baseline_prob is not None else None
         history_frame = pd.DataFrame(history)
-        curve_frame = pd.DataFrame(curve_rows(test["label"], test_prob, "meld_lora"))
-        if baseline_prob is not None:
+        curve_frame = pd.DataFrame(curve_rows(test_used["label"], prob_used, "meld_lora"))
+        if baseline_used is not None:
             curve_frame = pd.concat([
                 curve_frame,
-                pd.DataFrame(curve_rows(test["label"], baseline_prob, "meld_baseline")),
+                pd.DataFrame(curve_rows(test_used["label"], baseline_used, "meld_baseline")),
             ], ignore_index=True)
         # LoRA uses validation-fitted temperature calibration; the zero-shot
         # baseline remains uncalibrated for this comparison.
         calibration_frame = pd.DataFrame(
-            calibration_bins(test["label"], test_prob)
+            calibration_bins(test_used["label"], prob_used)
         ).assign(model="meld_lora", calibration="temperature")
-        if baseline_prob is not None:
+        if baseline_used is not None:
             calibration_frame = pd.concat([
                 calibration_frame,
-                pd.DataFrame(calibration_bins(test["label"], baseline_prob)).assign(
+                pd.DataFrame(calibration_bins(test_used["label"], baseline_used)).assign(
                     model="meld_baseline", calibration="none"
                 ),
             ], ignore_index=True)
+        predictions_used = predictions[used].reset_index(drop=True)
         slice_frame = pd.DataFrame(
-            slice_report(predictions, y_true_col="label", y_prob_col="prob",
+            slice_report(predictions_used, y_true_col="label", y_prob_col="prob",
                          by="dataset", threshold=tuned["threshold"])
-            + slice_report(predictions, y_true_col="label", y_prob_col="prob",
+            + slice_report(predictions_used, y_true_col="label", y_prob_col="prob",
                            by="slice", threshold=tuned["threshold"])
         )
         for row in slice_frame.to_dict("records"):
@@ -438,8 +477,8 @@ def main():
                 if value_to_log is not None and np.isfinite(value_to_log):
                     mlflow.log_metric(f"slice/{scope}/{value}/{metric_name}", float(value_to_log))
 
-        labels = test["label"].to_numpy()
-        probs = np.asarray(test_prob)
+        labels = test_used["label"].to_numpy()
+        probs = np.asarray(prob_used)
         flagged = probs >= tuned["threshold"]
         deployed_point = (flagged[labels == 0].mean(), flagged[labels == 1].mean())
 
@@ -447,9 +486,9 @@ def main():
         plot_roc(curve_frame, deployed_point, args.target_fpr)
         plot_pr(curve_frame)
         plot_calibration(calibration_frame)
-        plot_score_hist(labels, probs, tuned["threshold"], baseline_prob)
+        plot_score_hist(labels, probs, tuned["threshold"], baseline_used)
         plot_slices(slice_frame)
-        test_prevalence = float(test["label"].mean())
+        test_prevalence = float(test_used["label"].mean())
         plot_ppv_prevalence(tuned["results"], test_prevalence=test_prevalence)
 
         log_dataframe_artifact(history_frame, OUT_DIR / f"{run_name}_training_history.csv", "charts")
@@ -477,6 +516,22 @@ def main():
                    "tuned": {"best_epoch": best_epoch, "best_val_auroc": best_auc,
                              **{k: v for k, v in tuned.items() if k != "results"},
                              "results": {k: float(v) for k, v in tuned["results"].items()}}}
+        if base is not None:
+            payload["baseline"] = {k: v for k, v in base.items() if k != "results"} | {
+                "results": {k: float(v) for k, v in base["results"].items()}}
+
+        # one row per answer for EVERY val and test row (not filtered by word count), for the
+        # untouched and the tuned model; harness.py fits thresholds and evaluates from this file.
+        parts = []
+        if baseline_logits is not None:
+            parts += [score_rows("meld-untouched", "val", val, baseline_val_logits, expit(baseline_val_logits)),
+                      score_rows("meld-untouched", "test", test, baseline_logits, baseline_prob)]
+        parts += [score_rows("meld-lora", "val", val, val_logits, val_prob),
+                  score_rows("meld-lora", "test", test, test_logits, test_prob)]
+        scores_path = save_scores(run_name, args.seed, parts)
+        if train_on:
+            print("note: 'test' here is every row of the held-out datasets, including their train/val partitions, "
+                  "so harness.load_run cannot join this file to the corpus val/test files yet")
         Path(f"{stem}_results.json").write_text(json.dumps(payload, indent=2, default=float))
         model.backbone.save_pretrained(f"{stem}_adapter")
         tokenizer.save_pretrained(f"{stem}_adapter")
@@ -484,7 +539,8 @@ def main():
                    f"{stem}_head.pt")
         mlflow.log_artifact(f"{stem}_test_predictions.csv")
         log_dict_artifact(payload, "meld_lora_results.json")
-        print(f"Wrote {stem}_results.json, _test_predictions.csv, chart artifacts, _adapter/, _head.pt")
+        print(f"Wrote {stem}_results.json, _test_predictions.csv, chart artifacts, _adapter/, _head.pt "
+              f"and {scores_path.name}")
 
 
 if __name__ == "__main__":

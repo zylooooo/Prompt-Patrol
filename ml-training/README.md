@@ -129,14 +129,21 @@ projections while preserving MELD's top-quantile document score.
 
 ```bash
 .venv/bin/python finetune_meld_lora.py --epochs 1 --max-train-rows 200 --run-name smoke
-.venv/bin/python finetune_meld_lora.py --epochs 3 --run-name meld-lora-final-in-distribution
+.venv/bin/python finetune_meld_lora.py --epochs 3 --seed 1 --run-name meld-lora-extended-s1
 .venv/bin/python finetune_meld_lora.py --train-on mohler --epochs 3
+.venv/bin/python finetune_meld_lora.py --data combined --epochs 3   # old v0.1 + spliced corpus
 ```
+
+It trains on the extended corpus (`v0.1-extended`) by default. As in the
+Desklib script, only answers of at least `--min-words` words (default 10) fit
+the temperature and threshold and enter the metrics and charts, and every val
+and test row is written to `outputs/<run>_scores.parquet` for `harness.py`
+(`meld-untouched` and `meld-lora`).
 
 The first command is a GPU pipeline check. The checkpoint is about 4.1 GB and
 MELD's released scoring contract uses FP32, 2046-token windows, and no window
 overlap, so this run is substantially heavier than the Desklib adapter. The
-Slurm batch version is [`cluster/final_meld.sh`](cluster/final_meld.sh).
+Slurm batch versions are [`cluster/extended_meld.sh`](cluster/extended_meld.sh) (extended corpus, one run per seed) and [`cluster/meld_lora.sh`](cluster/meld_lora.sh) (older final runs).
 
 Each MELD run logs epoch metrics to MLflow (`train/loss`, `val/loss`,
 `val/auroc`, learning rate, and epoch duration). It also uploads chart-ready
