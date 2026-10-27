@@ -50,15 +50,18 @@ from meld_lora_plots import (plot_calibration, plot_pr, plot_roc,
                             plot_training)
 
 MELD_REPO = "anon-review-meld-2026/meld"
+# the 23 Sep release (config v8) that the sweeps and earlier runs used. ddfc9c78 (27 Oct, v83) is a
+# retrained checkpoint with per-generator prototypes; pass --meld-revision main to use the latest
+MELD_REVISION = "8990324abd92e1fa17072f6887ea1e5c1cef5abc"
 MLFLOW_EXPERIMENT = "E2-finetune"
 OUT_DIR = Path(__file__).parent / "outputs"
 DATASETS = ("mohler", "sprag", "engsaf")
 
 
-def load_meld(device: str):
+def load_meld(device: str, revision: str = MELD_REVISION):
     from huggingface_hub import snapshot_download
 
-    model_dir = Path(snapshot_download(MELD_REPO))
+    model_dir = Path(snapshot_download(MELD_REPO, revision=revision))
     spec = importlib.util.spec_from_file_location("meld_finetune", model_dir / "meld.py")
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load meld.py from {model_dir}")
@@ -154,7 +157,13 @@ def token_scores(model, input_ids: torch.Tensor, attention_mask: torch.Tensor):
         + (prototypes * prototypes).sum(-1).view(1, 1, -1)
     )
     logit_h = -tau * sqdist(u, model.human_anchors)
-    logit_g = -tau * sqdist(u, model.family_protos) + model.family_bias.view(1, 1, -1)
+    if hasattr(model, "gen_protos"):
+        # 27 Oct release onwards: one prototype per generator, a family's logit is its nearest member's
+        logit_m = -tau * sqdist(u, model.gen_protos) + model.gen_bias.view(1, 1, -1)
+        logit_g = torch.where(model.gen_member, logit_m.unsqueeze(-1),
+                              logit_m.new_tensor(float("-inf"))).amax(dim=2)
+    else:
+        logit_g = -tau * sqdist(u, model.family_protos) + model.family_bias.view(1, 1, -1)
     if model.cfg.get("null_reduction", "lse") == "max":
         human = logit_h.max(dim=-1, keepdim=True).values
     else:
@@ -363,6 +372,8 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-train-rows", type=int, default=0)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--meld-revision", default=MELD_REVISION,
+                    help="MELD checkpoint revision on the HF Hub (default: the 23 Sep release); 'main' is the latest")
     ap.add_argument("--owner", default="malcolm")
     ap.add_argument("--run-name", default="")
     ap.add_argument("--run-role", default="train", choices=["train", "sweep"])
@@ -383,7 +394,7 @@ def main():
         print(f"{name}: {len(df)} rows ({df['label'].mean():.1%} AI) datasets={sorted(df['dataset'].unique())}")
         print("   " + ", ".join(f"{k}={v}" for k, v in df["slice"].value_counts().sort_index().items()))
 
-    meld, scorer, model_dir = load_meld(args.device)
+    meld, scorer, model_dir = load_meld(args.device, args.meld_revision)
     model, tokenizer = scorer.model, scorer.tok
     device = scorer.device
     cap = scorer.cap
@@ -395,7 +406,8 @@ def main():
     with mlflow.start_run(run_name=run_name):
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
                          "tuning_method": "lora", "model_family": "meld", "data_mode": mode})
-        mlflow.log_params({"base_model": MELD_REPO, "data": args.data, "min_words": args.min_words,
+        mlflow.log_params({"base_model": MELD_REPO, "meld_revision": model_dir.name,
+                           "data": args.data, "min_words": args.min_words,
                            "train_on": ",".join(train_on) or "all",
                            "balanced": not args.no_balance, "calibrated": not args.no_calibrate,
                            "target_fpr": args.target_fpr, "epochs": args.epochs, "batch_size": args.batch_size,
