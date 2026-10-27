@@ -8,7 +8,13 @@ from auth import SessionFailure
 from models import User, UserRoleEnum, UserStatusEnum
 from models.session import UserSession
 from services import authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
-from services.sessions import SESSION_ABSOLUTE_TTL, SESSION_ACTIVITY_RESOLUTION, SESSION_IDLE_TTL
+from services.sessions import (
+    SESSION_ABSOLUTE_TTL,
+    SESSION_ACTIVITY_RESOLUTION,
+    SESSION_IDLE_TTL,
+    SESSION_RETENTION,
+    purge_expired_sessions,
+)
 
 
 async def _user(db_session, email: str, oid: str, **kwargs) -> User:
@@ -42,6 +48,25 @@ async def test_create_then_authenticate_session_roundtrip(db_session):
     resolved = await authenticate_session(db_session, raw_token)
 
     assert resolved.user.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_login_purges_only_this_users_rows_past_retention(db_session):
+    user = await _user(db_session, "p@smu.edu.sg", "oid-p")
+    other = await _user(db_session, "q@smu.edu.sg", "oid-q")
+    long_dead = datetime.now(UTC) - SESSION_RETENTION - timedelta(hours=1)
+    recently_dead = datetime.now(UTC) - SESSION_RETENTION + timedelta(hours=1)
+    stale = await _session_row(db_session, user, absolute_expires_at=long_dead)
+    kept = await _session_row(db_session, user, absolute_expires_at=recently_dead)
+    others = await _session_row(db_session, other, absolute_expires_at=long_dead)
+
+    fresh = await create_session(db_session, user.id)
+
+    from auth.tokens import hash_token
+
+    remaining = set((await db_session.execute(select(UserSession.token_hash))).scalars())
+    assert remaining == {hash_token(kept), hash_token(others), hash_token(fresh)}
+    assert hash_token(stale) not in remaining
 
 
 @pytest.mark.asyncio
@@ -202,3 +227,22 @@ async def test_a_session_near_its_cap_reports_itself_as_capped(db_session):
 
     assert resolved.capped is True
     assert resolved.expires_at == resolved.absolute_expires_at
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_sessions_deletes_every_users_rows_past_retention(db_session):
+    a = await _user(db_session, "pa@smu.edu.sg", "oid-pa")
+    b = await _user(db_session, "pb@smu.edu.sg", "oid-pb")
+    long_dead = datetime.now(UTC) - SESSION_RETENTION - timedelta(hours=1)
+    recently_dead = datetime.now(UTC) - SESSION_RETENTION + timedelta(hours=1)
+    await _session_row(db_session, a, absolute_expires_at=long_dead)
+    await _session_row(db_session, b, absolute_expires_at=long_dead)
+    await _session_row(db_session, b, absolute_expires_at=long_dead)
+    kept = await _session_row(db_session, a, absolute_expires_at=recently_dead)
+
+    removed = await purge_expired_sessions(db_session, batch_size=2)
+
+    from auth.tokens import hash_token
+
+    assert removed == 3
+    assert set((await db_session.execute(select(UserSession.token_hash))).scalars()) == {hash_token(kept)}

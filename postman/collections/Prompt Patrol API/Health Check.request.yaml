@@ -1,6 +1,7 @@
 $kind: http-request
+name: Health Check
 description: |-
-  Environment: any. Unauthenticated liveness probe.
+  Runs as: anyone (no session). Liveness probe.
 url: "{{BASE_URL}}/health"
 method: GET
 scripts:

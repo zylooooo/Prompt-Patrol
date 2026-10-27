@@ -1,0 +1,33 @@
+# Runs the app with the fine-tuned desklib detector instead of the roberta baseline.
+#
+#   cd apps && docker compose -f docker-compose.yml -f docker-compose.desklib.yml up -d --build
+#
+# The trained adapter is committed in apps/detector/model/desklib-lora-adapter/ (from the cluster run
+# ml-training/outputs/desklib-lora-final-in-distribution_adapter/). The first build downloads the
+# ~1.7GB desklib base model, and Docker needs roughly 8GB of memory allocated.
+#
+# Only the 1% FPR threshold (0.9608, fitted on validation) is validated, so every strictness level
+# uses it for now; the 5% and 0.1% thresholds still need fitting. The abstention band is narrower
+# than the baseline's because the scores are calibrated probabilities that sit close to 0 or 1.
+x-desklib-api-env: &desklib-api-env
+  DETECTOR_MODEL_VERSION: desklib-academic-lora-v1
+  DETECTOR_THRESHOLD: "0.9608"
+  # Chosen from the saved test scores: at +-0.01 about 42% of AI answers are still flagged, 11% come
+  # back uncertain, and false flags on student answers drop from 0.95% to 0.53%.
+  ABSTENTION_BAND: "0.01"
+  DETECTOR_CALIBRATION_VERSION: desklib-temp1.944-v1
+
+services:
+  detector:
+    build:
+      context: ./detector
+      dockerfile: Dockerfile.desklib
+    healthcheck:
+      # desklib is ~0.4B parameters, so loading takes longer than the roberta baseline
+      start_period: 300s
+
+  api:
+    environment: *desklib-api-env
+
+  worker:
+    environment: *desklib-api-env

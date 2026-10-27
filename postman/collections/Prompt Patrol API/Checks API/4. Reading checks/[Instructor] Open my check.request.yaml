@@ -1,0 +1,18 @@
+$kind: http-request
+name: "[Instructor] Open my check"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+url: "{{BASE_URL}}/api/checks/{{CHECK_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("my check", () => {
+        pm.expect(pm.response.json().check_id).to.eql(pm.globals.get("CHECK_ID"));
+        pm.expect(pm.response.json().actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID"));
+      });
+    language: text/javascript
+order: 1000

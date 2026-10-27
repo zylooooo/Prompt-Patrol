@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Instructor] Cannot rename their own TA"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  404, same as GET on someone you cannot see.
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "Nickname"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("404", () => pm.response.to.have.status(404));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("User not found"));
+    language: text/javascript
+order: 5000

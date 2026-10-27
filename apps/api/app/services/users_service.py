@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,20 @@ from exceptions import (
     InvalidSupervisorError,
     UserNotFoundError,
 )
-from models import Supervision, User, UserRoleEnum, UserRoleEvent, UserSession, UserStatusEnum, UserStatusEvent
+from models import (
+    Batch,
+    BatchRowFailure,
+    Check,
+    Supervision,
+    User,
+    UserRoleEnum,
+    UserRoleEvent,
+    UserSession,
+    UserStatusEnum,
+    UserStatusEvent,
+)
+
+from .aws_clients import purge_batch_messages
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +42,7 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-class LoginRejection(str, enum.Enum):
+class LoginRejection(enum.StrEnum):
     """
     Why a validated Auth0 identity was refused. Distinguishing these lets the
     login page say something true, and lets a removed person still trying the
@@ -192,6 +205,19 @@ def _assert_may_manage(actor: User, target: User, verb: str) -> None:
         raise PermissionError(f"role {actor.role} may not {verb} user ID: {target.id}")
 
 
+async def _cancel_unfinished_batches(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """This allows the worker to delete all queued rows fora deleted or deactivated user."""
+    completed = select(func.count()).select_from(Check).where(Check.batch_id == Batch.id).scalar_subquery()
+    failed = (
+        select(func.count()).select_from(BatchRowFailure).where(BatchRowFailure.batch_id == Batch.id).scalar_subquery()
+    )
+    await db.execute(
+        update(Batch)
+        .where(Batch.actor_id == user_id, Batch.cancelled_at.is_(None), Batch.row_total > completed + failed)
+        .values(cancelled_at=datetime.now(UTC))
+    )
+
+
 async def _transition(
     db: AsyncSession,
     actor: User,
@@ -229,11 +255,11 @@ async def _transition(
     if to_status != UserStatusEnum.active:
         await _revoke_sessions(db, current.id)
 
-    # A deleted account supervises no one and is supervised by no one
-    # (DECISION LOG [0.21.0]). Deactivation keeps its links on purpose, so
-    # reactivating restores the same teams.
+    # A deleted account supervises no one and is supervised by no one.
+    # Deactivation keeps its links on purpose, so reactivating restores the same teams.
     if to_status == UserStatusEnum.deleted:
         await _end_links(db, current.id, actor.id)
+        await _cancel_unfinished_batches(db, current.id)
 
     # Either way the instructor stops counting, so their TAs may now have no one.
     await _sign_out_unsupervised(db, leaving_tas)
@@ -319,6 +345,17 @@ async def delete_user(db: AsyncSession, actor: User, user_id: uuid.UUID, reason:
                 deleted.id,
             )
 
+    # Speed-up only: the Worker skips rows of a cancelled batch anyway, so a
+    # failed purge must not fail a delete that has already committed.
+    cancelled = (
+        await db.execute(select(Batch.id).where(Batch.actor_id == deleted.id, Batch.cancelled_at.is_not(None)))
+    ).scalars()
+    if batch_ids := [str(batch_id) for batch_id in cancelled]:
+        try:
+            purge_batch_messages(*batch_ids)
+        except Exception:
+            logger.exception("Could not purge queued rows for deleted user %s.", deleted.id)
+
     return deleted
 
 
@@ -393,9 +430,9 @@ async def get_user_by_id(db: AsyncSession, actor: User, user_id: uuid.UUID) -> U
         logger.debug("Hiding %s user %s from actor %s.", user.status.value, user_id, actor.id)
         return None
 
-    logger.debug("Authorizationg check for actor: %s requesting user ID: %s", actor, user_id)
+    logger.debug("Authorization check for actor %s requesting user %s.", actor.id, user_id)
     if not _can_view_user(actor, user):
-        logger.warning("Actor %s is not authorized to view user ID: %s", actor, user_id)
+        logger.warning("Actor %s is not authorized to view user %s.", actor.id, user_id)
         return None
 
     logger.info("User fetched successfully")
@@ -433,11 +470,11 @@ async def _assert_supervisor_available(db: AsyncSession, supervisor_id: uuid.UUI
     result = await db.execute(select(User).where(User.id == supervisor_id))
     supervisor = result.scalar_one_or_none()
     if supervisor is None:
-        raise InvalidSupervisorError(f"no user with id {supervisor_id}")
+        raise InvalidSupervisorError("That supervisor does not exist.")
     if supervisor.role != UserRoleEnum.instructor:
-        raise InvalidSupervisorError("a supervisor must be an instructor")
+        raise InvalidSupervisorError("That supervisor is not an instructor.")
     if supervisor.status != UserStatusEnum.active:
-        raise InvalidSupervisorError("a supervisor must be an active account")
+        raise InvalidSupervisorError("That supervisor is not an active account.")
 
 
 async def _link(db: AsyncSession, actor: User, ta: User, instructor_id: uuid.UUID) -> None:
@@ -473,7 +510,7 @@ async def link_supervisor(db: AsyncSession, actor: User, ta_id: uuid.UUID, instr
 
     target = await _load_manageable(db, ta_id)
     if target.role != UserRoleEnum.teaching_assistant:
-        raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+        raise InvalidSupervisorError("Only a teaching assistant can be given a supervisor.")
     if target.status != UserStatusEnum.active:
         raise InvalidStatusTransitionError("only an active teaching assistant can be placed")
     await _assert_supervisor_available(db, instructor_id)
@@ -550,7 +587,9 @@ async def _provision(
 
     if reusable is not None:
         # Re-using a deleted row: the address may now belong to someone else, so
-        # nothing personal carries over. provisioned_by records this invite.
+        # nothing personal carries over. provisioned_by records this invite, and
+        # reprovisioned_at hides the previous holder's checks and batches.
+        reusable.reprovisioned_at = datetime.now(UTC)
         reusable.role = role
         reusable.display_name = None
         reusable.provisioned_by = actor.id
@@ -612,7 +651,7 @@ async def create_user(
 
     if supervisor_id is not None:
         if role != UserRoleEnum.teaching_assistant:
-            raise InvalidSupervisorError("only a teaching assistant has a supervisor")
+            raise InvalidSupervisorError("Only a teaching assistant can be given a supervisor.")
         await _assert_supervisor_available(db, supervisor_id)
 
     email = normalize_email(email)

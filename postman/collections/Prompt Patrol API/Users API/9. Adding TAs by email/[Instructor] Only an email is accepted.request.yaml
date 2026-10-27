@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Instructor] Only an email is accepted"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  A name is the person's to choose; unknown fields are rejected.
+url: "{{BASE_URL}}/api/users/teaching-assistants"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "ashloozhiyi5+pp-unused@gmail.com",
+      "display_name": "Chosen for them"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+    language: text/javascript
+order: 6000

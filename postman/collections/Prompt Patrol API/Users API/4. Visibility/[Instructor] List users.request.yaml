@@ -1,18 +1,16 @@
 $kind: http-request
 name: "[Instructor] List users"
 description: |-
-  Environment: Prompt Patrol Dev - Instructor
+  Runs as: instructor (INSTRUCTOR_SESSION)
 
   An instructor's directory is exactly the TAs they currently supervise.
 url: "{{BASE_URL}}/api/users/"
 method: GET
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Instructor environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Instructor"));
       pm.test("200", () => pm.response.to.have.status(200));
       const body = pm.response.json();
       const me = pm.globals.get("INSTRUCTOR_USER_ID");

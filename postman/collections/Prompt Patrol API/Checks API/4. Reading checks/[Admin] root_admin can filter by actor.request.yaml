@@ -1,0 +1,19 @@
+$kind: http-request
+name: "[Admin] root_admin can filter by actor"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  The one caller whose actor_id filter is honoured.
+url: "{{BASE_URL}}/api/checks?actor_id={{INSTRUCTOR_USER_ID}}"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("only the instructor's", () => items.forEach(c => pm.expect(c.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID"))));
+      pm.test("includes the new check", () => pm.expect(items.map(c => c.check_id)).to.include(pm.globals.get("CHECK_ID")));
+    language: text/javascript
+order: 12000

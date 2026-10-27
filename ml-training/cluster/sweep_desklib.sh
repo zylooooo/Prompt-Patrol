@@ -29,7 +29,8 @@ for LR in 5e-5 1e-4 2e-4; do
     if [ "$LR" = "1e-4" ] && [ "$R" = "16" ]; then continue; fi
     echo "################ lr=$LR r=$R ################"
     # --no-baseline: the untouched-model score is already known and identical every run
-    python finetune_desklib_lora.py --run-role sweep --no-baseline \
+    # pinned to the old corpus and every answer length, so this sweep still reproduces the earlier one
+    python finetune_desklib_lora.py --data combined --min-words 0 --run-role sweep --no-baseline \
       --lr "$LR" --r "$R" --alpha $((2 * R)) \
       --run-name "desklib-lora-sweep-lr${LR}-r${R}" || echo "run lr=$LR r=$R FAILED"
   done

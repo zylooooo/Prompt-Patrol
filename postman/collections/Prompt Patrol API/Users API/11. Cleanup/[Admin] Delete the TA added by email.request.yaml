@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[Admin] Delete the TA added by email"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Cleanup. Also removes its Auth0 credential.
+url: "{{BASE_URL}}/api/users/{{ADDED_TA_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "reason": "Postman cleanup"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("deleted", () => pm.expect(pm.response.json().status).to.eql("deleted"));
+    language: text/javascript
+order: 1500

@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import ActiveSession, SessionFailure, generate_session_token, hash_token
@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 SESSION_ABSOLUTE_TTL = timedelta(hours=4)
 SESSION_IDLE_TTL = timedelta(minutes=30)
 SESSION_ACTIVITY_RESOLUTION = timedelta(seconds=60)
+# How long a dead session row is kept for incident investigation before it is
+# purged. Every row is dead by absolute_expires_at (revoked and idle-expired
+# ones included), so that one column is the only cutoff needed.
+SESSION_RETENTION = timedelta(days=30)
 
 
 # Reads a stored timestamp as UTC-aware.
@@ -34,8 +38,37 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
         absolute_expires_at=now + SESSION_ABSOLUTE_TTL,
     )
     db.add(session_row)
+    # ponytail: only purges this user's rows; users who never log in again are
+    # covered by purge_expired_sessions, run daily by scripts.purge_sessions.
+    await db.execute(
+        delete(UserSession).where(
+            UserSession.user_id == user_id,
+            UserSession.absolute_expires_at < now - SESSION_RETENTION,
+        )
+    )
     await db.commit()
     return raw_token
+
+
+# Deletes every user's session rows past retention, in batches, and returns the count.
+async def purge_expired_sessions(db: AsyncSession, batch_size: int = 5000) -> int:
+    cutoff = datetime.now(UTC) - SESSION_RETENTION
+    total = 0
+    while True:
+        result = cast(
+            CursorResult,
+            await db.execute(
+                delete(UserSession).where(
+                    UserSession.id.in_(
+                        select(UserSession.id).where(UserSession.absolute_expires_at < cutoff).limit(batch_size)
+                    )
+                )
+            ),
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            return total
+        total += result.rowcount
 
 
 # Validates a session, refreshes its activity timestamp, and returns it.

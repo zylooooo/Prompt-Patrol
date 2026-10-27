@@ -1,0 +1,21 @@
+$kind: http-request
+name: "[Admin] A deactivated TA cannot be placed on a team"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/{{NEW_TA_USER_ID}}/supervisors"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "instructor_id": "{{NEW_INSTRUCTOR_USER_ID}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("409", () => pm.response.to.have.status(409));
+      pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("only an active teaching assistant can be placed"));
+    language: text/javascript
+order: 10000

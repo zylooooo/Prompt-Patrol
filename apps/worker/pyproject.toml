@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+# Mirrors conftest.py's sys.path: the worker imports apps/api/app's modules
+# (models, services, ...) as top-level names, so they sort as first-party.
+src = [".", "../api/app"]
+
+[tool.ruff.lint]
+# Mirrors apps/api so all services lint under the same rules.
+select = ["E4", "E7", "E9", "F", "I", "UP"]

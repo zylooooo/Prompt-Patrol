@@ -1,0 +1,32 @@
+$kind: http-request
+name: "[Instructor] Submit the uploaded file"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Stores BATCH_ID.
+url: "{{BASE_URL}}/api/batches"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "upload_key": "{{BATCH_UPLOAD_KEY}}",
+      "file_name": "postman-answers.csv"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("202", () => pm.response.to.have.status(202));
+      const body = pm.response.json();
+      pm.test("a new batch, attributed to the caller", () => {
+        pm.expect(body.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID"));
+        pm.expect(body.batch_file_name).to.eql("postman-answers.csv");
+        pm.expect(body.strictness).to.eql("standard");
+        pm.expect(body.cancelled_at).to.eql(null);
+      });
+      pm.test("row_total counts valid and rejected rows", () => pm.expect(body.row_total).to.eql(3));
+      pm.globals.set("BATCH_ID", body.batch_id);
+    language: text/javascript
+order: 1000

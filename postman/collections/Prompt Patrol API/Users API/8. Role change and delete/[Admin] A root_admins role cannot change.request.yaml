@@ -1,13 +1,13 @@
 $kind: http-request
 name: "[Admin] A root_admin's role cannot change"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   Never reassigned via the API, in or out.
 url: "{{BASE_URL}}/api/users/{{ADMIN_USER_ID}}/role"
 method: PATCH
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 body:
   type: json
   content: |-
@@ -17,8 +17,6 @@ body:
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("403", () => pm.response.to.have.status(403));
       pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("root_admin accounts cannot have their role changed."));
     language: text/javascript

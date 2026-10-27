@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Only the owner and root_admin can see or cancel a batch; anyone else gets 404.
+order: 3000

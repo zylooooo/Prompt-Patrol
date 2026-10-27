@@ -1,0 +1,4 @@
+-r requirements.txt
+# Loads the LoRA adapter. 0.17.x matches transformers 4.55.x; checked that a merged adapter gives the
+# same logit as the training-time model.
+peft==0.17.1

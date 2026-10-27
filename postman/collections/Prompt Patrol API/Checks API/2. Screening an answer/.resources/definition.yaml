@@ -1,0 +1,4 @@
+$kind: collection
+description: |-
+  Successful POST /api/checks. Each request creates one check owned by the instructor.
+order: 2000

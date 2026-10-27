@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from models import Batch, BatchRowFailure, StrictnessEnum, User, UserRoleEnum
 from sqlalchemy import select
+
+from models import Batch, BatchRowFailure, StrictnessEnum, User, UserRoleEnum
 from worker.main import drain_dlq_once, poll_once, process_message
 
 
@@ -129,6 +130,37 @@ async def test_poll_once_removes_a_cancelled_batchs_message_from_the_queue(db_se
         await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch.id))
     ).scalar_one()
     assert "cancelled" in failure.reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_poll_once_logs_a_failed_row_without_its_body(db_session, caplog):
+    """The body carries a student's answer and identifier, so a failure logs
+    only the ids needed to find the message again - and keeps it on the queue."""
+    batch_id = str(uuid.uuid4())
+    message = {
+        "MessageId": "msg-1",
+        "Attributes": {"ApproximateReceiveCount": "2"},
+        "Body": json.dumps({"batch_id": batch_id, "external_ref": "stu-secret", "answer_text": "secret answer"}),
+        "ReceiptHandle": "fake-handle",
+    }
+    fake_sqs = MagicMock()
+    fake_sqs.receive_message.side_effect = [{"Messages": [message]}, {"Messages": []}]
+
+    @asynccontextmanager
+    async def fake_async_session():
+        yield db_session
+
+    with (
+        patch("worker.main._sqs_client", return_value=fake_sqs),
+        patch("worker.main.async_session", fake_async_session),
+        patch("worker.main.process_message", new=AsyncMock(side_effect=RuntimeError("detector down"))),
+    ):
+        await poll_once()
+
+    fake_sqs.delete_message.assert_not_called()
+    logged = caplog.text
+    assert batch_id in logged and "msg-1" in logged and "attempt 2" in logged
+    assert "secret" not in logged
 
 
 @pytest.mark.asyncio

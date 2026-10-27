@@ -1,0 +1,5 @@
+$kind: collection
+description: |-
+  Attribution, model and threshold are server-side: a client that sends them
+  gets a loud 400, never a silently ignored field (additionalProperties: false).
+order: 3000

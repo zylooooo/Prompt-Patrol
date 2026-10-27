@@ -22,7 +22,9 @@ export default function ModelStatusBadge() {
   const status: DetectorStatus = isError
     ? "unavailable"
     : (reported ?? "loading");
-  const label = data ? `${data.modelVersion} · uncalibrated` : UNKNOWN_LABEL;
+  const label = data
+    ? `${data.modelVersion} · ${data.calibrationVersion ?? "uncalibrated"}`
+    : UNKNOWN_LABEL;
 
   return (
     <span

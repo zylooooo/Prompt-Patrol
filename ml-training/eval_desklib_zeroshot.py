@@ -1,5 +1,5 @@
 """
-Zero-shot desklib (academic variant) evaluation on the real v0.1 corpus.
+Zero-shot desklib (academic variant) evaluation on the extended corpus (v0.1-extended).
 
 Same protocol as eval_meld_zeroshot.py - no training, scores val to fit a
 decision threshold at the project's FPR budget, freezes it, scores test once.
@@ -7,7 +7,13 @@ Uses the academic-tuned checkpoint rather than desklib's general-purpose one,
 since it's fine-tuned on academic writing - a closer domain match to short
 exam answers than a RAID-leaderboard-general model.
 
-    python eval_desklib_zeroshot.py
+Only answers of at least --min-words words (default 10, the app's rule) fit the
+threshold and enter the metrics; every val and test row is scored and saved to
+outputs/<run>_scores.parquet (scores.py) so harness.py can evaluate either way.
+Scoring is deterministic, so there is no seed (the file records seed 0).
+
+    python eval_desklib_zeroshot.py                  # extended corpus
+    python eval_desklib_zeroshot.py --data combined  # the earlier v0.1 + spliced set
 """
 
 from __future__ import annotations
@@ -22,10 +28,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from scipy.special import expit
 from transformers import AutoConfig, AutoModel, AutoTokenizer, PreTrainedModel
 
-from combined_data import load_combined, slice_flag_rates
+from combined_data import load_combined, load_corpus, slice_flag_rates
 from metrics import evaluate, threshold_at_fpr
+from scores import save_scores, score_rows
 from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
 
 DESKLIB_REPO = "desklib/ai-text-detector-academic-v1.01"
@@ -94,25 +102,30 @@ class Scorer:
         self.model.eval()
 
     @torch.no_grad()
-    def score(self, text: str) -> float:
+    def score_logit(self, text: str) -> float:
+        """The raw model output, before the sigmoid (the scores file stores it)."""
         encoded = self.tokenizer(
             text, padding="max_length", truncation=True, max_length=MAX_LEN, return_tensors="pt"
         )
         input_ids = encoded["input_ids"].to(self.device)
         attention_mask = encoded["attention_mask"].to(self.device)
         logits = self.model(input_ids=input_ids, attention_mask=attention_mask)["logits"]
-        return torch.sigmoid(logits).item()
+        return logits.item()
+
+    def score(self, text: str) -> float:
+        return float(torch.sigmoid(torch.tensor(self.score_logit(text))))
 
 
 def score_split(scorer: Scorer, frame: pd.DataFrame, split_name: str) -> np.ndarray:
-    probs = np.empty(len(frame), dtype=float)
+    """Raw logits, one per row; probabilities are expit(logits)."""
+    logits = np.empty(len(frame), dtype=float)
     start = time.perf_counter()
     for i, text in enumerate(frame["answer"]):
-        probs[i] = scorer.score(str(text))
+        logits[i] = scorer.score_logit(str(text))
         if (i + 1) % 200 == 0 or i + 1 == len(frame):
             elapsed = time.perf_counter() - start
             print(f"  {split_name}: {i + 1}/{len(frame)} scored ({elapsed:.0f}s)", flush=True)
-    return probs
+    return logits
 
 
 def main() -> None:
@@ -122,18 +135,35 @@ def main() -> None:
                              "metrics.py's fixed project-wide HEADLINE_FPR")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
+    parser.add_argument("--data", default="extended", choices=["extended", "combined"],
+                        help="corpus to score: extended = v0.1-extended (default); combined = v0.1 + spliced")
+    parser.add_argument("--min-words", type=int, default=10,
+                        help="only answers of at least this many words fit the threshold and enter the metrics "
+                             "(the app does not score shorter ones); 0 keeps every answer. "
+                             "All val and test rows are scored and saved either way")
     parser.add_argument("--no-spliced", action="store_true",
                         help="score the raw v0.1 corpus only (the original baseline), "
-                             "without the spliced answers")
+                             "without the spliced answers (implies --data combined)")
     args = parser.parse_args()
 
-    frames = load_combined(include_spliced=not args.no_spliced)
+    if args.no_spliced:
+        args.data = "combined"
+        frames = load_combined(include_spliced=False)
+    else:
+        frames = load_corpus(args.data)
     val, test = frames["val"], frames["test"]
-    data_version = "v0.1" if args.no_spliced else "v0.1+spliced"
-    run_suffix = "" if args.no_spliced else "-combined"
+    data_version = {"extended": "v0.1-extended", "combined": "v0.1+spliced"}[args.data]
+    if args.no_spliced:
+        data_version = "v0.1"
+    run_suffix = "" if args.no_spliced else f"-{args.data}"
     print(f"data: {data_version}")
     print(f"val: {len(val)} rows ({val['label'].mean():.1%} AI)")
     print(f"test: {len(test)} rows ({test['label'].mean():.1%} AI)")
+    vmask = (val["n_words"] >= args.min_words).to_numpy()
+    tmask = (test["n_words"] >= args.min_words).to_numpy()
+    val_used, test_used = val[vmask].reset_index(drop=True), test[tmask].reset_index(drop=True)
+    print(f"answers of >= {args.min_words} words used for the threshold and metrics: "
+          f"val {len(val_used)}, test {len(test_used)}")
 
     print("\nLoading desklib academic (downloads ~1.7GB on first run, cached after)...")
     scorer = Scorer(device=args.device)
@@ -145,27 +175,36 @@ def main() -> None:
             "model": DESKLIB_REPO,
             "target_fpr": args.target_fpr,
             "data": data_version,
+            "min_words": args.min_words,
             "val_n": len(val),
             "test_n": len(test),
         })
 
         print("\nScoring val...")
-        val_probs = score_split(scorer, val, "val")
+        val_logits = score_split(scorer, val, "val")
         print("\nScoring test...")
-        test_probs = score_split(scorer, test, "test")
+        test_logits = score_split(scorer, test, "test")
+        val_probs, test_probs = expit(val_logits), expit(test_logits)  # untouched: no temperature
 
-        threshold = threshold_at_fpr(val["label"], val_probs, args.target_fpr)
+        # one row per answer for EVERY val and test row (not filtered by word count); harness.py reads it
+        scores_path = save_scores(f"desklib-academic-zeroshot{run_suffix}", 0, [
+            score_rows("desklib-untouched", "val", val, val_logits, val_probs),
+            score_rows("desklib-untouched", "test", test, test_logits, test_probs),
+        ])
+
+        threshold = threshold_at_fpr(val_used["label"], val_probs[vmask], args.target_fpr)
         print(f"\nthreshold fit on val at target_fpr={args.target_fpr}: {threshold:.4f}")
         mlflow.log_metric("threshold", threshold)
 
-        results = evaluate(test["label"], test_probs, threshold, headline_fpr=args.target_fpr)
+        results = evaluate(test_used["label"], test_probs[tmask], threshold, headline_fpr=args.target_fpr,
+                           groups=test_used["question_id"].to_numpy())
         log_split_metrics(results, "test")
 
-        print("\n=== desklib (academic) zero-shot, test split ===")
+        print(f"\n=== desklib (academic) zero-shot, test split (answers of >= {args.min_words} words) ===")
         for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
             print(f"  {key}: {results[key]:.4f}")
 
-        slices = slice_flag_rates(test, test_probs, threshold)
+        slices = slice_flag_rates(test_used, test_probs[tmask], threshold)
         print("\n  per slice (flag rate at the frozen threshold; human = FPR, rest = TPR):")
         for row in slices:
             print(f"    {row['slice']:<11} n={row['n']:<5} {row['kind']}={row['flag_rate']:.3f}")
@@ -174,10 +213,14 @@ def main() -> None:
         payload = {
             "model": f"desklib academic (zero-shot, {DESKLIB_REPO})",
             "data": data_version,
+            "min_words": args.min_words,
             "target_fpr": args.target_fpr,
             "threshold": threshold,
             "val_n": len(val),
             "test_n": len(test),
+            "val_used": len(val_used),
+            "test_used": len(test_used),
+            "scores_file": scores_path.name,
             "results": {k: float(v) for k, v in results.items()},
             "slices": slices,
         }

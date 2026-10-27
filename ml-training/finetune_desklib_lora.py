@@ -1,13 +1,23 @@
 """
-LoRA fine-tune of desklib (academic) on the combined v0.1 + spliced corpus.
+LoRA fine-tune of desklib (academic) on the extended corpus (v0.1-extended, see
+build_extended_corpus.py). `--data combined` reproduces the earlier v0.1 + spliced runs.
 
 Protocol (same as the zero-shot baselines, plus training):
   1. Score val and test with the UNTOUCHED model -> baseline row, on the same
-     rows as the tuned model so the before/after table is apples to apples.
-  2. Balance train to an even number of AI and human answers, train a LoRA
-     adapter + the classifier head, keep the epoch with the best val AUROC.
+     rows as the tuned model so the before/after table is same/fair.
+  2. Balance train to an even number of AI and human answers (the extended
+     train file already is), train a LoRA adapter + the classifier head, keep
+     the epoch with the best val AUROC.
   3. Temperature-scale the logits on val (calibration), fit the 1% FPR
      threshold on val, FREEZE both, score test once.
+  Steps 1-3 use only answers of at least --min-words words (default 10, the
+  app's own rule) for the temperature, the threshold and the metrics. Every val
+  and test row is still scored and saved, so the harness can filter either way.
+
+At the end the run writes outputs/<run>_scores.parquet (scores.py): one row per
+answer for val and test, for the untouched and the tuned model. harness.py reads it.
+Use a different --seed for every repeat and keep it in the run name; at least 3
+seeds are needed for anything we compare or report.
 
 Two data modes:
   default            train on every dataset's train partition, test on the test
@@ -17,6 +27,7 @@ Two data modes:
                      so all of their partitions are legitimate test data).
 
     python finetune_desklib_lora.py
+    python finetune_desklib_lora.py --seed 2 --lr 2e-4 --r 64 --alpha 128 --epochs 5
     python finetune_desklib_lora.py --train-on mohler
     python finetune_desklib_lora.py --epochs 1 --max-train-rows 200 --run-name smoke   # pipeline check
 """
@@ -36,8 +47,9 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import load_combined, slice_flag_rates
+from combined_data import load_corpus, slice_flag_rates
 from metrics import calibration_metrics, evaluate, threshold_at_fpr
+from scores import save_scores, score_rows
 
 MLFLOW_EXPERIMENT = "E2-finetune"
 OUT_DIR = Path(__file__).parent / "outputs"
@@ -201,28 +213,42 @@ def fit_temperature(val_logits: np.ndarray, val_labels: np.ndarray) -> float:
 
 
 def evaluate_protocol(val: pd.DataFrame, test: pd.DataFrame, val_logits, test_logits,
-                      calibrate: bool, target_fpr: float):
-    """val picks T and the threshold; test is scored once with both frozen."""
-    T = fit_temperature(val_logits, val["label"].to_numpy()) if calibrate else 1.0
+                      calibrate: bool, target_fpr: float, min_words: int = 0):
+    """val picks T and the threshold; test is scored once with both frozen.
+
+    Only answers of at least `min_words` words fit T and the threshold and enter the metrics (the
+    app marks shorter answers uncertain without scoring them), with confidence intervals that
+    resample whole questions. The probabilities returned cover EVERY val and test row, so the saved
+    scores file can still be evaluated on all answers. min_words=0 keeps every answer.
+    """
+    val_logits, test_logits = np.asarray(val_logits), np.asarray(test_logits)
+    vmask = (val["n_words"] >= min_words).to_numpy()
+    tmask = (test["n_words"] >= min_words).to_numpy()
+    val_used, test_used = val[vmask].reset_index(drop=True), test[tmask].reset_index(drop=True)
+
+    T = fit_temperature(val_logits[vmask], val_used["label"].to_numpy()) if calibrate else 1.0
     val_p, test_p = expit(val_logits / T), expit(test_logits / T)
-    for name, p in (("val", val_p), ("test", test_p)):
+    for name, p in (("val", val_p[vmask]), ("test", test_p[tmask])):
         if sat := int((p >= 1 - 1e-12).sum()):
             print(f"WARNING: {sat} {name} probabilities saturate at 1.0 (ties near the threshold), T={T:.2f}")
-    thr = threshold_at_fpr(val["label"], val_p, target_fpr)
-    results = evaluate(test["label"], test_p, thr, headline_fpr=target_fpr)
+    thr = threshold_at_fpr(val_used["label"], val_p[vmask], target_fpr)
+    results = evaluate(test_used["label"], test_p[tmask], thr, headline_fpr=target_fpr,
+                       groups=test_used["question_id"].to_numpy())
 
-    slices = {"all": slice_flag_rates(test, test_p, thr)}
-    for d in sorted(test["dataset"].unique()):
-        m = (test["dataset"] == d).to_numpy()
-        slices[d] = slice_flag_rates(test[m].reset_index(drop=True), test_p[m], thr)
-    raw = calibration_metrics(test["label"], expit(test_logits))
+    slices = {"all": slice_flag_rates(test_used, test_p[tmask], thr)}
+    for d in sorted(test_used["dataset"].unique()):
+        m = (test_used["dataset"] == d).to_numpy()
+        slices[d] = slice_flag_rates(test_used[m].reset_index(drop=True), test_p[tmask][m], thr)
+    raw = calibration_metrics(test_used["label"], expit(test_logits[tmask]))
     return {"temperature": T, "threshold": thr, "results": results, "slices": slices,
-            "uncalibrated_ece": raw["ece"], "uncalibrated_brier": raw["brier"]}, test_p
+            "uncalibrated_ece": raw["ece"], "uncalibrated_brier": raw["brier"],
+            "min_words": min_words, "val_used": len(val_used), "test_used": len(test_used)}, val_p, test_p
 
 
 def print_report(title: str, out: dict) -> None:
     r = out["results"]
-    print(f"\n=== {title} ===  T={out['temperature']:.3f} threshold={out['threshold']:.4f}")
+    print(f"\n=== {title} ===  T={out['temperature']:.3f} threshold={out['threshold']:.4f}  "
+          f"(answers of >= {out['min_words']} words: val {out['val_used']}, test {out['test_used']})")
     for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
         print(f"  {key}: {r[key]:.4f}")
     for scope, rows in out["slices"].items():
@@ -240,6 +266,12 @@ def jsonable(out: dict) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--data", default="extended", choices=["extended", "combined"],
+                    help="corpus to use: extended = v0.1-extended (default); combined = the earlier v0.1 + spliced")
+    ap.add_argument("--min-words", type=int, default=10,
+                    help="only answers of at least this many words fit the temperature and threshold and enter "
+                         "the metrics (the app does not score shorter ones); 0 keeps every answer. "
+                         "All val and test rows are scored and saved either way")
     ap.add_argument("--train-on", default="", help="comma-separated datasets to train on (default: all)")
     ap.add_argument("--no-balance", action="store_true", help="skip the even AI/human downsampling of train")
     ap.add_argument("--no-calibrate", action="store_true")
@@ -264,12 +296,13 @@ def main() -> None:
 
     train_on = [d for d in args.train_on.split(",") if d]
     mode = f"train-{'+'.join(train_on)}" if train_on else "in-distribution"
-    run_name = args.run_name or f"desklib-lora-{mode}"
+    # the seed is in the default name: the scores file is named after the run, so repeats must not collide
+    run_name = args.run_name or f"desklib-lora-{mode}-s{args.seed}"
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train, val, test = select_splits(load_combined(), train_on or None)
+    train, val, test = select_splits(load_corpus(args.data), train_on or None)
     if not args.no_balance:
         before = train["label"].value_counts().to_dict()
         train = balance_train(train, args.seed)
@@ -295,7 +328,8 @@ def main() -> None:
                          "tuning_method": "lora",
                          "model_family": "deberta", "data_mode": mode})
         mlflow.log_params({
-            "base_model": "desklib/ai-text-detector-academic-v1.01", "data": "v0.1+spliced",
+            "base_model": "desklib/ai-text-detector-academic-v1.01", "data": args.data,
+            "min_words": args.min_words,
             "train_on": ",".join(train_on) or "all", "balanced": not args.no_balance,
             "calibrated": not args.no_calibrate, "target_fpr": args.target_fpr,
             "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
@@ -306,13 +340,13 @@ def main() -> None:
         payload = {"run": run_name, "mode": mode, "args": vars(args),
                    "n": {"train": len(train), "val": len(val), "test": len(test)}}
 
+        base_val_logits = base_test_logits = None
         if not args.no_baseline:
             print("\nScoring untouched model (baseline)...")
-            base, _ = evaluate_protocol(
-                val, test,
-                predict_logits(scorer.model, tokenizer, val["answer"], device),
-                predict_logits(scorer.model, tokenizer, test["answer"], device),
-                calibrate=False, target_fpr=args.target_fpr)
+            base_val_logits = predict_logits(scorer.model, tokenizer, val["answer"], device)
+            base_test_logits = predict_logits(scorer.model, tokenizer, test["answer"], device)
+            base, _, _ = evaluate_protocol(val, test, base_val_logits, base_test_logits,
+                                           calibrate=False, target_fpr=args.target_fpr, min_words=args.min_words)
             print_report("BASELINE (zero-shot, same rows)", base)
             log_split_metrics({f"baseline_{k}": v for k, v in base["results"].items()}, "test")
             payload["baseline"] = jsonable(base)
@@ -328,8 +362,9 @@ def main() -> None:
 
         val_logits = predict_logits(model, tokenizer, val["answer"], device)
         test_logits = predict_logits(model, tokenizer, test["answer"], device)
-        tuned, test_p = evaluate_protocol(val, test, val_logits, test_logits,
-                                          calibrate=not args.no_calibrate, target_fpr=args.target_fpr)
+        tuned, val_p, test_p = evaluate_protocol(val, test, val_logits, test_logits,
+                                                 calibrate=not args.no_calibrate, target_fpr=args.target_fpr,
+                                                 min_words=args.min_words)
         print_report("TUNED (LoRA)", tuned)
         log_split_metrics(tuned["results"], "test")
         mlflow.log_metrics({"temperature": tuned["temperature"], "threshold": tuned["threshold"],
@@ -342,14 +377,25 @@ def main() -> None:
 
         OUT_DIR.mkdir(exist_ok=True)
         stem = OUT_DIR / run_name  # per-run files, so a sweep does not overwrite itself
-        test.assign(logit=test_logits, prob=test_p)[
-            ["answer_id", "dataset", "slice", "label", "question_id", "generator", "n_words", "logit", "prob"]
-        ].to_csv(f"{stem}_test_predictions.csv", index=False)
+
+        # one row per answer for EVERY val and test row (not filtered by word count), for the
+        # untouched and the tuned model; harness.py fits thresholds and evaluates from this file.
+        # Untouched y_prob = sigmoid(logit); tuned y_prob = sigmoid(logit / T), T fitted above.
+        parts = []
+        if base_val_logits is not None:
+            parts += [score_rows("desklib-untouched", "val", val, base_val_logits, expit(base_val_logits)),
+                      score_rows("desklib-untouched", "test", test, base_test_logits, expit(base_test_logits))]
+        parts += [score_rows("desklib-lora", "val", val, val_logits, val_p),
+                  score_rows("desklib-lora", "test", test, test_logits, test_p)]
+        scores_path = save_scores(run_name, args.seed, parts)
+        if train_on:
+            print("note: 'test' here is every row of the held-out datasets, including their train/val partitions, "
+                  "so harness.load_run cannot join this file to the corpus val/test files yet")
+
         Path(f"{stem}_results.json").write_text(json.dumps(payload, indent=2, default=float))
         model.save_pretrained(f"{stem}_adapter")
-        mlflow.log_artifact(f"{stem}_test_predictions.csv")
         log_dict_artifact(payload, "lora_results.json")
-        print(f"\nWrote {stem}_results.json, _test_predictions.csv, _adapter/")
+        print(f"\nWrote {stem}_results.json, _adapter/ and {scores_path.name}")
         print(f"MLflow run: {mlflow.active_run().info.run_id}")
 
 

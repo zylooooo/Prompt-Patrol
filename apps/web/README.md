@@ -3,6 +3,43 @@
 React 19 + TypeScript + Vite frontend. See the [repo README](../../README.md) for
 running the full stack; this file covers the frontend toolchain only.
 
+## Working on the frontend
+
+The `frontend` container in the dev stack is an nginx-served production build,
+so it does not pick up edits. To work with hot reload, keep the rest of the
+stack running and swap that one container for the Vite dev server:
+
+```sh
+cd apps && docker compose stop frontend
+cd web && nvm use && npm install && npm run dev
+```
+
+Stop the container first. Both use port 5173, and if it is taken Vite quietly
+moves to the next free port — so you end up testing the image you built rather
+than the edits you just made.
+
+Vite proxies `/api` to the API on `localhost:8000`, the same way nginx does in
+the container, so the session cookie and every request behave the same in
+both. Sign-in still goes through Auth0, so provision yourself first (see the
+repo README).
+
+## Layout
+
+| Path              | What lives there                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `src/pages/`      | One component per route                                                                   |
+| `src/components/` | Everything else visible — dialogs, tables, the app shell                                  |
+| `src/hooks/`      | Data hooks (`useChecks`, `useBatches`, `useUsers`, …) and small UI hooks                  |
+| `src/api/`        | Typed calls to the API. `client.ts` holds the shared request helper                       |
+| `src/lib/`        | Pure helpers: CSV parsing, formatting, cross-tab auth messaging                           |
+| `src/types.ts`    | Shared types mirroring `docs/openapi.yaml`, plus the display copy for each enum           |
+| `e2e/`            | Playwright specs — see [End-to-end tests](#end-to-end-tests)                              |
+| `nginx.conf`      | The container's server: SPA fallback, `/api` proxy, and the security headers (CSP et al.) |
+
+Unit tests sit in `__tests__/` folders next to the code they cover. The visual
+design system — tokens, type, components — is documented in the repo root's
+[`DESIGN.md`](../../DESIGN.md).
+
 ## Scripts
 
 | Script               | What it does                                                                                      |
@@ -54,6 +91,11 @@ promotes the `engines` range from an `EBADENGINE` warning into a hard failure, s
 `npm install`/`npm ci` stops immediately and names the version problem instead of
 letting it surface later as a bundler `SyntaxError`. The `Dockerfile` copies
 `.npmrc` alongside `package*.json` so the same gate applies inside the image.
+
+`engine-strict` only gates installs, so `dev`, `build`, `lint`, `typecheck` and
+`test` each run `scripts/check-node.mjs` first as a `pre` script. It compares the
+running Node against `.nvmrc` and stops with a plain message, rather than letting
+an old Node die inside the bundler with an error that names neither.
 
 `engines` is `>=24`. Node 20 is excluded even though ESLint and Vite still accept
 `^20.19.0`: that line went EOL 2026-04-30, and anything below 20.12 breaks

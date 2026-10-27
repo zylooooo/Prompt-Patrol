@@ -4,11 +4,12 @@ import logging
 import uuid
 
 import boto3
+from sqlalchemy import select
+
 from config import AWS_ENDPOINT_URL, AWS_REGION, SQS_BATCHES_DLQ_URL, SQS_BATCHES_QUEUE_URL, configure_logging
 from db import async_session
 from models import Batch, BatchRowFailure
 from services import create_check
-from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +116,24 @@ async def poll_once() -> None:
         QueueUrl=SQS_BATCHES_QUEUE_URL,
         MaxNumberOfMessages=POLL_MAX_MESSAGES,
         WaitTimeSeconds=POLL_WAIT_SECONDS,
+        AttributeNames=["ApproximateReceiveCount"],
     )
     messages = response.get("Messages", [])
     for message in messages:
+        batch_id = None
         try:
             payload = json.loads(message["Body"])
+            batch_id = payload.get("batch_id")
             async with async_session() as db:
                 await process_message(db, payload)
         except Exception:
-            logger.exception("Failed to process batch row: %s", message.get("Body"))
+            # Never log PII, only log necessary information for debugging.
+            logger.exception(
+                "Failed to process batch row (batch %s, message %s, attempt %s).",
+                batch_id,
+                message.get("MessageId"),
+                message.get("Attributes", {}).get("ApproximateReceiveCount"),
+            )
             continue
         await asyncio.to_thread(
             _sqs_client().delete_message,

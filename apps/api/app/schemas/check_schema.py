@@ -83,6 +83,7 @@ class CheckSummary(BaseModel):
     confidence: float | None
     strictness_applied: StrictnessEnum
     model_version: str
+    calibration_version: str | None
     answer_text: str | None
     created_at: datetime
 
@@ -99,6 +100,7 @@ class CheckSummary(BaseModel):
             confidence=check.confidence,
             strictness_applied=check.strictness_applied,
             model_version=check.model_version,
+            calibration_version=check.calibration_version,
             answer_text=check.answer_text,
             created_at=check.created_at,
         )

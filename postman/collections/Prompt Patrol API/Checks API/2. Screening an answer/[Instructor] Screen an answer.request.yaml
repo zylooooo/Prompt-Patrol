@@ -1,0 +1,36 @@
+$kind: http-request
+name: "[Instructor] Screen an answer"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  Default strictness. Stores CHECK_ID.
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "answer_text": "Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more."
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("201", () => pm.response.to.have.status(201));
+      const body = pm.response.json();
+      pm.test("Location points at the new check", () => pm.expect(pm.response.headers.get("Location")).to.eql("/api/checks/" + body.check_id));
+      pm.test("Tier 1 fields are present", () => {
+        pm.expect(body).to.include.keys("check_id", "verdict", "raw_score", "detector", "created_at", "actor_id");
+        pm.expect(["ai_generated", "human_written", "uncertain"]).to.include(body.verdict);
+        pm.expect(body.raw_score).to.be.within(0, 1);
+      });
+      pm.test("Tier 2 fields are present, possibly null", () => pm.expect(body).to.include.keys("confidence", "abstain_reason", "truncated"));
+      pm.test("attributed to the caller, never the client", () => pm.expect(body.actor_id).to.eql(pm.globals.get("INSTRUCTOR_USER_ID")));
+      pm.test("server-selected model and default strictness", () => {
+        pm.expect(body.detector.model_version).to.eql(pm.globals.get("DETECTOR_MODEL_VERSION"));
+        pm.expect(body.detector.strictness_applied).to.eql("standard");
+      });
+      pm.globals.set("CHECK_ID", body.check_id);
+    language: text/javascript
+order: 1000

@@ -3,6 +3,7 @@ import json
 import logging
 import logging.config
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -156,7 +157,23 @@ class _RequestIdFilter(logging.Filter):
         return True
 
 
-class _JsonFormatter(logging.Formatter):
+# Email addresses never reach a deployed log in full: j.doe@smu.edu.sg is
+# written as j***@smu.edu.sg. The first letter and domain are kept for
+# debugging; log user ids, not addresses, where one exists. Applied to the
+# whole formatted line, so exception messages and tracebacks are covered too.
+_EMAIL = re.compile(r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+
+
+def redact_emails(text: str) -> str:
+    return _EMAIL.sub(r"\1***@\2", text)
+
+
+class _RedactingFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_emails(super().format(record))
+
+
+class _JsonFormatter(_RedactingFormatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
@@ -167,7 +184,7 @@ class _JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload)
+        return redact_emails(json.dumps(payload))
 
 
 def configure_logging() -> None:
@@ -178,7 +195,9 @@ def configure_logging() -> None:
             "filters": {"request_id": {"()": _RequestIdFilter}},
             "formatters": {
                 "plain": {
-                    "format": "%(asctime)s %(levelname)s %(name)s [%(request_id)s]: %(message)s",
+                    # Unredacted only on a developer's own machine.
+                    "()": logging.Formatter if ENVIRONMENT == "dev" else _RedactingFormatter,
+                    "fmt": "%(asctime)s %(levelname)s %(name)s [%(request_id)s]: %(message)s",
                 },
                 "json": {"()": _JsonFormatter},
             },

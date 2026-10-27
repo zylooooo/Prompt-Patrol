@@ -9,19 +9,19 @@ from sqlalchemy.sql import func
 from .base import Base
 
 
-class VerdictEnum(str, enum.Enum):
+class VerdictEnum(enum.StrEnum):
     ai_generated = "ai_generated"
     human_written = "human_written"
     uncertain = "uncertain"
 
 
-class StrictnessEnum(str, enum.Enum):
+class StrictnessEnum(enum.StrEnum):
     lenient = "lenient"
     standard = "standard"
     strict = "strict"
 
 
-class AbstainReasonEnum(str, enum.Enum):
+class AbstainReasonEnum(enum.StrEnum):
     """Why a score was not turned into a verdict. NULL means it was."""
 
     answer_too_short = "answer_too_short"

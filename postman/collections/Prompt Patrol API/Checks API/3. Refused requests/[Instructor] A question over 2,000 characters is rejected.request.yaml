@@ -1,0 +1,28 @@
+$kind: http-request
+name: "[Instructor] A question over 2,000 characters is rejected"
+description: |-
+  Runs as: instructor (INSTRUCTOR_SESSION)
+
+  The body is built in the pre-request script.
+url: "{{BASE_URL}}/api/checks"
+method: POST
+headers:
+  Cookie: __Host-session={{INSTRUCTOR_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "answer_text": "Setting the pointer to null after freeing it means a second free becomes a no-op, so the double free in the cleanup path cannot corrupt the allocator any more.",
+      "question_text": "{{LONG_QUESTION}}"
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.variables.set("LONG_QUESTION", "q".repeat(2001));
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("400 invalid_request", () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error).to.eql("invalid_request"); });
+      pm.test("names question_text", () => pm.expect(pm.response.json().message).to.include("question_text"));
+    language: text/javascript
+order: 7000

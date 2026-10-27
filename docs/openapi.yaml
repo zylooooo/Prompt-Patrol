@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.25.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.30.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,34 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.30.0 AWS edge hardening (CD step 6): WAF web ACL (IP reputation, two
+#          per-IP rate rules, Common Rule Set and Known Bad Inputs with their
+#          body rules in Count), a CloudFront security-headers policy, and
+#          CORS on the batches bucket. A rate-limit block is CloudFront's
+#          non-JSON `403`. No request or response shape changes. See
+#          DECISION LOG [0.30.0].
+#   0.29.0 Batch cancel's queue drain hides messages it receives for 30 s, not
+#          the queue default (600 s in AWS). maxReceiveCount 3 → 5. No request
+#          or response shape changes. See DECISION LOG [0.29.0].
+#   0.28.0 No API Gateway. AWS ingress is CloudFront (WAF) → VPC origin →
+#          internal ALB → API service. `x-gateway-configuration` is replaced
+#          by `x-edge-configuration`; `x-auth-enforcement: GATEWAY` is now
+#          `APP`, which is where it already ran since [0.25.0]. The NAT
+#          justification now names the Management API calls it also
+#          carries. Deploy Region recorded: `ap-southeast-1`. No request or
+#          response shape changes. See DECISION LOG [0.28.0].
+#   0.27.0 DELETE /api/users/{id} now cancels the user's unfinished batches
+#          in the same commit (`cancelled_at` set, queued rows purged best
+#          effort), so no check is written for a deleted owner. Finished
+#          batches are left as they are. Closes the KNOWN GAP in [0.26.0].
+#          No request or response shape changes. See DECISION LOG [0.27.0].
+#   0.26.0 Re-provisioning a deleted email no longer hands the new account
+#          the previous holder's checks and batches. The reused row is
+#          stamped `reprovisioned_at`; for a non-`root_admin` caller,
+#          GET /api/checks omits, and GET /api/checks/{check_id},
+#          GET /api/batches/{batch_id} and its cancel return `404` for,
+#          rows created before it. root_admin's view is unchanged. No field
+#          is added to any response. See DECISION LOG [0.26.0].
 #   0.25.0 BREAKING (CSRF) — every POST/PUT/PATCH/DELETE must come from this
 #          application's own origin: `Sec-Fetch-Site: same-origin` (or
 #          `none`), else an `Origin` equal to the SPA's; anything else is
@@ -318,7 +346,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.25.0
+  version: 0.30.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -372,8 +400,8 @@ info:
     Authentication resolves **identity only**: a live session and the user
     it belongs to, with no opinion on what that user may do. It runs in the
     app on every protected request, whatever sits in front of it — there is
-    no gateway today, and the app trusts no identity a proxy or gateway
-    passes along (see `x-gateway-configuration` and DECISION LOG [0.25.0]).
+    no API gateway, and the app trusts no identity a proxy passes along
+    (see `x-edge-configuration` and DECISION LOG [0.25.0], [0.28.0]).
 
     An unauthenticated request to a protected route gets a `401` before any
     route code runs. *Authenticated-yet-unauthorized* traffic receives a
@@ -555,42 +583,70 @@ servers:
     description: Prism mock server
 
 # -----------------------------------------------------------------------------
-# Gateway configuration (non-OpenAPI; documents Terraform intent)
+# Edge configuration (non-OpenAPI; documents Terraform intent)
 # -----------------------------------------------------------------------------
-x-gateway-configuration:
+x-edge-configuration:
   status: |
-    TARGET DESIGN, NOT DEPLOYED. There is no API Gateway in front of the app
-    today: nginx (local and e2e) serves the SPA and proxies `/api/*` to it
-    on the same origin. Nothing below is relied on by the running code —
-    every guarantee the app needs (a valid session, CSRF), it enforces
-    itself. If a gateway is added, it is an outer filter on top of those
-    checks, never a replacement for them. See DECISION LOG [0.25.0].
-  authorizer:
-    type: REQUEST
-    identity_sources:
-      - $request.header.Cookie
-    result_ttl_seconds:
-      0 # MUST be 0. Caching reintroduces a revocation
-      # window and defeats the server-side session store.
-    responsibilities:
-      - Parse the `__Host-session` cookie.
-      - Look up the session row; reject if absent, revoked, past absolute
-        expiry, or idle beyond 30 minutes.
-      - Return an IAM policy. No identity is forwarded to the app (see
-        `context_propagation`).
-    explicitly_out_of_scope:
-      - Role resolution
-      - Permission evaluation
-      - Profile hydration
-      - Any route-to-role mapping
-      - CSRF (enforced in the app; see "CSRF" in `info.description`)
+    DEPLOYED in AWS (CloudFront + WAF -> VPC origin -> internal ALB). Locally
+    (and in e2e) nginx still serves the SPA and proxies `/api/*` on the same
+    origin; in AWS, CloudFront plays that role. There is no API Gateway and
+    none is planned — see DECISION LOG [0.28.0]. Every guarantee the app
+    needs (a valid session, CSRF), it enforces itself; the edge is an outer
+    filter, never a replacement.
+  path:
+    - CloudFront (AWS WAF attached) — one distribution, one origin for the
+      browser. Default behavior → S3 (SPA). `/api/*` → VPC origin.
+    - CloudFront VPC origin → internal Application Load Balancer → API
+      service (ECS Fargate, private subnet). The ALB has no public address.
+  waf:
+    note: |
+      One web ACL `prompt-patrol` (scope CLOUDFRONT, in `us-east-1`; default
+      action Allow), attached to the distribution. Rules in priority order:
+        1. `AWSManagedRulesAmazonIpReputationList` — Block.
+        2. Rate limit, all requests — Block above 2000 requests / 5 min / IP.
+        3. Rate limit, writes — Block above 300 requests / 5 min / IP, for
+           POST, PUT, PATCH and DELETE on paths starting `/api/`.
+        4. `AWSManagedRulesCommonRuleSet` — Block, `*_BODY` rules in Count.
+        5. `AWSManagedRulesKnownBadInputsRuleSet` — Block, `*_BODY` rules
+           in Count.
+
+      The WAF never blocks on request bodies. Student answers contain code
+      (`<script>`, SQL, `${jndi:...}`) and run to 10,000 + 2,000 characters
+      (`answer_text` + `question_text`), past the Common Rule Set's 8 KB body
+      limit; a body block would be a `403` on a legitimate check. Header,
+      URI and query-string checks stay on.
+
+      Sampled requests are off and there is no WAF logging: a sample keeps
+      full request headers, including the `__Host-session` cookie, in the
+      `us-east-1` console, and WAF redaction does not apply to samples.
+      Per-rule CloudWatch metrics are on.
+
+      A WAF block (rate limit, IP reputation, header/URI match) is
+      CloudFront's own non-JSON `403`, not the `Error` schema. Clients must
+      not assume every `403` has a JSON body.
+  response_headers:
+    note: |
+      CloudFront response headers policy `prompt-patrol-security` on the
+      default and `/api/*` behaviors: CSP, HSTS (1 year, no
+      `includeSubDomains`/`preload`), `nosniff`, `X-Frame-Options: DENY`,
+      `Referrer-Policy`, `Permissions-Policy`. Mirrors
+      `apps/web/nginx.conf`, except HSTS max-age and `connect-src`, which
+      lists the batches bucket hosts instead of LocalStack. Change both
+      together.
+  api_behavior:
+    cache_policy: CachingDisabled
+    origin_request_policy:
+      AllViewerExceptHostHeader # MUST forward Cookie, Origin and
+      # Sec-Fetch-Site: the app's session and CSRF checks read them, and
+      # CSRF fails closed when both are missing.
+    allowed_methods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
   context_propagation:
     note: |
-      The app trusts no identity passed along by a gateway or proxy. Every
+      The app trusts no identity passed along by a proxy. Every
       protected route resolves the caller from the `__Host-session` cookie
       through the `Depends()` chain (`get_current_session` ->
-      `get_current_user` -> `require_role`), with or without a gateway in
-      front. An `X-PP-User-Id` header is ignored.
+      `get_current_user` -> `require_role`), whatever sits in front. An
+      `X-PP-User-Id` header is ignored.
 
       Trusting a gateway-set `X-PP-User-Id` was the [0.5.3] plan. It shipped
       as a full authentication bypass: whenever `ENVIRONMENT` was not `dev`,
@@ -603,10 +659,10 @@ x-gateway-configuration:
       one indexed lookup. See DECISION LOG [0.25.0].
   network:
     note: |
-      If a gateway is added, the ECS task security group should accept
-      ingress only from the API Gateway VPC Link. This is hardening, not the
-      authentication boundary — the app checks the session itself either
-      way.
+      The ALB security group accepts ingress only from the CloudFront VPC
+      origin's security group; the API task security group only from the
+      ALB. This is hardening, not the authentication boundary — the app
+      checks the session itself either way.
 
 tags:
   - name: auth
@@ -663,7 +719,7 @@ paths:
       tags: [auth]
       operationId: initiateLogin
       summary: Begin the OIDC Authorization Code flow
-      x-auth-enforcement: NONE # API Gateway: authorizationType = NONE
+      x-auth-enforcement: NONE
       x-browser-navigation-only: true
       description: |
         Generates `state`, `nonce`, and a PKCE `code_verifier`, keeps them in
@@ -744,8 +800,11 @@ paths:
            which defeats session fixation.
         8. **Discard the ID token.** It is not persisted.
 
-        Steps 2 and 3 are the *only* backend-to-Auth0 traffic in the entire
-        system, and the sole justification for the NAT Gateway.
+        Steps 2 and 3, plus the Management API calls made by user
+        provisioning, resend-invite and delete ([0.8.0]), are the only
+        backend-to-Auth0 traffic, and the sole justification for the NAT
+        Gateway. Only the API task needs that route; the Worker and detector
+        get no internet egress. See DECISION LOG [0.28.0].
 
         ### Step 6 — provisioning resolution
         Auth cannot decide whether a person may use this system; that is a
@@ -832,7 +891,7 @@ paths:
       summary: Return the caller's identity, role and session state
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "any provisioned user — require_role('teaching_assistant')"
       description: |
         The SPA's route guard and bootstrap call: one request answers "am I
@@ -880,7 +939,7 @@ paths:
       summary: Revoke all sessions for the current user
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       description: |
         Global logout. Revokes **every** active session for this `user_id`,
         not just the calling browser's — the chosen semantics for an academic
@@ -959,7 +1018,7 @@ paths:
       summary: Return the current user's profile and role
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       description: |
         The caller's own `User` record, resolved from their session cookie.
         The SPA bootstraps from `GET /api/auth/me` instead, which adds the
@@ -981,7 +1040,7 @@ paths:
       summary: Provision a new user record (invite-first)
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY # authentication only
+      x-auth-enforcement: APP # authentication only
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
         Creates a `users` row keyed on `email`, with `auth0_sub` set to the
@@ -1051,7 +1110,9 @@ paths:
             `deactivated` (use `POST /api/users/{id}/reactivate` for the
             latter). A `deleted` row does not block provisioning: the new
             account reuses that row, with a fresh Auth0 credential and a
-            `deleted → active` entry in the status history.
+            `deleted → active` entry in the status history. Checks and
+            batches the previous holder created stay out of the new
+            account's reads (DECISION LOG [0.26.0]).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1069,7 +1130,7 @@ paths:
       summary: List / filter users
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — delegation-scoped, see DECISION LOG [0.5.5]"
       description: |
         Administrative directory view. Delegation-scoped, not a flat
@@ -1157,7 +1218,7 @@ paths:
       summary: Add a teaching assistant to the caller's team by email (creates or links)
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — require_role('instructor') exactly (not root_admin), see DECISION LOG [0.21.0]"
       description: |
         The instructor's single "add a teaching assistant" action. The caller
@@ -1237,7 +1298,7 @@ paths:
       summary: Set a user's display name
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — self or root_admin, see DECISION LOG [0.21.0]"
       description: |
         The only field it changes is `display_name`. Anyone may set their
@@ -1285,7 +1346,7 @@ paths:
       summary: Get a single user
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — object-level, see DECISION LOG [0.5.2]"
       description: |
         Object-scoped, not role-gated — every provisioned caller may hit
@@ -1325,7 +1386,7 @@ paths:
       summary: Delete a user (terminal) and revoke all of their sessions
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.18.0]"
       description: |
         Moves the row to `status = deleted`. The row is never removed — the
@@ -1343,11 +1404,16 @@ paths:
         Any teaching assistant left with no active supervisor is signed
         out in the same commit ([0.22.0]).
 
+        Cancels every unfinished batch the user owns in the same commit,
+        exactly as `POST /api/batches/{batch_id}/cancel` would; finished
+        batches are untouched. Their queued rows are then purged best
+        effort ([0.27.0]).
+
         **Immediately revokes every active session belonging to this user.**
         It takes effect on their very next request: the app checks the
-        session row on every request and caches nothing between requests.
-        (A gateway, if one is added, must keep `result_ttl_seconds = 0` for
-        the same reason — see `x-gateway-configuration`.)
+        session row on every request and caches nothing between requests
+        (CloudFront's `/api/*` behavior is `CachingDisabled` for the same
+        reason — see `x-edge-configuration`).
 
         Removes the Auth0 credential after the local change commits. If that
         call fails the row is still `deleted` and the failure is logged;
@@ -1393,7 +1459,7 @@ paths:
       summary: Pause an account (reversible) and revoke its sessions
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
         `active → deactivated`. **`root_admin` only**, on anyone but
@@ -1443,7 +1509,7 @@ paths:
       summary: Return a deactivated account to active
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
         `deactivated → active`, same `root_admin`-only scope and body as
@@ -1485,7 +1551,7 @@ paths:
       summary: Re-send the password-set email to an invitee who has never signed in
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — delegation-scoped, see DECISION LOG [0.19.0]"
       description: |
         Asks Auth0 to email the invitee the same password-set link again for
@@ -1537,7 +1603,7 @@ paths:
       summary: Change a user's role
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: users module — require_role('root_admin')
       description: |
         Isolated from `POST /api/users` and from a general profile update so
@@ -1594,7 +1660,7 @@ paths:
       summary: Link an instructor as a supervisor of a teaching assistant
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — require_role('root_admin'), see DECISION LOG [0.21.0]"
       description: |
         Adds an active `supervisions` link between the teaching assistant
@@ -1649,7 +1715,7 @@ paths:
       summary: End one instructor's supervision of a teaching assistant ("Remove from team")
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "users module — root_admin, or the instructor named in the path, see DECISION LOG [0.21.0]"
       description: |
         Ends the active link (sets `ended_at`/`ended_by`; the row is kept as
@@ -1697,7 +1763,7 @@ paths:
       summary: Declare the served detector's runtime input contract
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       description: |
         Fetched once on SPA bootstrap, alongside `GET /api/auth/me`.
 
@@ -1734,7 +1800,7 @@ paths:
       summary: Whether the detector can score right now
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: "any provisioned user — require_role('teaching_assistant')"
       description: |
         Backs the SPA's detector status badge, which polls it. **Always
@@ -1780,7 +1846,7 @@ paths:
       summary: Run a detection on one short answer
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         users module — any provisioned, non-deleted user, except a
         `teaching_assistant` with no supervisor. No role gate beyond that:
@@ -1909,7 +1975,7 @@ paths:
       summary: List past checks (history)
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         users module — object-level. Instructors and teaching assistants see
         only their own checks; root_admin sees all.
@@ -1983,7 +2049,7 @@ paths:
       summary: Retrieve one past check
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         users module — object-level. `root_admin`, or the check's own
         `actor_id`.
@@ -2019,7 +2085,7 @@ paths:
       summary: Get a presigned URL to upload a batch CSV
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         Same gate as `POST /api/checks` — any provisioned, non-deleted user,
         except a `teaching_assistant` with no supervisor.
@@ -2056,7 +2122,7 @@ paths:
       summary: Submit a batch job from an already-uploaded CSV
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         Same gate as `POST /api/checks` — any provisioned, non-deleted user,
         except a `teaching_assistant` with no supervisor.
@@ -2138,7 +2204,7 @@ paths:
       summary: Poll batch progress
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         users module — object-level, same convention as `GET /api/checks/{id}`.
         `root_admin`, or the batch's own `actor_id`.
@@ -2173,7 +2239,7 @@ paths:
       summary: Stop an in-flight batch
       security:
         - sessionCookie: []
-      x-auth-enforcement: GATEWAY
+      x-auth-enforcement: APP
       x-authorization: |
         Same object-level gate as `GET /api/batches/{id}` — `root_admin`, or
         the batch's own `actor_id`. 404, not 403, for someone else's batch.
@@ -2802,7 +2868,7 @@ components:
         [check_id, verdict, raw_score, strictness_applied, created_at, actor_id]
       description: |
         History table row. A trimmed `CheckResult` — excludes `question_text`,
-        `abstain_reason`, `truncated`, `calibration_version`,
+        `abstain_reason`, `truncated`,
         `threshold_applied`, `target_fpr`, `used_question_text`, `latency_ms`,
         `explanation`, and `spans`, none of which the history table renders.
         Drill down via `GET /api/checks/{id}` for the full record.
@@ -2840,6 +2906,13 @@ components:
         strictness_applied:
           $ref: "#/components/schemas/Strictness"
         model_version: { type: string }
+        calibration_version:
+          type: string
+          nullable: true
+          description: |
+            Flattened out of `detector` like `model_version`. NULL means the
+            check was scored uncalibrated, and the history and batch tables
+            show the uncalibrated notice for it.
         answer_text:
           type: string
           nullable: true
@@ -3133,10 +3206,6 @@ components:
         `session_unknown`, `session_revoked`, `session_expired`,
         `session_ended`, `account_deactivated`) so the login page can say
         why.
-
-        If an API Gateway is ever put in front (see
-        `x-gateway-configuration`), its own 401 template MUST emit this same
-        `Error` schema, or the SPA receives two differently shaped 401s.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -3169,6 +3238,151 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.30.0] WAF, security headers and S3 CORS at the AWS edge.
+#
+#   PROBLEM. Step 5 put the app behind CloudFront with no WAF, no security
+#   headers (nginx sets them only locally) and no CORS on the batches bucket,
+#   so the edge was open to floods and batch CSV upload could not work.
+#   DECISION. A WAF web ACL with five rules (see `x-edge-configuration.waf`):
+#   IP reputation, a 2000 / 5 min / IP rate limit on everything, a stricter
+#   300 / 5 min / IP limit on API writes, and the Common Rule Set and Known
+#   Bad Inputs set with every `*_BODY` rule forced to Count. Rate limiting is
+#   the priority; the managed groups are an outer filter for headers, URI and
+#   query string. The rate limits sit above a shared campus NAT plus 2 s
+#   batch polling. CloudFront response headers policy
+#   `prompt-patrol-security` sets the nginx
+#   header set on both behaviors, and the batches bucket allows a browser
+#   `PUT` from the CloudFront origin only.
+#   WHY NO BODY INSPECTION. An instructor must never get a `403` on a real
+#   check because of what the student wrote: answers about XSS, SQL
+#   injection or Log4Shell contain exactly the strings the body rules match,
+#   and bodies reach 12,000 characters against an 8 KB inspection limit.
+#   The app already parameterises queries and React escapes output.
+#   WHY SAMPLED REQUESTS ARE OFF. They store full request headers, cookie
+#   included, for about 3 h, and WAF redaction does not cover them. Turn on
+#   for one rule while debugging a suspected false positive, then off.
+#   OPTION REJECTED. SQL injection rule set: body-heavy, and the ORM already
+#   parameterises. Bot Control and Account Takeover Prevention: paid, and
+#   Auth0 Attack Protection covers login. WAF logging: CloudFront-scope logs
+#   must live in `us-east-1`, hold client IPs and headers, and cost per GB.
+#   Body inspection with Block: see above.
+#   CEILING. Rate rules act per source IP; many users behind one NAT share
+#   a budget. Raise the limits if the metrics show legitimate blocks. A
+#   new `*_BODY` rule added to a managed group blocks until the Count list
+#   in `infra/waf.tf` is refreshed (see `infra/README.md`).
+#   CHECKED 2026-10-19. The presigned batch upload URL is the global S3 host
+#   (boto3 1.35.99), and CSP `connect-src` allows it and the regional host.
+#
+# [0.29.0] Batch cancel's queue drain hides messages for 30 s, not 600 s.
+#
+#   PROBLEM. The AWS batches queue needs a 600 s visibility timeout so the
+#   worker's 10 × 30 s of scoring does not see the message redelivered
+#   mid-processing. The [0.15.0] drain receives other batches' messages to
+#   look at them and leaves them alone; under a 600 s timeout it would hide
+#   those rows for 10 minutes, and each receive also counts toward
+#   `maxReceiveCount` and so toward the redrive to the DLQ.
+#   DECISION. The drain passes `VisibilityTimeout=30` on its own receives,
+#   the behaviour [0.15.0] was verified with. The queue default stays 600 s
+#   for the worker. `maxReceiveCount` is 5 (was 3), and LocalStack is
+#   created with the same 600 s / 5 as AWS.
+#   CEILING. A drain that runs longer than 30 s re-receives other batches'
+#   rows it already saw. The Worker's `cancelled_at` check stays the
+#   correctness backstop for anything the drain misses.
+#   CEILING. With 600 s × `maxReceiveCount` 5, a row whose detector call
+#   keeps failing takes ~50 min to reach the DLQ and show as `failed` (was
+#   ~1.5 min under LocalStack's old 30 s / 3), e.g. during a detector outage.
+#   Accepted for now; upgrade path: the worker calls
+#   `change_message_visibility` with a short timeout on failure.
+#
+# [0.28.0] No API Gateway: CloudFront reaches the app through a VPC origin.
+#
+#   PROBLEM. The planned AWS ingress was CloudFront → API Gateway → app.
+#   Since [0.25.0] the app checks the session and CSRF on every request
+#   itself, so the gateway's REQUEST authorizer would only repeat the same
+#   session lookup. What the gateway would add instead: a public
+#   `execute-api` URL that skips CloudFront and its WAF (WAF cannot attach
+#   to an HTTP API); a 30-second integration timeout on a synchronous,
+#   CPU-bound detector call; a second source of 401s that must mirror the
+#   `Error` schema; and a VPC Link plus an internal ALB anyway, since a
+#   gateway cannot reach Fargate tasks directly.
+#   DECISION. CloudFront (WAF attached) routes `/api/*` through a
+#   CloudFront VPC origin to an internal ALB in front of the API service.
+#   The ALB has no public address and accepts traffic only from the VPC
+#   origin's security group, so there is no way around the WAF. The SPA
+#   and API stay on one origin, so `__Host-session`, `SameSite=Strict` and
+#   the `Sec-Fetch-Site` check are unchanged; the `/api/*` behavior must
+#   disable caching and forward Cookie, Origin and Sec-Fetch-Site.
+#   Throttling is a WAF rate-based rule. `x-auth-enforcement` is now `APP`.
+#   Also corrected: the NAT carries the Management API calls from [0.8.0]
+#   as well as the callback. A NAT cannot restrict destinations, so the
+#   Worker and detector are kept off it by security group / route table,
+#   not by the NAT.
+#   OPTION REJECTED. Keep API Gateway (HTTP API + VPC Link + internal ALB).
+#   It works, but only once a CloudFront-to-origin secret is checked to
+#   close the `execute-api` bypass, and everything else it offers (auth,
+#   validation, throttling, logs) is already done by the app, WAF, ALB or
+#   CloudFront. Revisit if third-party API consumers (API keys, usage
+#   plans) become a requirement.
+#   REGION. Every Regional resource is in `ap-southeast-1` (Singapore), so
+#   stored student answers stay in Singapore. The only exceptions are the
+#   CloudFront-scoped WAF web ACL and CloudFront's ACM certificate, which
+#   AWS requires in `us-east-1`; neither holds student data.
+#   CHECKED. CloudFront (and its VPC-origin API), ELB, ECS, ECR, RDS, VPC
+#   and PrivateLink, WAF, ACM, SQS, Secrets Manager, EventBridge and
+#   CloudWatch are available to the account. WAF on CloudFront and any
+#   Region other than Sydney were not offered on the new-AWS-experience
+#   plan; both needed the Paid plan with advanced features activated
+#   (done 2026-10-17, account now in AWS Organization `Zhi-Yi-Team`).
+#
+# [0.27.0] Deleting a user cancels their unfinished batches.
+#
+#   PROBLEM. The KNOWN GAP in [0.26.0]: the Worker kept scoring a deleted
+#   user's queued rows. If the address was re-provisioned first, those
+#   checks were stamped after `reprovisioned_at` and showed to the new
+#   holder. It also spent detector time on work nobody can read.
+#   DECISION. `delete_user` sets `cancelled_at` on the user's batches that
+#   are not yet finished (`completed + failed < row_total`), in the same
+#   commit as the status change. The Worker already skips any row whose
+#   batch is cancelled ([0.14.0]), so that commit is what closes the gap.
+#   After it, one best-effort SQS purge drops the queued rows; a purge
+#   failure is logged, not raised, since the user is already deleted and
+#   the Worker's check is the backstop. Finished batches are left alone so
+#   root_admin's view of them doesn't turn into "cancelled".
+#   SCOPE. Delete only. Deactivation is reversible and keeps its batches
+#   running, the same way it keeps supervision links ([0.21.0]).
+#   OPTION REJECTED. Having the Worker refuse to write a check whose batch
+#   predates the owner's `reprovisioned_at`. It closes the visibility hole
+#   but still scores every row, and puts a user-lifecycle rule in the
+#   Worker instead of next to the deletion that causes it.
+#
+# [0.26.0] A re-provisioned address does not inherit the old holder's history.
+#
+#   PROBLEM. Deleting a user keeps the row and its id, and re-provisioning
+#   the same email reuses that row ([0.18.0]). Checks and batches are owned
+#   by `actor_id`, so whoever held the address next could read every check
+#   and batch the previous holder ran, including retained student answers.
+#   The reuse code already says the address "may now belong to someone
+#   else" and clears the display name for that reason; the history was the
+#   one thing it missed.
+#   DECISION. `users.reprovisioned_at` is stamped when a deleted row is
+#   re-provisioned. A non-`root_admin` caller owns a check or batch only if
+#   it is theirs by `actor_id` and was created at or after that stamp.
+#   Older rows read as "not yours": omitted from lists, `404` on fetch and
+#   cancel. root_admin still sees everything, so nothing is lost for an
+#   investigation. Migration 0014 backfills the stamp from each row's latest
+#   `deleted → active` status event.
+#   COST. A person deleted and re-invited by mistake loses sight of their own
+#   earlier checks. Accepted: the system cannot tell that case from a
+#   reassigned address, and leaking one person's history to another is the
+#   worse failure. root_admin can still read it for them.
+#   OPTION REJECTED. A fresh `users.id` on re-provisioning. It needs the
+#   email moved off the old row and changes [0.18.0]'s reuse model, for the
+#   same outcome as one column and a filter.
+#   KNOWN GAP. A batch still queued when its owner is deleted can be scored
+#   after re-provisioning; those checks are stamped later and would show to
+#   the new holder. Deleting a user does not cancel their batches today.
+#   Closed in [0.27.0].
 #
 # [0.25.0] The app checks every request itself; CSRF is enforced by origin.
 #

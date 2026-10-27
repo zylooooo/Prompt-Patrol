@@ -11,7 +11,14 @@ from .checks_service import (
 )
 from .detector_client import MODEL_VERSION, Status
 from .detector_client import health as detector_health
-from .sessions import SESSION_IDLE_TTL, authenticate_session, create_session, revoke_all_for_user, sign_out_everywhere
+from .sessions import (
+    SESSION_IDLE_TTL,
+    authenticate_session,
+    create_session,
+    purge_expired_sessions,
+    revoke_all_for_user,
+    sign_out_everywhere,
+)
 from .users_service import (
     LoginRejection,
     add_teaching_assistant,
@@ -42,6 +49,7 @@ __all__ = [
     "create_session",
     "authenticate_session",
     "revoke_all_for_user",
+    "purge_expired_sessions",
     "sign_out_everywhere",
     "resolve_user",
     "mark_first_login",

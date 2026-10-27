@@ -1,0 +1,17 @@
+$kind: http-request
+name: "[Admin] Deactivated users are listed only when asked"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+url: "{{BASE_URL}}/api/users/?status=deactivated"
+method: GET
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const items = pm.response.json().items;
+      pm.test("only deactivated", () => items.forEach(u => pm.expect(u.status).to.eql("deactivated")));
+      pm.test("includes the second instructor", () => pm.expect(items.map(u => u.id)).to.include(pm.globals.get("NEW_INSTRUCTOR_USER_ID")));
+    language: text/javascript
+order: 3500

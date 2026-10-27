@@ -1,18 +1,16 @@
 $kind: http-request
 name: "[Admin] A root_admin can never be deleted"
 description: |-
-  Environment: Prompt Patrol Dev - Root Admin
+  Runs as: root_admin (ADMIN_SESSION)
 
   Deleting one used to lock the system out.
 url: "{{BASE_URL}}/api/users/{{ADMIN_USER_ID}}"
 method: DELETE
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{ADMIN_SESSION}}
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - Root Admin environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - Root Admin"));
       pm.test("403", () => pm.response.to.have.status(403));
       pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("You are not authorized to change this user's status."));
     language: text/javascript

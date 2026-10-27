@@ -16,9 +16,9 @@ import {
   STRICTNESS_TEXT,
   VERDICT_TEXT,
 } from "../types";
-import * as stub from "./stub";
 import type { User } from "./auth";
 import { ApiError, apiRequest } from "./client";
+import { validateCheckInput } from "./validation";
 
 export const checkKeys = {
   all: ["checks"] as const,
@@ -39,6 +39,7 @@ interface StrictnessLevelResponse {
 
 interface DetectorResponse {
   model_version: string;
+  calibration_version: string | null;
   requires_question_text: boolean;
   min_answer_chars: number;
   max_answer_chars: number;
@@ -56,6 +57,7 @@ function toStrictnessLevels(rows: StrictnessLevelResponse[]): Strictness[] {
 function toDetectorCapabilities(row: DetectorResponse): DetectorCapabilities {
   return {
     modelVersion: row.model_version,
+    calibrationVersion: row.calibration_version ?? null,
     requiresQuestionText: row.requires_question_text,
     minAnswerChars: row.min_answer_chars,
     maxAnswerChars: row.max_answer_chars,
@@ -102,6 +104,7 @@ interface CheckSummaryResponse {
   confidence: number | null;
   strictness_applied: string;
   model_version: string;
+  calibration_version?: string | null;
   answer_text: string | null;
   created_at: string;
 }
@@ -305,7 +308,7 @@ function toSingleCheckFromSummary(
     truncated: null,
     detector: {
       modelVersion: row.model_version,
-      calibrationVersion: null,
+      calibrationVersion: row.calibration_version ?? null,
       strictnessApplied:
         known<Strictness>(STRICTNESS_TEXT, row.strictness_applied) ?? asked,
       thresholdApplied: null,
@@ -337,7 +340,7 @@ export async function checkAnswer(
   input: CheckInput,
 ): Promise<SingleCheck> {
   requireScreeningAccess(actor);
-  stub.validateCheckInput(input);
+  validateCheckInput(input);
   const strictness = input.strictness ?? "standard";
 
   return toSingleCheck(

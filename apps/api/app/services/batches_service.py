@@ -168,7 +168,8 @@ async def create_batch(
             # SQS is unavailable/throttled partway through. The row never
             # reaches the Worker, so it must count as `failed` rather than
             # sit as `pending` forever.
-            logger.exception("Failed to enqueue row %r for batch %s.", row["external_ref"], batch.id)
+            # No external_ref here: it identifies a student. The failure row below records it.
+            logger.exception("Failed to enqueue a row for batch %s.", batch.id)
             enqueue_failed += 1
             db.add(
                 BatchRowFailure(
@@ -195,7 +196,7 @@ def _may_access_any_batch(actor: User) -> bool:
 async def get_batch_progress(db: AsyncSession, actor: User, batch_id: uuid.UUID) -> dict | None:
     """None for both "no such batch" and batches that are not authorized for this actor."""
     batch = (await db.execute(select(Batch).where(Batch.id == batch_id))).scalar_one_or_none()
-    if batch is None or (batch.actor_id != actor.id and not _may_access_any_batch(actor)):
+    if batch is None or (not actor.owns(batch.actor_id, batch.created_at) and not _may_access_any_batch(actor)):
         return None
 
     completed = (
@@ -227,7 +228,7 @@ async def cancel_batch(db: AsyncSession, actor: User, batch_id: uuid.UUID) -> Ba
     rather than erroring. The Worker treats "cancelled" as a one-way flag,
     not a state machine with a wrong-transition to reject."""
     batch = (await db.execute(select(Batch).where(Batch.id == batch_id))).scalar_one_or_none()
-    if batch is None or (batch.actor_id != actor.id and not _may_access_any_batch(actor)):
+    if batch is None or (not actor.owns(batch.actor_id, batch.created_at) and not _may_access_any_batch(actor)):
         return None
 
     if batch.cancelled_at is None:

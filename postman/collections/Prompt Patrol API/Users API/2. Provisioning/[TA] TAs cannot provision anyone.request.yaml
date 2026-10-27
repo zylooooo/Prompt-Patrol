@@ -1,13 +1,13 @@
 $kind: http-request
 name: "[TA] TAs cannot provision anyone"
 description: |-
-  Environment: Prompt Patrol Dev - TA
+  Runs as: teaching_assistant (TA_SESSION)
 
   Refused by the route's role gate.
 url: "{{BASE_URL}}/api/users/"
 method: POST
 headers:
-  Cookie: __Host-session={{SESSION_COOKIE}}
+  Cookie: __Host-session={{TA_SESSION}}
 body:
   type: json
   content: |-
@@ -18,8 +18,6 @@ body:
 scripts:
   - type: afterResponse
     code: |-
-      pm.test("run with the Prompt Patrol Dev - TA environment", () =>
-        pm.expect(pm.environment.name).to.eql("Prompt Patrol Dev - TA"));
       pm.test("403", () => pm.response.to.have.status(403));
       pm.test("message explains why", () => pm.expect(pm.response.json().message).to.eql("Insufficient role"));
     language: text/javascript

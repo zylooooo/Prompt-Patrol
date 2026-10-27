@@ -13,9 +13,12 @@ RUN useradd -m -u 1000 detectoruser \
 USER detectoruser
 ENV PATH="/home/detectoruser/.local/bin:${PATH}"
 
-# Install dependencies
+# Install dependencies. torch from the CPU-only index first: PyPI's default
+# wheel bundles CUDA/cuDNN libraries this CPU-only service never uses, which on
+# x86_64 balloons the image by several GB
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 # Bake the ~500MB model into the image so startup is a local disk read. Keep the
 # name in step with baseline.MODEL_NAME - it cannot be imported from here

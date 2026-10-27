@@ -1,0 +1,24 @@
+$kind: http-request
+name: "[Admin] Delete the second instructor"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Cleanup. Deleting an instructor ends their links; the TA keeps the INSTRUCTOR_SESSION user as supervisor.
+url: "{{BASE_URL}}/api/users/{{NEW_INSTRUCTOR_USER_ID}}"
+method: DELETE
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "reason": "Postman cleanup"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      const body = pm.response.json();
+      pm.test("deleted", () => pm.expect(body.status).to.eql("deleted"));
+    language: text/javascript
+order: 1000

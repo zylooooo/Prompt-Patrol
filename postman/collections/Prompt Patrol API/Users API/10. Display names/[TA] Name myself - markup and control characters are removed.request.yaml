@@ -1,0 +1,23 @@
+$kind: http-request
+name: "[TA] Name myself - markup and control characters are removed"
+description: |-
+  Runs as: teaching_assistant (TA_SESSION)
+
+  The name is shown to others, so it is cleaned like a status reason.
+url: "{{BASE_URL}}/api/users/{{TA_USER_ID}}"
+method: PATCH
+headers:
+  Cookie: __Host-session={{TA_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "display_name": "  <b>Wei</b> Lin\n "
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("200", () => pm.response.to.have.status(200));
+      pm.test("cleaned", () => pm.expect(pm.response.json().display_name).to.eql("bWei/b Lin"));
+    language: text/javascript
+order: 2000

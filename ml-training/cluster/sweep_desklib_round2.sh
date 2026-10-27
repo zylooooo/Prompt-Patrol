@@ -30,7 +30,8 @@ EPOCHS=5
 for LR in 2e-4 4e-4; do
   for R in 32 64; do
     echo "################ lr=$LR r=$R epochs=$EPOCHS ################"
-    python finetune_desklib_lora.py --run-role sweep --no-baseline \
+    # pinned to the old corpus and every answer length, so this sweep still reproduces the earlier one
+    python finetune_desklib_lora.py --data combined --min-words 0 --run-role sweep --no-baseline \
       --lr "$LR" --r "$R" --alpha $((2 * R)) --epochs "$EPOCHS" \
       --run-name "desklib-lora-sweep2-lr${LR}-r${R}-e${EPOCHS}" || echo "run lr=$LR r=$R FAILED"
   done
