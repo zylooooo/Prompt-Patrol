@@ -280,6 +280,25 @@ def compare_pair(df: pd.DataFrame, model_a: str, model_b: str, min_words: int | 
     }
 
 
+def equal_fpr_table(df: pd.DataFrame, fprs=(0.005, 0.01, 0.02, 0.05), min_words: int | None = MIN_WORDS,
+                    models=None) -> pd.DataFrame:
+    """One row per run: the best test TPR at each FPR in `fprs`, so models can be compared at the SAME FPR.
+
+    The threshold is picked with the test labels in hand (the oracle), so these are upper bounds, not what
+    a frozen threshold delivers. Use them to ask whether one model ranks better than another: a higher
+    deployed TPR can come only from a looser threshold (a higher realised FPR), which this table removes.
+    """
+    runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])
+    if models is not None:
+        runs = runs[runs["model"].isin(list(models))]
+    rows = []
+    for r in runs.itertuples(index=False):
+        test = _rows(_select(df, r.model, r.run_id), "test", min_words)
+        rows.append({"model": r.model, "run_id": r.run_id, "seed": r.seed, "min_words": min_words or 0,
+                     **{f"tpr_at_fpr_{f:g}": metrics.oracle_tpr_at_fpr(test["y_true"], test["y_prob"], f) for f in fprs}})
+    return pd.DataFrame(rows)
+
+
 def slice_table(df: pd.DataFrame, model: str, by: str = "slice", min_words: int | None = MIN_WORDS,
                 run_id: str | None = None) -> pd.DataFrame:
     """Per-group results on test (for example by slice, dataset or generator), frozen val threshold."""

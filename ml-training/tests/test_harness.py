@@ -246,6 +246,15 @@ def test_validation_table_uses_only_validation_rows(two_seed_df):
     pd.testing.assert_frame_equal(harness.validation_table(scrambled, min_words=10), out)
 
 
+def test_equal_fpr_table_gives_the_best_tpr_at_each_fpr_per_run(two_seed_df):
+    out = harness.equal_fpr_table(two_seed_df, fprs=(0.01, 0.05), min_words=10)
+    assert len(out) == 2 and {"tpr_at_fpr_0.01", "tpr_at_fpr_0.05"} <= set(out.columns)
+    test = two_seed_df[(two_seed_df["run_id"] == "r1") & (two_seed_df["split"] == "test") & (two_seed_df["n_words"] >= 10)]
+    row = out[out["run_id"] == "r1"].iloc[0]
+    assert row["tpr_at_fpr_0.05"] == pytest.approx(metrics.oracle_tpr_at_fpr(test["y_true"], test["y_prob"], 0.05))
+    assert (out["tpr_at_fpr_0.05"] >= out["tpr_at_fpr_0.01"]).all()  # a bigger FPR budget never lowers it
+
+
 def test_write_results_writes_one_csv_per_table(two_seed_df, tmp_path):
     table = harness.compare_models(two_seed_df, bootstrap_n=20)
     summary = harness.aggregate_seeds(table)
