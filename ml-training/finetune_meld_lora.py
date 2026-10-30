@@ -9,7 +9,8 @@ trains it together with LoRA weights in the ModernBERT backbone.
 
 The evaluation protocol matches the Desklib run:
   1. score the untouched MELD model on val and test;
-  2. restore the epoch with the best validation AUROC;
+  2. restore the epoch with the best validation AUROC (or, with --select pauroc, the best partial
+     AUROC at 1% FPR on answers of >= --min-words words, ties within PAUROC_TIE going to the higher AUROC);
   3. fit temperature and the 1% FPR threshold on val only;
   4. score test once with both values frozen.
 Steps 3-4 (and the baseline) use only answers of at least --min-words words
@@ -21,6 +22,8 @@ Examples:
     python finetune_meld_lora.py --train-on mohler
     python finetune_meld_lora.py --data combined          # old v0.1 + spliced corpus
     python finetune_meld_lora.py --epochs 1 --max-train-rows 200 --run-name smoke
+    python finetune_meld_lora.py --targets Wqkv,Wo,Wi --r 64 --alpha 128 --epochs 8 --select pauroc \
+        --model-name meld-lora-qkvoi-r64-e8 --run-name meld-lora-qkvoi-r64-e8-extended-s1 --seed 1
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ import importlib.util
 import json
 import math
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -54,6 +58,9 @@ MELD_REPO = "anon-review-meld-2026/meld"
 # retrained checkpoint with per-generator prototypes; pass --meld-revision main to use the latest
 MELD_REVISION = "8990324abd92e1fa17072f6887ea1e5c1cef5abc"
 MLFLOW_EXPERIMENT = "E2-finetune"
+# --select pauroc: epochs whose partial AUROC is within this of the best count as tied (the same rule as
+# finetune_radar.py), and the tie goes to the higher AUROC, so noise in the low-FPR region doesn't pick the epoch
+PAUROC_TIE = 0.002
 OUT_DIR = Path(__file__).parent / "outputs"
 DATASETS = ("mohler", "sprag", "engsaf")
 
@@ -299,6 +306,10 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
         optimizer, lambda s: min((s + 1) / warmup, max(0.0, (steps - s) / max(1, steps - warmup))))
     rng = np.random.default_rng(args.seed)
     best_auc, best_state, best_epoch = -1.0, None, -1
+    best_pauroc, best_auroc_used = -1.0, -1.0
+    # partial AUROC is measured on the answers the app scores (>= --min-words words), like the metrics
+    used = (val["n_words"] >= args.min_words).to_numpy()
+    val_labels = val["label"].to_numpy()
     history = []
     labels = train["label"].to_numpy(dtype=np.float32)
     texts = train["answer"].astype(str).to_numpy()
@@ -320,6 +331,8 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
             running += loss.item() * len(idx)
         val_logits = predict_logits(meld, model, tokenizer, val["answer"], device, cap, window)
         val_auc = float(roc_auc_score(val["label"], val_logits))
+        val_pauroc = float(roc_auc_score(val_labels[used], val_logits[used], max_fpr=0.01))
+        val_auroc_used = float(roc_auc_score(val_labels[used], val_logits[used]))
         val_loss = float(F.binary_cross_entropy_with_logits(
             torch.from_numpy(val_logits),
             torch.from_numpy(val["label"].to_numpy(dtype=np.float64)),
@@ -328,25 +341,34 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
         epoch_seconds = time.perf_counter() - started
         learning_rate = float(optimizer.param_groups[0]["lr"])
         print(f"epoch {epoch}/{args.epochs}: train_loss={train_loss:.4f} "
-              f"val_loss={val_loss:.4f} val_auroc={val_auc:.4f} "
+              f"val_loss={val_loss:.4f} val_auroc={val_auc:.4f} val_pauroc@1%={val_pauroc:.4f} "
               f"({epoch_seconds:.0f}s)", flush=True)
         log_metric("train/loss", train_loss, epoch)
         log_metric("val/loss", val_loss, epoch)
         log_metric("val/auroc", val_auc, epoch)
+        log_metric("val/pauroc", val_pauroc, epoch)
         log_metric("train/learning_rate", learning_rate, epoch)
         log_metric("train/epoch_seconds", epoch_seconds, epoch)
         history.append({
             "epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
-            "val_auroc": val_auc, "learning_rate": learning_rate,
+            "val_auroc": val_auc, "val_pauroc": val_pauroc, "val_auroc_used": val_auroc_used,
+            "learning_rate": learning_rate,
             "epoch_seconds": epoch_seconds,
         })
-        if val_auc > best_auc:
+        if args.select == "pauroc":
+            better = (val_pauroc > best_pauroc + PAUROC_TIE
+                      or (abs(val_pauroc - best_pauroc) <= PAUROC_TIE and val_auroc_used > best_auroc_used))
+        else:
+            better = val_auc > best_auc
+        if better:
             best_auc, best_epoch = val_auc, epoch
+            best_pauroc, best_auroc_used = val_pauroc, val_auroc_used
             best_state = {k: v.detach().cpu().clone() for k, v in model.named_parameters() if v.requires_grad}
     if best_state is None:
         raise RuntimeError("training produced no validation checkpoint")
     model.load_state_dict(best_state, strict=False)
-    print(f"restored epoch {best_epoch} (val_auroc={best_auc:.4f})")
+    print(f"restored epoch {best_epoch} (val_auroc={best_auc:.4f}, val_pauroc@1%={best_pauroc:.4f}, "
+          f"chosen by {args.select})")
     return best_epoch, best_auc, history
 
 
@@ -369,7 +391,14 @@ def main():
     ap.add_argument("--r", type=int, default=16)
     ap.add_argument("--alpha", type=int, default=32)
     ap.add_argument("--dropout", type=float, default=0.05)
-    ap.add_argument("--targets", default="Wqkv,Wo")
+    ap.add_argument("--targets", default="Wqkv,Wo",
+                    help="LoRA targets; Wo matches both attn.Wo and mlp.Wo, add Wi for the MLP's input layer")
+    ap.add_argument("--select", default="auroc", choices=["auroc", "pauroc"],
+                    help="how the best epoch is picked on val: AUROC on every val answer (default), or partial "
+                         "AUROC at 1%% FPR on answers of >= --min-words words with an AUROC tie-break")
+    ap.add_argument("--model-name", default="meld-lora",
+                    help="the scores file's model column, which harness.py groups seeds by: give every different "
+                         "setting its own, e.g. meld-lora-qkvoi-r64-e8")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-train-rows", type=int, default=0)
     ap.add_argument("--device", default="cuda")
@@ -378,6 +407,7 @@ def main():
     ap.add_argument("--owner", default="malcolm")
     ap.add_argument("--run-name", default="")
     ap.add_argument("--run-role", default="train", choices=["train", "sweep"])
+    ap.add_argument("--offline", action="store_true", help="log to a temporary local folder, not DagsHub")
     args = ap.parse_args()
 
     train_on = [d for d in args.train_on.split(",") if d]
@@ -403,7 +433,14 @@ def main():
 
     from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
 
-    setup_mlflow(MLFLOW_EXPERIMENT)
+    if args.offline:
+        tmp = Path(tempfile.mkdtemp(prefix="meld-offline-"))
+        mlflow.set_tracking_uri(f"sqlite:///{tmp / 'mlflow.db'}")
+        mlflow.create_experiment(MLFLOW_EXPERIMENT, artifact_location=(tmp / "artifacts").as_uri())
+        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        print(f"OFFLINE: logging to {mlflow.get_tracking_uri()}, nothing goes to DagsHub")
+    else:
+        setup_mlflow(MLFLOW_EXPERIMENT)
     with mlflow.start_run(run_name=run_name):
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
                          "tuning_method": "lora", "model_family": "meld", "data_mode": mode})
@@ -413,7 +450,8 @@ def main():
                            "balanced": not args.no_balance, "calibrated": not args.no_calibrate,
                            "target_fpr": args.target_fpr, "epochs": args.epochs, "batch_size": args.batch_size,
                            "lr": args.lr, "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
-                           "lora_targets": args.targets, "seed": args.seed, "train_n": len(train_frame),
+                           "lora_targets": args.targets, "select": args.select, "model_name": args.model_name,
+                           "seed": args.seed, "train_n": len(train_frame),
                            "val_n": len(val), "test_n": len(test), "meld_model_dir": str(model_dir)})
         baseline_prob = None
         baseline_val_logits = baseline_logits = None
@@ -539,8 +577,8 @@ def main():
         if baseline_logits is not None:
             parts += [score_rows("meld-untouched", "val", val, baseline_val_logits, expit(baseline_val_logits)),
                       score_rows("meld-untouched", "test", test, baseline_logits, baseline_prob)]
-        parts += [score_rows("meld-lora", "val", val, val_logits, val_prob),
-                  score_rows("meld-lora", "test", test, test_logits, test_prob)]
+        parts += [score_rows(args.model_name, "val", val, val_logits, val_prob),
+                  score_rows(args.model_name, "test", test, test_logits, test_prob)]
         scores_path = save_scores(run_name, args.seed, parts)
         if train_on:
             print("note: 'test' here is every row of the held-out datasets, including their train/val partitions, "
