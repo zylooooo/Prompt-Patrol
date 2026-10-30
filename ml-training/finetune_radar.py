@@ -338,7 +338,8 @@ def log_evaluation(prefix: str, out: dict) -> None:
 ##      2. score val, test (and for --data combined the robustness sets) with the UNTOUCHED model first -> baseline on exactly the same rows
 ##      3. add adapters (lora/dora) or unfreeze everything (full), train, keep the best epoch by val partial AUROC (answers >= min_words)
 ##      4. score everything with the tuned model, calibrate on val, fix the threshold on val, score test once
-##      5. log to MLflow, save the scores file for the harness, the thresholds, and the adapter (lora/dora only)
+##      5. log to MLflow, save the scores file for the harness, the thresholds, and the adapter (lora/dora)
+##         or, with --save-model, the whole tuned model in half precision (full, ~710MB per run, so only for runs you'll use)
 ##  naming, as the team agreed: the seed is in the run name (radar-lora-extended-s1), and at least 3 seeds per setting.
 ##  --model-name is the `model` column the harness groups seeds by, so give each different setting (e.g. in a sweep) its own
 ##  --offline logs to a temporary local folder instead of DagsHub, for testing without adding a run to the shared board
@@ -359,6 +360,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=None, help="default: 2e-4 for lora/dora, 2e-5 for full")
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--layer-decay", type=float, default=0.9, help="full only: learning-rate factor per layer going down")
+    ap.add_argument("--save-model", action="store_true",
+                    help="full only: save the tuned model and tokenizer in half precision to outputs/<run>_model/ (~710MB)")
     ap.add_argument("--r", type=int, default=32)
     ap.add_argument("--alpha", type=int, default=None, help="default: 2 x r")
     ap.add_argument("--dropout", type=float, default=0.1)
@@ -476,6 +479,10 @@ def main() -> None:
         if args.method != "full":
             model.save_pretrained(f"{stem}_adapter")
             print(f"\nWrote {stem}_adapter/")
+        elif args.save_model:
+            model.to(torch.float16).save_pretrained(f"{stem}_model")
+            tokenizer.save_pretrained(f"{stem}_model")
+            print(f"\nWrote {stem}_model/")
         print(f"Wrote {stem}_results.json")
         print(f"MLflow run: {mlflow.active_run().info.run_id}")
 

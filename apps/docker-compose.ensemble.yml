@@ -1,0 +1,39 @@
+# Runs the app with desklib + RADAR (the two calibrated scores averaged) instead of desklib alone. Opt-in: the
+# default stack and docker-compose.desklib.yml are unchanged.
+#
+#   cd apps && docker compose -f docker-compose.yml -f docker-compose.ensemble.yml up -d --build
+#
+# The RADAR adapter (seed 3 of ml-training's radar-lora-extended runs, stored in half precision) and the calibration
+# are committed in apps/detector/model/radar-lora-adapter/ and apps/detector/model/ensemble.json, both written by
+# ml-training/calibrate_ensemble.py. The first build downloads ~3.1GB of base models, and Docker needs roughly 10GB of
+# memory allocated: the detector holds ~3.7GB once loaded and peaks at ~4.2GB while desklib loads.
+#
+# Calibrated on the extended corpus's validation answers of >= 10 words, then tested once (calibrate_ensemble.py):
+# against the live desklib it catches 63.9% of test AI answers vs 51.4% (69% vs 41% of heavily paraphrased ones), at a
+# test false-positive rate of 1.57% vs 1.18%. As for desklib, only the 1% FPR threshold is fitted, so every
+# strictness level uses it for now.
+#
+# RADAR (TrustSafeAI/RADAR-Vicuna-7B) is licensed for non-commercial use only.
+x-ensemble-api-env: &ensemble-api-env
+  DETECTOR_MODEL_VERSION: desklib-radar-ensemble-v1
+  # from apps/detector/model/ensemble.json: the 1% FPR threshold fitted on validation
+  DETECTOR_THRESHOLD: "0.902799"
+  # Chosen on validation: at +-0.005 false flags on student answers drop from 1.00% to 0.85% (the same as at +-0.01),
+  # 68.0% of AI answers are still flagged and 2.4% come back uncertain (vs 66.6% and 4.7% at +-0.01).
+  ABSTENTION_BAND: "0.005"
+  DETECTOR_CALIBRATION_VERSION: desklib1.944-radar1.756-thr0.9028-v1
+
+services:
+  detector:
+    build:
+      context: ./detector
+      dockerfile: Dockerfile.ensemble
+    healthcheck:
+      # two large models (~0.4B + ~0.36B parameters) to load before the first answer
+      start_period: 420s
+
+  api:
+    environment: *ensemble-api-env
+
+  worker:
+    environment: *ensemble-api-env
