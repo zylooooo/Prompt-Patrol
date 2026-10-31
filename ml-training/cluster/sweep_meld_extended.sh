@@ -24,6 +24,12 @@
 #
 #   cd ~/faheem && LR=1e-4 ROLE=train SEEDS=1 sbatch Prompt-Patrol/ml-training/cluster/sweep_meld_extended.sh
 #
+# Other settings via the environment: R, DROPOUT, EPOCHS, TARGETS, SELECT (pauroc or auroc) and REVISION (a MELD
+# checkpoint on the HF Hub; default the 23 Sep release). E.g. Tori's recipe on the 27 Oct release, one seed:
+#
+#   cd ~/faheem && LR=1e-4 R=16 EPOCHS=3 TARGETS=Wqkv,Wo SELECT=auroc REVISION=ddfc9c789b8c8d0f92d3774265316d418c96dc67 \
+#       sbatch Prompt-Patrol/ml-training/cluster/sweep_meld_extended.sh
+#
 # Skips the untouched baseline (it is in the meld-lora-extended runs already). Needs the extended corpus
 # (`dvc pull` in ml-training/). Override the repo location with PP_DIR=... as in run_py.sh.
 
@@ -45,11 +51,14 @@ ALPHA=$((2 * R))
 DROPOUT="${DROPOUT:-0.05}"
 EPOCHS="${EPOCHS:-8}"
 TARGETS="${TARGETS:-Wqkv,Wo,Wi}"
+SELECT="${SELECT:-pauroc}"
+REVISION="${REVISION:-}"
 ROLE="${ROLE:-sweep}"
 SEEDS="${SEEDS:-1}"
 OWNER="${OWNER:-faheem}"
 
-SETTING="lr${LR}-qkvoi-r${R}-e${EPOCHS}"
+# the targets in the name: Wqkv,Wo -> qkvo, Wqkv,Wo,Wi -> qkvoi; a non-default MELD checkpoint adds -rev<first 8 chars>
+SETTING="lr${LR}-$(echo "$TARGETS" | tr -d 'W,')-r${R}-e${EPOCHS}${REVISION:+-rev${REVISION:0:8}}"
 if [ "$ROLE" = "sweep" ]; then
   NAME="meld-lora-sw-$SETTING"
 else
@@ -60,7 +69,8 @@ for S in $SEEDS; do
   echo "################ MELD LoRA $NAME, extended corpus, seed $S ################"
   python finetune_meld_lora.py --device cuda --data extended --min-words 10 --no-baseline \
     --lr "$LR" --r "$R" --alpha "$ALPHA" --dropout "$DROPOUT" --targets "$TARGETS" --epochs "$EPOCHS" \
-    --batch-size 1 --select pauroc --seed "$S" --owner "$OWNER" --run-role "$ROLE" \
+    --batch-size 1 --select "$SELECT" --seed "$S" --owner "$OWNER" --run-role "$ROLE" \
+    ${REVISION:+--meld-revision "$REVISION"} \
     --model-name "$NAME" --run-name "$NAME-extended-s$S" \
     || echo "$NAME seed $S FAILED"
 done
