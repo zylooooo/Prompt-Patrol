@@ -3,7 +3,7 @@
 Faheem's detector work for Prompt Patrol: fine-tuning RADAR, building a desklib + RADAR detector, and testing
 combinations of the team's tuned models (Malcolm's desklib, Tori's MELD, RADAR).
 
-Jira: PP-547, PP-548 (subtasks PP-549 to PP-560), PP-556, PP-567 (subtasks PP-568 to PP-577). Runs: DagsHub MLflow, experiments
+Jira: PP-547, PP-548 (subtasks PP-549 to PP-560), PP-556, PP-567 (subtasks PP-568 to PP-578). Runs: DagsHub MLflow, experiments
 `zeroshot-baselines` and `E2-finetune`, run names `radar-*` and `meld-lora-sw-*`.
 
 ## Key results
@@ -337,6 +337,36 @@ human answers slightly more AI-like than real AI answers. It was run locally (sc
     threshold is just stricter.
   - Keep the Sep release.
 
+## 16. Binoculars as a third input (31 Oct, PP-578)
+
+- **Why:** RADAR added nothing to desklib + MELD because it's the same kind of model. Binoculars (Hans et al., 2024)
+  is a different kind of evidence: it needs no training and compares how predictable the text is to two language
+  models.
+- **What:**
+  - Pair: Qwen2.5-0.5B (observer) and Qwen2.5-0.5B-Instruct (performer), pinned revisions, Apache-2.0. Texts cut at
+    256 tokens.
+  - The score was turned into a calibrated logit with a logistic fit on val (answers of 10+ words).
+  - Combined with desklib best + MELD in two ways: an equal three-way average (the main test, nothing fitted) and
+    weights learned on val (secondary).
+
+| Test, 10+ words, 3 seeds | AUROC | AI caught at exactly 1% FPR | AI caught, val threshold | Students wrongly flagged |
+| --- | --- | --- | --- | --- |
+| Binoculars (0.5B pair) alone | 0.521 | 0.5% | 0.6% | 1.0% |
+| desklib + MELD | 0.978 | 72.7% | 70.2% | 0.7% |
+| + Binoculars, equal thirds | 0.977 | 71.8% | 68.9% | 0.7% |
+| + Binoculars, weights learned on val | 0.978 | 72.7% | 69.8% | 0.8% |
+
+- **Conclusion: no signal on our answers, so it's dropped.**
+  - Alone it's at chance. On a val sample, heavily paraphrased AI even scored as more human-like than real human
+    answers.
+  - Equal thirds vs desklib + MELD: AUROC and AI caught at exactly 1% FPR could be noise; AI caught at the val
+    threshold is −1.3 pts [−2.0, −0.7], a real but small loss.
+  - The learned weights put almost nothing on Binoculars (0.17, −0.13 and −0.19 across seeds, vs ~0.6 for desklib
+    and MELD).
+- **Likely reason:** Binoculars was designed for 7B models on longer text. Our answers are ~25 words and this pair is
+  0.5B. A 1.5B pair (~6 GB) is the only step left untried, but with no signal at 0.5B it isn't expected to change
+  the outcome.
+
 ## What didn't work, and why
 
 | Idea | Result | Why |
@@ -350,6 +380,7 @@ human answers slightly more AI-like than real AI answers. It was run locally (sc
 | MELD with desklib's recipe | Tie or worse | Extra capacity overfits MELD |
 | Sentence-level scoring | Worse everywhere | Human sentences alone look AI-like |
 | MELD's 27 Oct release, fine-tuned | Same as the Sep release | Fine-tuning matters far more than the base release |
+| Binoculars (0.5B pair) as a third input | No gain; at chance alone | Built for 7B models and longer text; our answers are ~25 words |
 
 ## Open items
 
@@ -357,7 +388,6 @@ human answers slightly more AI-like than real AI answers. It was run locally (sc
   a 16 GB task.
 - **The shipped desklib + RADAR ensemble wrongly flags 1.57% of students on test,** above the 1% target.
 - **Untested ideas:**
-  - a perplexity-based score (e.g. Binoculars) as a different kind of third input;
   - a model trained on sentence-level labels for spliced answers;
   - a GPTZero comparison on the test set.
 - **Licence:** RADAR is non-commercial only.
@@ -371,4 +401,4 @@ human answers slightly more AI-like than real AI answers. It was run locally (sc
 | MELD in the latency script | branch `meld-latency` (commit a951a0a, no PR yet) |
 | MELD sweep job and options | branch `meld-sweep` (from `tori/tuning`, no PR yet) |
 | Run metrics and per-answer scores files | DagsHub MLflow `E2-finetune` / `zeroshot-baselines`, `predictions/` |
-| Write-ups with all numbers | Jira PP-548, PP-552, PP-556, PP-559, PP-560, PP-567, PP-577 |
+| Write-ups with all numbers | Jira PP-548, PP-552, PP-556, PP-559, PP-560, PP-567, PP-577, PP-578 |
