@@ -25,11 +25,23 @@ import pandas as pd
 
 from combined_data import load_combined, slice_flag_rates
 from metrics import evaluate, threshold_at_fpr
-from tracking import log_dict_artifact, log_split_metrics, setup_mlflow
+from tracking import log_dict_artifact, log_predictions, log_split_metrics, setup_mlflow
 
 MELD_REPO = "anon-review-meld-2026/meld"
 OUT_PATH = Path(__file__).parent / "outputs" / "meld_zeroshot_results.json"
 MLFLOW_EXPERIMENT = "zeroshot-baselines"
+DATA_MD5 = "851b80f0a9325a11af2126e2cc3b1b25"
+
+
+def default_device() -> str:
+    """Prefer the accelerator supported by the installed PyTorch build."""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def load_meld_scorer(device: str = "cuda"):
@@ -73,7 +85,8 @@ def main() -> None:
     parser.add_argument("--target-fpr", type=float, default=0.01,
                         help="FPR budget to fit the threshold at - matches "
                              "metrics.py's fixed project-wide HEADLINE_FPR")
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default=None,
+                        help="device override; defaults to cuda, mps, or cpu")
     parser.add_argument("--owner", default="malcolm", help="tag for whose run this is on the shared DagsHub board")
     parser.add_argument("--no-spliced", action="store_true",
                         help="score the raw v0.1 corpus only (the original baseline), "
@@ -89,7 +102,9 @@ def main() -> None:
     print(f"test: {len(test)} rows ({test['label'].mean():.1%} AI)")
 
     print("\nLoading MELD (downloads ~4.1GB on first run, cached after)...")
-    scorer = load_meld_scorer(device=args.device)
+    device = args.device or default_device()
+    print(f"Using device: {device}")
+    scorer = load_meld_scorer(device=device)
 
     setup_mlflow(MLFLOW_EXPERIMENT)
     with mlflow.start_run(run_name=f"meld-zeroshot{run_suffix}"):
@@ -100,6 +115,8 @@ def main() -> None:
             "data": data_version,
             "val_n": len(val),
             "test_n": len(test),
+            "data_md5": DATA_MD5,
+            "device": device,
         })
 
         print("\nScoring val...")
@@ -122,6 +139,11 @@ def main() -> None:
             headline_fpr=args.target_fpr,
         )
         log_split_metrics(results, "test")
+
+        test_predictions = test.loc[test_ok, ["answer_id", "question_id", "label", "generator"]].copy()
+        test_predictions = test_predictions.rename(columns={"label": "y_true"})
+        test_predictions["y_prob"] = test_probs[test_ok]
+        log_predictions(test_predictions, "test")
 
         print("\n=== MELD zero-shot, test split ===")
         for key in ("auroc", "deployed_tpr", "deployed_fpr", "deployed_precision", "ece", "brier"):
