@@ -5,6 +5,13 @@ The single Terraform root for Prompt Patrol's AWS deployment. One account
 `s3://prompt-patrol-tfstate-420974348257/app/terraform.tfstate`, locked with
 S3's native lockfile (no DynamoDB table).
 
+![Prompt Patrol AWS production architecture](../docs/assets/prompt-patrol-aws-architecture.png)
+
+The diagram shows what this root deploys (source:
+[`../docs/assets/prompt-patrol-aws-architecture.drawio`](../docs/assets/prompt-patrol-aws-architecture.drawio)).
+When a change here adds, removes or rewires a resource, update the diagram in
+the same change.
+
 ## Layout
 
 One root, one state, files split by area per the

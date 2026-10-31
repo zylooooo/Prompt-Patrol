@@ -11,13 +11,18 @@ MODEL_VERSION = "roberta-base-openai-detector-v0"
 MODEL_NAME = "openai-community/roberta-base-openai-detector"
 MAX_TOKENS = 512
 
-# "roberta" (default, the original baseline) or "desklib" (the fine-tuned desklib detector,
-# see desklib.py). Set by docker-compose.desklib.yml; the default image is unchanged.
+# "roberta" (default, the original baseline), "desklib" (the fine-tuned desklib detector, see desklib.py)
+# or "ensemble" (desklib + RADAR, see ensemble.py). Set by docker-compose.desklib.yml or
+# docker-compose.ensemble.yml; the default image is unchanged.
 BACKEND = os.getenv("DETECTOR_BACKEND", "roberta")
 if BACKEND == "desklib":
     import desklib
 
     MODEL_VERSION = desklib.MODEL_VERSION
+elif BACKEND == "ensemble":
+    import ensemble
+
+    MODEL_VERSION = ensemble.MODEL_VERSION
 
 _AI_LABEL = "fake"
 
@@ -75,6 +80,8 @@ def warm_up() -> None:
         with _lock:
             if BACKEND == "desklib":
                 desklib.score("warm up")
+            elif BACKEND == "ensemble":
+                ensemble.score("warm up")
             else:
                 _pipeline()(["warm up"], truncation=True, max_length=MAX_TOKENS)
     except Exception:
@@ -90,6 +97,11 @@ def score_text(text: str) -> Score:
     if BACKEND == "desklib":
         with _lock:
             probability, truncated = desklib.score(text)
+        return Score(raw_score=probability, truncated=truncated)
+
+    if BACKEND == "ensemble":
+        with _lock:
+            probability, truncated = ensemble.score(text)
         return Score(raw_score=probability, truncated=truncated)
 
     # Loading is inside the lock too: lru_cache does not make the miss atomic,
