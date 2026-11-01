@@ -17,7 +17,7 @@
 #   3. the soup of all three seeds.
 #
 #   cd ~/tori && sbatch Prompt-Patrol/ml-training/cluster/meld_soup.sh
-#   BASE=meld-lora-lr1e-4-qkvo-r32-e3-d0.10-extended sbatch ...   # soups of another 3-seed MELD setting
+#   BASE=meld-lora-lr1e-4-qkvo-r32-e3-extended sbatch ...   # soups of another 3-seed MELD setting
 #
 # Then compare, on the login node or locally (scores files come from DagsHub):
 #   python analyse_ensemble.py --extra "MELD soup (pair)=meld-lora-soup-pair" \
