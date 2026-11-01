@@ -145,17 +145,32 @@ MELD's released scoring contract uses FP32, 2046-token windows, and no window
 overlap, so this run is substantially heavier than the Desklib adapter. The
 Slurm batch versions are [`cluster/extended_meld.sh`](cluster/extended_meld.sh) (extended corpus, one run per seed) and [`cluster/meld_lora.sh`](cluster/meld_lora.sh) (older final runs).
 
-Each MELD run logs epoch metrics to MLflow (`train/loss`, `val/loss`,
-`val/auroc`, learning rate, and epoch duration). It also uploads chart-ready
+Each MELD and desklib LoRA run logs epoch metrics to MLflow (`train/loss`, `val/loss`,
+`val/auroc`, `val/pauroc`, `val/tpr_at_fpr_0.01`, learning rate, and epoch duration),
+figures under `plots/` ([`meld_lora_plots.py`](meld_lora_plots.py)), and chart-ready
 CSV artifacts under the run's `charts/` artifact directory:
 
-- `*_training_history.csv` — loss, validation AUROC, learning rate, and duration
+- `*_training_history.csv` — loss, validation AUROC, partial AUROC and TPR at 1% FPR, learning rate, and duration
 - `*_curves.csv` — ROC and precision-recall points for baseline and LoRA
 - `*_calibration_bins.csv` — reliability-diagram bins for baseline and LoRA
 - `*_slice_metrics.csv` — dataset and corpus-slice metrics
 
 The run also logs per-slice AUROC, TPR, FPR, and sample count as MLflow metrics,
-and the test prediction CSV contains both `prob` and `baseline_prob`.
+and the MELD test prediction CSV contains both `prob` and `baseline_prob`.
+
+Both scripts take `--weights` for per-row loss weights, e.g.
+`--weights 'dataset=mohler&slice=human:2,slice=spliced-*:2'`
+(see `combined_data.row_weights`; each label's weights are rescaled to average 1),
+and `--model-name` to give a setting its own name in the scores file.
+
+### desklib + MELD
+
+[`analyse_ensemble.py`](analyse_ensemble.py) analyses a two-model combination from
+the runs' scores files. It compares the combination against each model alone and
+against each model's own seeds averaged, and writes tables and figures to `--out`.
+[`soup_meld_lora.py`](soup_meld_lora.py) averages MELD seeds' weights into one model.
+The experiment plan and its commands are in
+[`docs/desklib-meld-experiment-plan.md`](../docs/desklib-meld-experiment-plan.md).
 
 The argument is the **variable name in `experiments.py`**, so `ROBERTA_LORA`,
 `ROBERTA_DORA` and `ROBERTA_FULL` all work the same way. It defaults to `TRIAL`.
