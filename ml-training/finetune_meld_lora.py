@@ -44,14 +44,12 @@ import torch.nn.functional as F
 import mlflow
 from scipy.optimize import minimize_scalar
 from scipy.special import expit
-from sklearn.metrics import precision_recall_curve, roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score
 
-from combined_data import load_corpus, slice_flag_rates
-from metrics import calibration_metrics, evaluate, slice_report, threshold_at_fpr
+from combined_data import load_corpus, row_weights, slice_flag_rates
+from metrics import calibration_metrics, evaluate, oracle_tpr_at_fpr, threshold_at_fpr
 from scores import save_scores, score_rows
-from meld_lora_plots import (plot_calibration, plot_pr, plot_roc,
-                            plot_ppv_prevalence, plot_score_hist, plot_slices,
-                            plot_training)
+from meld_lora_plots import log_lora_charts
 
 MELD_REPO = "anon-review-meld-2026/meld"
 # the 23 Sep release (config v8) that the sweeps and earlier runs used. ddfc9c78 (27 Oct, v83) is a
@@ -251,52 +249,6 @@ def evaluate_protocol(val, test, val_logits, test_logits, target_fpr, calibrate,
     }, val_prob, test_prob
 
 
-def calibration_bins(labels, probabilities, n_bins=10):
-    """Reliability-table rows that can be plotted without rerunning inference."""
-    labels = np.asarray(labels, dtype=int)
-    probabilities = np.asarray(probabilities, dtype=float)
-    rows = []
-    edges = np.linspace(0.0, 1.0, n_bins + 1)
-    for i in range(n_bins):
-        mask = ((probabilities >= edges[i]) & (probabilities < edges[i + 1])
-                if i < n_bins - 1 else
-                (probabilities >= edges[i]) & (probabilities <= edges[i + 1]))
-        if not mask.any():
-            continue
-        rows.append({
-            "bin": i,
-            "lower": float(edges[i]),
-            "upper": float(edges[i + 1]),
-            "n": int(mask.sum()),
-            "mean_predicted": float(probabilities[mask].mean()),
-            "observed_ai_rate": float(labels[mask].mean()),
-        })
-    return rows
-
-
-def curve_rows(labels, probabilities, model_name):
-    """Return ROC and precision-recall points in tidy, chart-friendly form."""
-    fpr, tpr, roc_thresholds = roc_curve(labels, probabilities)
-    precision, recall, pr_thresholds = precision_recall_curve(labels, probabilities)
-    rows = [
-        {"model": model_name, "curve": "roc", "x": float(x), "y": float(y),
-         "threshold": float(t) if np.isfinite(t) else None}
-        for x, y, t in zip(fpr, tpr, roc_thresholds)
-    ]
-    # precision_recall_curve has one extra endpoint without a threshold.
-    rows.extend(
-        {"model": model_name, "curve": "precision_recall", "x": float(x), "y": float(y),
-         "threshold": float(pr_thresholds[i]) if i < len(pr_thresholds) else None}
-        for i, (x, y) in enumerate(zip(recall, precision))
-    )
-    return rows
-
-
-def log_dataframe_artifact(frame: pd.DataFrame, path: Path, artifact_dir: str):
-    frame.to_csv(path, index=False)
-    mlflow.log_artifact(str(path), artifact_dir)
-
-
 def train(model, meld, tokenizer, train, val, args, device, cap, window, log_metric):
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
@@ -313,6 +265,8 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
     history = []
     labels = train["label"].to_numpy(dtype=np.float32)
     texts = train["answer"].astype(str).to_numpy()
+    # all ones without --weights, so the loss is the plain mean as before
+    weights = row_weights(train, args.weights).astype(np.float32)
     for epoch in range(1, args.epochs + 1):
         model.train()
         order = rng.permutation(len(train))
@@ -322,7 +276,9 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
             idx = order[i:i + args.batch_size]
             logits = torch.stack([document_logit(meld, model, tokenizer, texts[j], device, cap, window)
                                   for j in idx])
-            loss = F.binary_cross_entropy_with_logits(logits.float(), torch.from_numpy(labels[idx]).to(device))
+            loss = (F.binary_cross_entropy_with_logits(
+                logits.float(), torch.from_numpy(labels[idx]).to(device), reduction="none")
+                * torch.from_numpy(weights[idx]).to(device)).mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             optimizer.step()
@@ -333,6 +289,8 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
         val_auc = float(roc_auc_score(val["label"], val_logits))
         val_pauroc = float(roc_auc_score(val_labels[used], val_logits[used], max_fpr=0.01))
         val_auroc_used = float(roc_auc_score(val_labels[used], val_logits[used]))
+        # the headline metric, on val: in-sample (threshold picked on the same rows), for the training chart only
+        val_tpr_1pct = oracle_tpr_at_fpr(val_labels[used], val_logits[used], args.target_fpr)
         val_loss = float(F.binary_cross_entropy_with_logits(
             torch.from_numpy(val_logits),
             torch.from_numpy(val["label"].to_numpy(dtype=np.float64)),
@@ -347,12 +305,13 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
         log_metric("val/loss", val_loss, epoch)
         log_metric("val/auroc", val_auc, epoch)
         log_metric("val/pauroc", val_pauroc, epoch)
+        log_metric("val/tpr_at_fpr_0.01", val_tpr_1pct, epoch)
         log_metric("train/learning_rate", learning_rate, epoch)
         log_metric("train/epoch_seconds", epoch_seconds, epoch)
         history.append({
             "epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
             "val_auroc": val_auc, "val_pauroc": val_pauroc, "val_auroc_used": val_auroc_used,
-            "learning_rate": learning_rate,
+            "val_tpr_1pct": val_tpr_1pct, "learning_rate": learning_rate,
             "epoch_seconds": epoch_seconds,
         })
         if args.select == "pauroc":
@@ -399,6 +358,9 @@ def main():
     ap.add_argument("--model-name", default="meld-lora",
                     help="the scores file's model column, which harness.py groups seeds by: give every different "
                          "setting its own, e.g. meld-lora-qkvoi-r64-e8")
+    ap.add_argument("--weights", default="",
+                    help="per-row loss weights, e.g. 'slice=spliced-*:2,dataset=mohler&slice=human:2' "
+                         "(combined_data.parse_weights); each label's weights are rescaled to average 1")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-train-rows", type=int, default=0)
     ap.add_argument("--device", default="cuda")
@@ -424,6 +386,11 @@ def main():
     for name, df in (("train", train_frame), ("val", val), ("test", test)):
         print(f"{name}: {len(df)} rows ({df['label'].mean():.1%} AI) datasets={sorted(df['dataset'].unique())}")
         print("   " + ", ".join(f"{k}={v}" for k, v in df["slice"].value_counts().sort_index().items()))
+    if args.weights:
+        # fail on a typo'd rule here, before the 4 GB checkpoint loads
+        w = row_weights(train_frame, args.weights)
+        print("loss weight by slice (mean): " + ", ".join(
+            f"{k}={v:.2f}" for k, v in pd.Series(w).groupby(train_frame["slice"]).mean().items()))
 
     meld, scorer, model_dir = load_meld(args.device, args.meld_revision)
     model, tokenizer = scorer.model, scorer.tok
@@ -451,6 +418,7 @@ def main():
                            "target_fpr": args.target_fpr, "epochs": args.epochs, "batch_size": args.batch_size,
                            "lr": args.lr, "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
                            "lora_targets": args.targets, "select": args.select, "model_name": args.model_name,
+                           "weights": args.weights or "none",
                            "seed": args.seed, "train_n": len(train_frame),
                            "val_n": len(val), "test_n": len(test), "meld_model_dir": str(model_dir)})
         baseline_prob = None
@@ -492,75 +460,9 @@ def main():
         predictions.to_csv(f"{stem}_test_predictions.csv", index=False)
         # the charts and slice tables use the same answers as the headline metrics
         used = (test["n_words"] >= args.min_words).to_numpy()
-        test_used, prob_used = test[used].reset_index(drop=True), test_prob[used]
-        baseline_used = baseline_prob[used] if baseline_prob is not None else None
-        history_frame = pd.DataFrame(history)
-        curve_frame = pd.DataFrame(curve_rows(test_used["label"], prob_used, "meld_lora"))
-        if baseline_used is not None:
-            curve_frame = pd.concat([
-                curve_frame,
-                pd.DataFrame(curve_rows(test_used["label"], baseline_used, "meld_baseline")),
-            ], ignore_index=True)
-        # LoRA uses validation-fitted temperature calibration; the zero-shot
-        # baseline remains uncalibrated for this comparison.
-        calibration_frame = pd.DataFrame(
-            calibration_bins(test_used["label"], prob_used)
-        ).assign(model="meld_lora", calibration="temperature")
-        if baseline_used is not None:
-            calibration_frame = pd.concat([
-                calibration_frame,
-                pd.DataFrame(calibration_bins(test_used["label"], baseline_used)).assign(
-                    model="meld_baseline", calibration="none"
-                ),
-            ], ignore_index=True)
-        predictions_used = predictions[used].reset_index(drop=True)
-        slice_frame = pd.DataFrame(
-            slice_report(predictions_used, y_true_col="label", y_prob_col="prob",
-                         by="dataset", threshold=tuned["threshold"])
-            + slice_report(predictions_used, y_true_col="label", y_prob_col="prob",
-                           by="slice", threshold=tuned["threshold"])
-        )
-        for row in slice_frame.to_dict("records"):
-            scope = str(row["slice_by"]).replace(" ", "_")
-            value = str(row["slice_value"]).replace(" ", "_").replace("/", "_")
-            for metric_name in ("deployed_tpr", "deployed_fpr", "auroc", "n"):
-                value_to_log = row.get(metric_name)
-                if value_to_log is not None and np.isfinite(value_to_log):
-                    mlflow.log_metric(f"slice/{scope}/{value}/{metric_name}", float(value_to_log))
-
-        labels = test_used["label"].to_numpy()
-        probs = np.asarray(prob_used)
-        flagged = probs >= tuned["threshold"]
-        deployed_point = (flagged[labels == 0].mean(), flagged[labels == 1].mean())
-
-        plot_training(history)
-        plot_roc(curve_frame, deployed_point, args.target_fpr)
-        plot_pr(curve_frame)
-        plot_calibration(calibration_frame)
-        plot_score_hist(labels, probs, tuned["threshold"], baseline_used)
-        plot_slices(slice_frame)
-        test_prevalence = float(test_used["label"].mean())
-        plot_ppv_prevalence(tuned["results"], test_prevalence=test_prevalence)
-
-        log_dataframe_artifact(history_frame, OUT_DIR / f"{run_name}_training_history.csv", "charts")
-        log_dataframe_artifact(curve_frame, OUT_DIR / f"{run_name}_curves.csv", "charts")
-        log_dataframe_artifact(calibration_frame, OUT_DIR / f"{run_name}_calibration_bins.csv", "charts")
-        log_dataframe_artifact(slice_frame, OUT_DIR / f"{run_name}_slice_metrics.csv", "charts")
-        ppv_frame = pd.DataFrame([
-            {"ai_prevalence": float(key.rsplit("_", 1)[-1]),
-             "projected_ppv": float(value), "source": "deployment"}
-            for key, value in tuned["results"].items()
-            if key.startswith("deployed_ppv_at_prevalence_") and np.isfinite(value)
-        ])
-        ppv_frame = pd.concat([
-            ppv_frame,
-            pd.DataFrame([{
-                "ai_prevalence": test_prevalence,
-                "projected_ppv": float(tuned["results"]["deployed_precision"]),
-                "source": "test set",
-            }]),
-        ], ignore_index=True).sort_values("ai_prevalence")
-        log_dataframe_artifact(ppv_frame, OUT_DIR / f"{run_name}_ppv_by_prevalence.csv", "charts")
+        log_lora_charts(run_name, "meld", test[used].reset_index(drop=True), test_prob[used],
+                        baseline_prob[used] if baseline_prob is not None else None, history,
+                        tuned["results"], tuned["threshold"], args.target_fpr, OUT_DIR)
         payload = {"run": run_name, "mode": mode, "args": vars(args),
                    "n": {"train": len(train_frame), "val": len(val), "test": len(test)},
                    "training_history": history,

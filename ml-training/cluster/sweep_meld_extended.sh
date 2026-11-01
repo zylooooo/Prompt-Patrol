@@ -30,6 +30,13 @@
 #   cd ~/faheem && LR=1e-4 R=16 EPOCHS=3 TARGETS=Wqkv,Wo SELECT=auroc REVISION=ddfc9c789b8c8d0f92d3774265316d418c96dc67 \
 #       sbatch Prompt-Patrol/ml-training/cluster/sweep_meld_extended.sh
 #
+# Loss weights and a non-default dropout go in the run name too, e.g. MELD with spliced and paraphrased AI answers
+# counting double, three seeds in one job (~35 min per seed, so raise the time limit):
+#
+#   cd ~/tori && LR=1e-4 R=16 EPOCHS=3 TARGETS=Wqkv,Wo SELECT=auroc ROLE=train SEEDS="1 2 3" OWNER=tori \
+#       WEIGHTS='slice=spliced-*:2,slice=paraphrased-*:2' TAG=hardai \
+#       sbatch --time=03:00:00 Prompt-Patrol/ml-training/cluster/sweep_meld_extended.sh
+#
 # Skips the untouched baseline (it is in the meld-lora-extended runs already). Needs the extended corpus
 # (`dvc pull` in ml-training/). Override the repo location with PP_DIR=... as in run_py.sh.
 
@@ -53,12 +60,23 @@ EPOCHS="${EPOCHS:-8}"
 TARGETS="${TARGETS:-Wqkv,Wo,Wi}"
 SELECT="${SELECT:-pauroc}"
 REVISION="${REVISION:-}"
+# per-row loss weights (finetune_meld_lora.py --weights) and the short tag that names them in the run, e.g.
+# WEIGHTS='slice=spliced-*:2,slice=paraphrased-*:2' TAG=hardai. A weighting needs a tag, or two settings share a name
+WEIGHTS="${WEIGHTS:-}"
+TAG="${TAG:-}"
+if [ -n "$WEIGHTS" ] && [ -z "$TAG" ]; then
+  echo "WEIGHTS is set but TAG is not; give the weighting a short TAG so its runs get their own name" >&2
+  exit 1
+fi
 ROLE="${ROLE:-sweep}"
 SEEDS="${SEEDS:-1}"
 OWNER="${OWNER:-faheem}"
 
-# the targets in the name: Wqkv,Wo -> qkvo, Wqkv,Wo,Wi -> qkvoi; a non-default MELD checkpoint adds -rev<first 8 chars>
-SETTING="lr${LR}-$(echo "$TARGETS" | tr -d 'W,')-r${R}-e${EPOCHS}${REVISION:+-rev${REVISION:0:8}}"
+# the targets in the name: Wqkv,Wo -> qkvo, Wqkv,Wo,Wi -> qkvoi; a non-default MELD checkpoint adds -rev<first 8 chars>,
+# a non-default dropout adds -d<dropout> and a weighting adds its TAG
+DROP_TAG=""
+[ "$DROPOUT" != "0.05" ] && DROP_TAG="-d${DROPOUT}"
+SETTING="lr${LR}-$(echo "$TARGETS" | tr -d 'W,')-r${R}-e${EPOCHS}${DROP_TAG}${REVISION:+-rev${REVISION:0:8}}${TAG:+-$TAG}"
 if [ "$ROLE" = "sweep" ]; then
   NAME="meld-lora-sw-$SETTING"
 else
@@ -70,7 +88,7 @@ for S in $SEEDS; do
   python finetune_meld_lora.py --device cuda --data extended --min-words 10 --no-baseline \
     --lr "$LR" --r "$R" --alpha "$ALPHA" --dropout "$DROPOUT" --targets "$TARGETS" --epochs "$EPOCHS" \
     --batch-size 1 --select "$SELECT" --seed "$S" --owner "$OWNER" --run-role "$ROLE" \
-    ${REVISION:+--meld-revision "$REVISION"} \
+    ${REVISION:+--meld-revision "$REVISION"} ${WEIGHTS:+--weights "$WEIGHTS"} \
     --model-name "$NAME" --run-name "$NAME-extended-s$S" \
     || echo "$NAME seed $S FAILED"
 done
