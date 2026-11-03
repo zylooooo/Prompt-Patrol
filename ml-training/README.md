@@ -81,8 +81,8 @@ path in place.
 | Version       | Status                          | Used by                                                      |
 | ------------- | ------------------------------- | ------------------------------------------------------------ |
 | `trial-v0.2`  | published, what `dvc pull` gets | `TRIAL`                                                      |
-| `v0.1`        | **not yet produced**            | `ROBERTA_FULL`, `ROBERTA_LORA`, `ROBERTA_DORA`, `BINOCULARS` |
-| `v0.1-logo-*` | **not yet produced**            | every `logo()` config (E3)                                   |
+| `v0.1`        | published                       | `ROBERTA_FULL`, `ROBERTA_LORA`, `ROBERTA_DORA`, `BINOCULARS` |
+| `v0.1-logo-*` | built by `build_logo_splits.py` | `LOGO_CLAUDE` … `LOGO_QWEN` (E3)                             |
 
 **`trial-v0.2`** — 340 rows, 85 questions × 4 answers, 25% AI, group-split by
 question 60/20/20. The script that built it is *not* in this repo; its provenance
@@ -91,20 +91,22 @@ is recorded in `data/splits/trial-v0.2_manifest.json` (seed, ratios,
 smoke corpus with two known label leaks — see the `notes` on `TRIAL` — so numbers
 from it are never cited.
 
-**`v0.1`** — the real E2/E3 corpus, and the only reason `ROBERTA_FULL`,
-`ROBERTA_DORA` and `BINOCULARS` have no runnable config yet. It cannot be built
-from what is in the repo today: `apps/data-pipeline/data/cleaned/mohler_cleaned.parquet`
-is 2347 rows of student answers and grader scores, with no AI answers and no
-per-model `generator` tags to split on. `apps/data-pipeline/app/splitting.py`
-splits that unlabelled frame, so its output also does not satisfy the column
-contract `load_splits()` enforces (`answer`, `label`, `partition`, `question_id`,
-`answer_id`, `generator`, `n_words`). Unblocking E2 means generating AI answers
-for the full corpus upstream, then publishing the split through `dvc add` /
-`dvc push` below. `v0.1-logo-*` additionally needs per-model generator tags,
-which the trial corpus also lacks (its `generator` is only `human`/`ai_generated`).
+**`v0.1`** — the real E2 corpus: Mohler, SPRAG and EngSAF human answers plus AI
+answers from six generators, question-split 70/15/15. Provenance is in
+`data/splits/v0.1_manifest.json`.
 
-Until then, `dvc pull` will not produce these files and a run against them fails
-at `load_splits()`. `TRIAL` is the config that runs.
+**`v0.1-logo-<slug>`** — the E3 folds, one per generator, cut from `v0.1` by
+[`build_logo_splits.py`](build_logo_splits.py). Fold *G*: train and val are human +
+the other five generators in v0.1's own train/val; test is human test + *G*'s test
+answers (~86). *G* is never in train or val, and the human rows are identical across
+folds. They are cut from `v0.1`, not `v0.1-extended`, because every paraphrased and
+simulated-edit row in the extended corpus was rewritten by `deepseek-v4-pro`. The
+script asserts all of this; `--dry-run` re-checks without writing.
+
+```bash
+.venv/bin/python build_logo_splits.py --dry-run   # checks only
+.venv/bin/python build_logo_splits.py             # writes the 6 folds + v0.1-logo_manifest.json
+```
 
 ### Changing the data
 

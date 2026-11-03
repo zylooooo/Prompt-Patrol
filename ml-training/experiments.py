@@ -14,11 +14,9 @@ from config import DataConfig, ModelConfig, OptimConfig, PeftConfig, RunConfig
 
 OWNER = "tori.2023"
 
-# The E2/E3 corpus. NOT YET PRODUCED: the cleaned Mohler corpus is student
-# answers and grader scores only - no AI answers and no per-model generator
-# tags exist to split, so nothing in the repo can build this file. It is
-# blocked on the data-pipeline generating those; see README "Split versions".
-# `dvc pull` will not produce it. Until it exists, only TRIAL runs.
+# The E2 corpus: Mohler, SPRAG and EngSAF human answers plus six generators'
+# AI answers, question-split 70/15/15 (data/splits/v0.1_manifest.json). E3's
+# v0.1-logo-* files are cut from it by build_logo_splits.py.
 SPLITS = "data/splits/v0.1.parquet"
 
 # revision is pinned to a commit sha, not "main". "main" is a moving branch
@@ -93,10 +91,18 @@ def logo(generator: str, slug: str) -> RunConfig:
         **{
             "data.split_strategy": "logo",
             "data.held_out_generator": generator,
-            # same unproduced v0.1 family as SPLITS, cut per generator
+            # cut from v0.1 by build_logo_splits.py; see its docstring for the rule
             "data.splits": f"data/splits/v0.1-logo-{slug}.parquet",
         },
     )
+
+
+LOGO_CLAUDE = logo("claude-sonnet-5", "claude")
+LOGO_DEEPSEEK = logo("deepseek-v4-pro", "deepseek")
+LOGO_GEMINI = logo("gemini-3-5", "gemini")
+LOGO_GPT = logo("gpt-5.5", "gpt")
+LOGO_LLAMA = logo("llama3.1-8b", "llama")
+LOGO_QWEN = logo("qwen3-8b", "qwen")
 
 
 # --------------------------------------------------------------------------
