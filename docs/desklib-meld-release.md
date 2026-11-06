@@ -1,98 +1,157 @@
-# desklib + MELD: release log and handoff
+# desklib + MELD detector: handoff
 
-This turns the combination chosen in E7 ([results](desklib-meld-experiment-results.md#e7-the-final-combination-5-nov-2026))
-into files the detector can ship. This page records what was done and what is still open. Once the release run has
-finished, it is also the handoff to whoever builds the detector backend.
+The new detector combines two models, desklib and MELD, into one score. The model files and calibration are
+ready on DagsHub, and step 1 of the [next steps](#next-steps) downloads them into
+`apps/detector/model/desklib-meld/`. **What is left is building it into the detector and API.**
 
-**Chosen in E7 (val only):** desklib reference rerun (`desklib-lora-qkvf-r64-e8-extended`) + MELD 3-seed soup
-(`meld-lora-soup-all-s1`, the average of `meld-lora-extended-s1/s2/s3`), 50/50 on calibrated log-odds. Expected on
-test, from E7: AUROC 0.979, 74.7% of AI caught at exactly 1% FPR (mean over the 3 desklib seeds).
+Compared with the desklib model live today, on the test set it **catches 70% of AI answers instead of 51%, while
+wrongly flagging half as many students** (0.5% vs 1.2%).
 
-## Status
+## Results
 
-| Step | State |
-| --- | --- |
-| E7 decision recorded | done (5 Nov) |
-| `release_desklib_meld.py` + tests for the soup-as-one-adapter maths | written (6 Nov), tests pass locally |
-| `cluster/release_desklib_meld.sh` | written (6 Nov) |
-| Release run on the cluster | **not run yet** |
-| Bundle fetched into `apps/detector/model/desklib-meld/` and committed | not yet |
-| Detector backend for MELD (`DETECTOR_BACKEND=desklib-meld`) | not started (detector team) |
-| Abstention band for this model | open: pick from the val table in `report.json` |
+Test set, answers of 10+ words. The threshold was fixed on validation before test was looked at.
 
-## What was missing before the release (6 Nov)
+| | **desklib + MELD (new)** | desklib (live today) |
+| --- | --- | --- |
+| AI answers caught | **70.3%** [63.2, 77.5] | 51.4% |
+| Students wrongly flagged | **0.52%** [0.0, 1.4] | 1.18% |
+| AUROC | **0.981** | 0.957 |
 
-1. **The MELD soup existed only as scores.** `soup_meld_lora.py` never saved its weights.
-2. **No desklib seed had been picked.** E7's numbers are a mean over the 3 seeds, but the detector needs one.
-3. **No threshold or calibration for the pair.** Those were fitted only inside the analysis, which writes to
-   `outputs/`, a folder git ignores.
-4. **The detector has no MELD code.** It runs desklib alone, or desklib + RADAR.
+The gains are real, not noise: +18.6 pts AI caught [+16.0, +21.6] and +0.025 AUROC [+0.017, +0.032]. Brackets are
+95% intervals that resample whole questions.
 
-## How the release is built
+AI caught, by type of answer:
 
-`release_desklib_meld.py` trains nothing. The steps:
-- **The soup becomes one LoRA adapter.** Stacking the members' A matrices, and their B matrices scaled by
-  scale/3, gives a rank-48 adapter whose update is *exactly* the average of the members' updates. The heads are
-  averaged as before. CHECK 1 compares this adapter's update with the averaged one.
-- **It scores through the deployment path, with the half-precision files that ship.** That is the detector's
-  `clean_text`, then desklib through `apps/detector/app/desklib.py`, and MELD through its own `Scorer.score`, all in
-  float32. CHECK 2: the shipped soup must reproduce `meld-lora-soup-all-s1`'s saved val scores. If it does not,
-  nothing is logged.
-- **Val only:** fit each model's temperature; keep the desklib seed whose pair has the highest val AUROC (E7's
-  rule); fit the 1% FPR threshold; tabulate the API's abstention bands.
-- **Test, once:** the pair at the frozen threshold, per dataset and slice, compared with live desklib.
-- **Logging:** the bundle goes to DagsHub as run `release-desklib-meld-ensemble-v1`.
+| Raw AI | Edited | Paraphrased (light / heavy) | Spliced: 25% / 50% / 75% AI |
+| --- | --- | --- | --- |
+| 75% | 88% | 78% / 84% | **32%** / 56% / 63% |
 
-## Running it
+Students wrongly flagged, by dataset: Mohler 1.2% (4 of 346), EngSAF 0%, SPRAG 0%.
 
-On the cluster (VPN on). The job does a 120-answer smoke pass first, then the real run, all in one slot:
+These match the experiment that chose this model (E7 in
+[the experiment results](desklib-meld-experiment-results.md#e7-the-final-combination-5-nov-2026)): AUROC 0.979,
+and 74.7% caught at exactly 1% FPR, against 75.8% here. Scoring through the detector's code gives the same
+scores as training did, so nothing was lost in packaging.
 
-```bash
-cd ~/tori/Prompt-Patrol && git fetch && git checkout tori/tuning && git pull   # the branch with the script
-cd ~/tori && myqueue                                                          # one running job for the group
-sbatch Prompt-Patrol/ml-training/cluster/release_desklib_meld.sh
-tail -f ~/tori/$USER.<jobid>.out
-```
+## How it scores an answer
 
-Then on a laptop with DagsHub credentials in `ml-training/.env`:
+1. Answers under 10 words are not scored. The API marks them `uncertain`.
+2. Clean the text once with `clean_text`, and give the same cleaned text to both models.
+3. **desklib** reads the first 256 tokens and returns a logit. **MELD** reads the whole answer, in windows, and
+   returns a score.
+4. Combine them: `z = 0.5 · desklib_logit / 3.332 + 0.5 · meld_score / 2.233`, then `probability = sigmoid(z)`.
+5. The API compares the probability with the threshold, **0.9458**: above means `ai_generated`, below means
+   `human_written`, and within the abstention band means `uncertain`.
 
-```bash
-cd ml-training && python release_desklib_meld.py --fetch    # -> apps/detector/model/desklib-meld/
-```
+Average the two **log-odds** as in step 4, not the two probabilities. Otherwise the threshold no longer means
+"1% of students wrongly flagged". All the numbers are in `desklib-meld.json`, so code should read them from
+there and not copy them.
 
-## The bundle (`apps/detector/model/desklib-meld/`)
+## What's in `apps/detector/model/desklib-meld/`
 
 | File | What it is |
 | --- | --- |
-| `desklib-meld.json` | Everything needed to score: threshold, both temperatures, the combination formula, base models and pinned revisions, token limits, source run ids, and the API settings (`model_version`, `calibration_version`) |
-| `desklib-lora-adapter/` | The chosen desklib seed's adapter, fp16. Loads exactly like today's `desklib-lora-adapter/` |
-| `meld-soup-adapter/` | The MELD soup as one rank-48 LoRA adapter, fp16, for MELD at the pinned revision |
-| `meld-soup-head.safetensors` | The averaged MELD prototype head, loaded into `scorer.model` with `strict=False` |
-| `golden.json` | About 23 val answers, scored on CPU in float32: each model's raw score and the final probability. A new backend should match these within `tolerance_probability` |
-| `report.json` | The checks, the val seed choice, per-dataset false flags, the abstention-band table (val), the test results, and the paired comparison with live desklib |
+| `desklib-meld.json` | The config: threshold, both temperatures, the formula, base models with pinned revisions, token limits, and versions for the API |
+| `desklib-lora-adapter/` | desklib's fine-tuned weights (54 MB). Loads the same way as today's `desklib-lora-adapter/` |
+| `meld-soup-adapter/` + `meld-soup-head.safetensors` | MELD's fine-tuned weights (42 MB): three training runs averaged into one model |
+| `golden.json` | 23 answers with the probability each should get. Use it to test the new backend |
+| `report.json` | Full numbers: validation choices, test results, checks, and the abstention-band table |
 
-`golden.json` holds the text of about 23 corpus answers. Check this is fine before committing it to the repo.
+## Next steps
 
-## Handoff notes for the detector
+### 1. Download the model files
 
-- **Combination:** `z = 0.5 * desklib_logit / T_desklib + 0.5 * meld_score / T_meld`, then
-  `probability = sigmoid(z)`. The API flags an answer when `probability > threshold`. The values are in
-  `desklib-meld.json`.
-- **MELD scoring:** load `meld.py` from the pinned revision, build `Scorer(model_dir)`, merge the adapter into
-  `scorer.model.backbone`, load the head, then `scorer.score(clean_text(text))["score"]`. **Ignore** MELD's own
-  `flagged` and threshold.
-- **Size:** the MELD base is about 4 GB (ModernBERT, hidden size 1792), and desklib is about 1.7 GB. Expect roughly
-  6 GB+ of memory for the detector container. MELD scores long answers in windows, so latency grows with length.
-  Measure it with `measure_latency.py`.
-- **API settings:** `DETECTOR_MODEL_VERSION`, `DETECTOR_THRESHOLD` and `DETECTOR_CALIBRATION_VERSION` come from
-  `desklib-meld.json`. **Do not keep the default `ABSTENTION_BAND` of 0.08:** pick a band from the val table in
-  `report.json`, as was done for desklib + RADAR (±0.005).
-- **The desklib base is unpinned.** `desklib.py` calls `snapshot_download` without a revision. The revision used for
-  calibration is recorded in `desklib-meld.json`, so pin it there.
-- **Known weakness:** Mohler students are wrongly flagged above the 1% budget (E7: 1.25% on test, 2.38% on val).
-  `report.json` has the stricter threshold that keeps every dataset within 1% on val, and the AI it still catches.
+The files are not in git. Everyone downloads the same copy from DagsHub:
 
-## Log
+```bash
+cd ml-training
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once, if you don't have the venv
+cp .env.example .env    # once: your DagsHub username, a DagsHub access token, and the repo owner and name
+.venv/bin/python release_desklib_meld.py --fetch --run-id 04da6e99ed3e41c9ae6742ae5c0fcbf1
+```
 
-- **5 Nov:** E7 picks desklib reference rerun + MELD 3-seed soup.
-- **6 Nov:** release gaps found (above). Wrote `release_desklib_meld.py`, its tests and the cluster job. Not yet run.
+This puts the 8 files in `apps/detector/model/desklib-meld/`, about 96 MB. It needs no GPU and no data. Keep
+`--run-id` as it is: without it, you get the newest release run instead of this one. Running it again replaces the
+folder with a fresh copy.
+
+### 2. Pick the abstention band. Do not use the API default of 0.08.
+
+With this model, a band of ±0.08 (or even ±0.05) around 0.9458 marks **every** AI answer `uncertain`, so the
+detector would never flag anything. This is because the combined probability almost never goes above about 0.995.
+
+On validation:
+
+| Band | Students flagged | Students uncertain | AI flagged | AI uncertain |
+| --- | --- | --- | --- | --- |
+| none | 1.0% | 0% | 76.1% | 0.1% |
+| **±0.005 (suggested)** | 0.57% | 0.9% | 72.8% | 5.7% |
+| ±0.01 | 0.28% | 1.6% | 68.0% | 13.3% |
+| ±0.02 | 0% | 2.7% | 43.5% | 40.7% |
+
+**Suggested: ±0.005**, the same band desklib + RADAR uses. It halves the false flags at a cost of 3 pts of AI
+caught. Choose from this table only, never from test numbers.
+
+### 3. Decide on the stricter threshold for Mohler (optional)
+
+Mohler students are wrongly flagged more than the others: 2.1% on validation and 1.2% on test, against a 1% target.
+A stricter threshold of **0.9539** keeps every dataset within 1% on validation. It catches 70.3% of validation AI
+instead of 76.1%. The default is to keep 0.9458.
+
+### 4. Build the detector backend (detector team)
+
+Copy the pattern of `apps/detector/app/ensemble.py`, which is desklib + RADAR:
+- [ ] `DETECTOR_BACKEND=desklib-meld`, which loads desklib as `desklib.py` does, but with this bundle's adapter and
+  temperature.
+- [ ] Load MELD from `anon-review-meld-2026/meld` at the revision in `desklib-meld.json`, using `meld.py` from that
+  same revision. Build `Scorer(model_dir)`, merge `meld-soup-adapter` into `scorer.model.backbone`, and load
+  `meld-soup-head.safetensors` into `scorer.model` with `strict=False`. Then the score is
+  `scorer.score(clean_text(text))["score"]`. **Ignore** the `flagged` and threshold that MELD returns: they are
+  MELD's own, not ours.
+- [ ] Pin desklib's base model to the `base_revision` in `desklib-meld.json`. Today's `desklib.py` downloads it
+  without one.
+- [ ] Refuse to start if `desklib-meld.json` doesn't match the code, as `ensemble.py` does.
+- [ ] A test that scores every answer in `golden.json` and matches each probability within 0.002.
+- [ ] The Docker build copies `apps/detector/model/`, so run step 1 before building the image. Unlike the
+  desklib and RADAR adapters, these files are not committed, partly because `golden.json` holds corpus text.
+  Add `apps/detector/model/desklib-meld/` to `.gitignore` so nobody commits them by accident.
+- [ ] Measure memory and latency on the target machine (`ml-training/measure_latency.py`). MELD's base model is
+  about 4 GB and desklib's about 1.7 GB, so budget at least 6 GB. Long answers take longer, because MELD reads the
+  whole answer.
+
+### 5. Configure the API
+
+Add `apps/docker-compose.desklib-meld.yml`, modelled on `docker-compose.ensemble.yml`:
+
+```yaml
+DETECTOR_MODEL_VERSION: desklib-meld-ensemble-v1
+DETECTOR_THRESHOLD: "0.945775"        # or 0.9539 if step 3 chose the stricter one
+ABSTENTION_BAND: "0.005"              # from step 2
+DETECTOR_CALIBRATION_VERSION: desklib3.332-meld2.233-thr0.9458-v1
+```
+
+### 6. Recommended: one source for the threshold
+
+Today the detector reads its numbers from the JSON, but the threshold that decides a verdict is a separate copy,
+typed into the API's compose file. Nothing checks that the two agree. If someone updates the model but not the
+compose file, the API applies a stale threshold to new scores and gives no error.
+
+The cleanest fix is for the detector to return `calibration_version` and `threshold` with each score. The API
+would then use those values, or check them against its own. This changes the contract between detector and API,
+so it is the detector team's call. If they adopt it, it should cover desklib + RADAR too.
+
+## Known limits
+
+- **Spliced answers** (a student's answer with part of it replaced by AI) are the weak spot. Only 32% of those that
+  are 25% AI are caught.
+- **Mohler** is slightly over the 1% false-flag target (see step 3).
+- **The 10-word minimum has no evidence behind it for these models.** It is the app's existing rule, and every
+  evaluation used answers of 10+ words only. The corpus has answers down to 3 words, so checking whether 10 is the
+  right floor costs no GPU time. Changing the floor would need a new threshold fit on validation.
+
+## Where it came from
+
+- DagsHub run `release-desklib-meld-ensemble-v1` (`04da6e99ed3e41c9ae6742ae5c0fcbf1`), made by
+  `ml-training/release_desklib_meld.py` on 6 Nov 2026 at commit `7f0a610`. Step 1 downloads it.
+- desklib: `desklib-lora-qkvf-r64-e8-extended-s2`, the best of 3 seeds by validation AUROC.
+- MELD: `meld-lora-extended-s1/s2/s3` averaged into one model (the "3-seed soup").
+- The calibration was fitted on validation only. Test was read once.

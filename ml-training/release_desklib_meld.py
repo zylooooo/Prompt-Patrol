@@ -265,11 +265,14 @@ def git_commit() -> str:
 # fetch: bundle from DagsHub into the detector
 # --------------------------------------------------------------------------
 
-def fetch() -> None:
+##  run_id: a specific release run (what the handoff doc pins); default the newest finished RUN_NAME
+def fetch(run_id: str | None = None) -> None:
     from tracking import setup_mlflow
 
     setup_mlflow()
-    run = latest_run(RUN_NAME)
+    run = mlflow.get_run(run_id) if run_id else latest_run(RUN_NAME)
+    if run.info.run_name != RUN_NAME or run.info.status != "FINISHED":
+        raise SystemExit(f"run {run.info.run_id} is {run.info.run_name} ({run.info.status}), not a finished {RUN_NAME}")
     folder = Path(mlflow.artifacts.download_artifacts(run_id=run.info.run_id, artifact_path=f"release/{MODEL_VERSION}",
                                                       dst_path=tempfile.mkdtemp(prefix="release-fetch-")))
     install(folder)
@@ -294,9 +297,11 @@ def main() -> None:
     ap.add_argument("--release", action="store_true", help="also copy the bundle into apps/detector/model/desklib-meld/")
     ap.add_argument("--fetch", action="store_true",
                     help="only download the logged bundle from DagsHub into apps/detector/model/desklib-meld/")
+    ap.add_argument("--run-id", default=None,
+                    help="with --fetch: the release run to download (default: the newest one)")
     args = ap.parse_args()
     if args.fetch:
-        return fetch()
+        return fetch(args.run_id)
     from safetensors.torch import save_file
     from tracking import log_split_metrics, setup_mlflow
 
