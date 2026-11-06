@@ -6,7 +6,8 @@ says what to run next, in what order, how each result will be judged, and which 
 [desklib-meld-experiment-results.md](desklib-meld-experiment-results.md) as each experiment finishes (E1 and E2 done 1 Nov; MELD stays at rank 16. E3, E4 and the desklib reference rerun done
 3 Nov; MELD moves to the Oct release, and Mohler weighting is not adopted. The new MELD baseline and E5 done 4 Nov; epoch selection stays on val AUROC,
 the release is a tie, E5a is not adopted and E5b awaits a seed-2 rerun. 5 Nov: E5b adopted on 3 seeds; E6 skipped
-for now; E7 done, final pair desklib reference rerun + MELD 3-seed soup).
+for now; E7 done, final pair desklib reference rerun + MELD 3-seed soup. 6 Nov: release built, see
+[desklib-meld-release.md](desklib-meld-release.md)).
 
 Same protocol as before: extended corpus `v0.1-extended`, answers of 10+ words, threshold fitted on val at 1% FPR
 and frozen, 3 seeds, and paired intervals that resample whole questions. **Every choice below is made on val.**

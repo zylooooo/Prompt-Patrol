@@ -551,6 +551,56 @@ Students wrongly flagged on test at the frozen threshold: Mohler 4 of 346 (1.25%
 
 **Decision:** desklib reference rerun + MELD 3-seed soup is the final combination: 2 models at inference.
 
+## Weight check on the shipped pair (6 Nov 2026)
+
+**Question.** The release ships desklib seed 2 (`desklib-lora-qkvf-r64-e8-extended-s2`, picked on val, see
+[desklib-meld-release.md](desklib-meld-release.md)) with the MELD 3-seed soup, averaged 50/50. Would giving MELD more
+weight (60/40, 70/30, …) catch more AI?
+
+**What ran.** Nothing was retrained. Each answer keeps its two calibrated scores, and they are blended as
+`(1 − w) × desklib + w × MELD` for w = 0, 0.1, …, 1. This is descriptive only: the weight was fixed at 50/50 before
+any test read, and it is not re-chosen from this curve.
+
+Analysis: `analyse_ensemble.py --a desklib-lora-qkvf-r64-e8-extended --b meld-lora-soup-all@1 --seeds 2 --out
+outputs/analysis/shipped-pair`.
+
+| AI caught at exactly 1% FPR | 0% MELD (desklib only) | 20% | 30% | 40% | **50% (shipped)** | 60% | 70% | 80% | 100% (MELD only) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Val | 69.6% | 73.0% | 73.9% | 73.0% | **76.2%** | 79.2% | 81.0% | 83.4% | 76.3% |
+| Test | 69.6% | 76.1% | 75.0% | 74.1% | **76.0%** | 75.5% | 75.0% | 76.3% | 69.2% |
+| Test AUROC | 0.9759 | 0.9796 | 0.9806 | 0.9811 | **0.9813** | 0.9812 | 0.9810 | 0.9804 | 0.9744 |
+
+![AI caught at 1% FPR and AUROC by share given to MELD, val and test](assets/desklib-meld/e7-shipped-weight-curve.png)
+
+The shipped pair against each model alone, on test at the frozen val threshold:
+
+| | AI caught | Students wrongly flagged | Mohler students flagged | AUROC |
+| --- | --- | --- | --- | --- |
+| desklib seed 2 alone | 64.2% | 0.7% | 4 of 346 | 0.976 |
+| MELD 3-seed soup alone | 70.3% | 1.2% | 9 of 346 | 0.974 |
+| **desklib + MELD, 50/50** | **70.3%** | **0.5%** | **4 of 346** | **0.981** |
+
+Paired differences on test, pair minus each member: against the soup, AUROC **+0.0069** [+0.0037, +0.0101] and
+deployed TPR +0.0 pts [−3.3, +2.9]; against desklib, AUROC **+0.0054** [+0.0031, +0.0075] and deployed TPR
+**+6.1 pts** [+4.5, +8.0]. Bold: the interval excludes 0.
+
+### Findings
+
+1. **Test is flat from 20% to 80% MELD.** AI caught at exactly 1% FPR stays between 74.1% and 76.3%, well inside the
+   ±7 pt interval of this metric. Test AUROC peaks at 50/50 (0.9813).
+2. **Val prefers more MELD, as in every earlier pair.** Val climbs to 83.4% at 80% MELD. E7's curve over all three
+   desklib seeds has the same shape. A likely cause is the different mix of AI answers: spliced answers are 5% of
+   val but 23% of test.
+3. **Both models are needed.** Against MELD alone, the pair catches the same share of AI with half the students
+   wrongly flagged (0.5% vs 1.2%), and its AUROC gain is clear of noise. Against desklib alone, it catches 6.1 pts
+   more AI.
+4. The 50/50 numbers match the release report for `desklib-meld-ensemble-v1` (AUROC 0.981, 76.0% at exactly 1% FPR,
+   70.3% caught with 0.5% wrongly flagged). This confirms that the training-path scores agree with the deployment
+   path.
+
+**Decision:** keep 50/50. Choosing a weight from val would gain nothing on new answers, and choosing it from test
+would be tuning on test.
+
 ## Per-seed results (E3, E4, new baseline, E5)
 
 The means above hide several broken seeds, so here is every seed. Val and test are answers of 10+ words; "epoch" is the
