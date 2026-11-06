@@ -47,8 +47,9 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import load_corpus, slice_flag_rates
-from metrics import calibration_metrics, evaluate, threshold_at_fpr
+from combined_data import load_corpus, row_weights, slice_flag_rates
+from meld_lora_plots import log_lora_charts
+from metrics import calibration_metrics, evaluate, oracle_tpr_at_fpr, threshold_at_fpr
 from scores import save_scores, score_rows
 
 MLFLOW_EXPERIMENT = "E2-finetune"
@@ -152,9 +153,15 @@ def train_lora(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, d
 
     texts = train["answer"].astype(str).to_numpy()
     labels = train["label"].to_numpy(dtype=np.float32)
+    # all ones without --weights, so the loss is the plain mean as before
+    weights = row_weights(train, args.weights).astype(np.float32)
     rng = np.random.default_rng(args.seed)
+    # the low-FPR numbers are measured on the answers the app scores (>= --min-words words), like the metrics
+    used = (val["n_words"] >= args.min_words).to_numpy()
+    val_labels = val["label"].to_numpy()
 
     best_auc, best_state, best_epoch = -1.0, None, -1
+    history = []
     for epoch in range(1, args.epochs + 1):
         model.train()
         perm = rng.permutation(len(train))
@@ -165,7 +172,8 @@ def train_lora(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, d
             y = torch.from_numpy(labels[idx]).to(device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 logits = model(input_ids=ids, attention_mask=mask)["logits"].squeeze(-1)
-            loss = F.binary_cross_entropy_with_logits(logits.float(), y)
+            loss = (F.binary_cross_entropy_with_logits(logits.float(), y, reduction="none")
+                    * torch.from_numpy(weights[idx]).to(device)).mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             opt.step()
@@ -176,13 +184,24 @@ def train_lora(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, d
 
         val_logits = predict_logits(model, tokenizer, val["answer"], device)
         val_auc = float(roc_auc_score(val["label"], val_logits))
+        val_pauroc = float(roc_auc_score(val_labels[used], val_logits[used], max_fpr=0.01))
+        # in-sample on val (threshold picked on the same rows): for the training chart, not a result
+        val_tpr_1pct = oracle_tpr_at_fpr(val_labels[used], val_logits[used], args.target_fpr)
         val_loss = float(F.binary_cross_entropy_with_logits(
             torch.from_numpy(val_logits), torch.from_numpy(val["label"].to_numpy(dtype=np.float64))).item())
+        epoch_seconds = time.perf_counter() - t0
         print(f"epoch {epoch}/{args.epochs}: train_loss={train_loss:.4f} val_loss={val_loss:.4f} "
-              f"val_auroc={val_auc:.4f} ({time.perf_counter() - t0:.0f}s)", flush=True)
+              f"val_auroc={val_auc:.4f} val_pauroc@1%={val_pauroc:.4f} ({epoch_seconds:.0f}s)", flush=True)
         log_metric("train/loss", train_loss, epoch)
         log_metric("val/loss", val_loss, epoch)
         log_metric("val/auroc", val_auc, epoch)
+        log_metric("val/pauroc", val_pauroc, epoch)
+        log_metric("val/tpr_at_fpr_0.01", val_tpr_1pct, epoch)
+        log_metric("train/learning_rate", float(opt.param_groups[0]["lr"]), epoch)
+        log_metric("train/epoch_seconds", epoch_seconds, epoch)
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "val_auroc": val_auc,
+                        "val_pauroc": val_pauroc, "val_tpr_1pct": val_tpr_1pct,
+                        "learning_rate": float(opt.param_groups[0]["lr"]), "epoch_seconds": epoch_seconds})
 
         if val_auc > best_auc:
             best_auc, best_epoch = val_auc, epoch
@@ -194,7 +213,7 @@ def train_lora(model, tokenizer, train: pd.DataFrame, val: pd.DataFrame, args, d
     if result.unexpected_keys:
         raise RuntimeError(f"best-epoch restore matched no parameters for: {result.unexpected_keys[:3]}")
     print(f"restored epoch {best_epoch} (val_auroc={best_auc:.4f})")
-    return best_epoch, best_auc
+    return best_epoch, best_auc, history
 
 
 # --------------------------------------------------------------------------
@@ -285,6 +304,15 @@ def main() -> None:
     ap.add_argument("--alpha", type=int, default=32)
     ap.add_argument("--dropout", type=float, default=0.05)
     ap.add_argument("--targets", default="query_proj,value_proj")
+    ap.add_argument("--weights", default="",
+                    help="per-row loss weights, e.g. 'dataset=mohler&slice=human:2,slice=spliced-*:2' "
+                         "(combined_data.parse_weights); each label's weights are rescaled to average 1")
+    ap.add_argument("--model-name", default="desklib-lora",
+                    help="the scores file's model column, which harness.py groups seeds by: give every different "
+                         "setting its own, e.g. desklib-lora-qkvf-r64-e8-mohlerneg")
+    ap.add_argument("--log-adapter", action="store_true",
+                    help="also upload the adapter to MLflow under model/ (~100 MB at r64 on every layer), so it "
+                         "outlives the cluster's scratch disk")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-train-rows", type=int, default=0, help="debug: cap the train rows")
     ap.add_argument("--device", default="cuda")
@@ -312,6 +340,11 @@ def main() -> None:
     for name, df in (("train", train), ("val", val), ("test", test)):
         print(f"{name}: {len(df)} rows ({df['label'].mean():.1%} AI) datasets={sorted(df['dataset'].unique())}")
         print("   " + ", ".join(f"{k}={v}" for k, v in df["slice"].value_counts().sort_index().items()))
+    if args.weights:
+        # fail on a typo'd rule here, before the model loads
+        w = row_weights(train, args.weights)
+        print("loss weight by slice (mean): " + ", ".join(
+            f"{k}={v:.2f}" for k, v in pd.Series(w).groupby(train["slice"]).mean().items()))
 
     import mlflow
     from eval_desklib_zeroshot import Scorer
@@ -335,12 +368,13 @@ def main() -> None:
             "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
             "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
             "lora_targets": args.targets, "max_len": MAX_LEN, "seed": args.seed,
+            "weights": args.weights or "none", "model_name": args.model_name,
             "train_n": len(train), "val_n": len(val), "test_n": len(test),
         })
         payload = {"run": run_name, "mode": mode, "args": vars(args),
                    "n": {"train": len(train), "val": len(val), "test": len(test)}}
 
-        base_val_logits = base_test_logits = None
+        base_val_logits = base_test_logits = base_test_p = None
         if not args.no_baseline:
             print("\nScoring untouched model (baseline)...")
             base_val_logits = predict_logits(scorer.model, tokenizer, val["answer"], device)
@@ -350,11 +384,12 @@ def main() -> None:
             print_report("BASELINE (zero-shot, same rows)", base)
             log_split_metrics({f"baseline_{k}": v for k, v in base["results"].items()}, "test")
             payload["baseline"] = jsonable(base)
+            base_test_p = expit(base_test_logits)
 
         model = build_lora_model(scorer, args.r, args.alpha, args.dropout, args.targets.split(","))
         model.to(device)
         print("\nTraining...")
-        best_epoch, best_auc = train_lora(model, tokenizer, train, val, args, device,
+        best_epoch, best_auc, history = train_lora(model, tokenizer, train, val, args, device,
                                           lambda k, v, s: mlflow.log_metric(k, v, step=s))
         # the number a sweep is ranked by: validation only, so test is never used to choose
         mlflow.log_params({"best_epoch": best_epoch})
@@ -374,9 +409,15 @@ def main() -> None:
             for row in rows:
                 mlflow.log_metric(f"test/{scope}_{row['slice'].replace('-', '_')}_flag_rate", row["flag_rate"])
         payload["tuned"] = jsonable(tuned) | {"best_epoch": best_epoch, "best_val_auroc": best_auc}
+        payload["training_history"] = history
 
         OUT_DIR.mkdir(exist_ok=True)
         stem = OUT_DIR / run_name  # per-run files, so a sweep does not overwrite itself
+        # the charts and slice tables use the same answers as the headline metrics
+        used = (test["n_words"] >= args.min_words).to_numpy()
+        log_lora_charts(run_name, "desklib", test[used].reset_index(drop=True), test_p[used],
+                        base_test_p[used] if base_test_p is not None else None, history,
+                        tuned["results"], tuned["threshold"], args.target_fpr, OUT_DIR)
 
         # one row per answer for EVERY val and test row (not filtered by word count), for the
         # untouched and the tuned model; harness.py fits thresholds and evaluates from this file.
@@ -385,8 +426,8 @@ def main() -> None:
         if base_val_logits is not None:
             parts += [score_rows("desklib-untouched", "val", val, base_val_logits, expit(base_val_logits)),
                       score_rows("desklib-untouched", "test", test, base_test_logits, expit(base_test_logits))]
-        parts += [score_rows("desklib-lora", "val", val, val_logits, val_p),
-                  score_rows("desklib-lora", "test", test, test_logits, test_p)]
+        parts += [score_rows(args.model_name, "val", val, val_logits, val_p),
+                  score_rows(args.model_name, "test", test, test_logits, test_p)]
         scores_path = save_scores(run_name, args.seed, parts)
         if train_on:
             print("note: 'test' here is every row of the held-out datasets, including their train/val partitions, "
@@ -394,6 +435,8 @@ def main() -> None:
 
         Path(f"{stem}_results.json").write_text(json.dumps(payload, indent=2, default=float))
         model.save_pretrained(f"{stem}_adapter")
+        if args.log_adapter:
+            mlflow.log_artifacts(f"{stem}_adapter", "model/adapter")
         log_dict_artifact(payload, "lora_results.json")
         print(f"\nWrote {stem}_results.json, _adapter/ and {scores_path.name}")
         print(f"MLflow run: {mlflow.active_run().info.run_id}")

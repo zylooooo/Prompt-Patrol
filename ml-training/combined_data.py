@@ -120,6 +120,63 @@ def load_corpus(name: str = "extended") -> dict[str, pd.DataFrame]:
     raise ValueError(f"unknown corpus {name!r}; choose 'extended' or 'combined'")
 
 
+def parse_weights(spec: str) -> list[tuple[list[tuple[str, str]], float]]:
+    """
+    Parses a --weights spec into rules. Rules are comma-separated; each is conditions joined by &,
+    a colon, then the weight. A condition is column=value, and the value may use * and ? wildcards:
+
+        "slice=spliced-*:2,slice=paraphrased-heavy:2,dataset=mohler&slice=human:2"
+
+    returns [([(column, pattern), ...], weight), ...]; an empty spec gives no rules
+    """
+    rules = []
+    for item in (s.strip() for s in spec.split(",")):
+        if not item:
+            continue
+        conditions, sep, weight = item.rpartition(":")
+        if not sep or not conditions:
+            raise ValueError(f"weight rule {item!r} needs the form column=value[&column=value]:weight")
+        parsed = []
+        for condition in conditions.split("&"):
+            column, eq, pattern = condition.partition("=")
+            if not eq or not column or not pattern:
+                raise ValueError(f"condition {condition!r} in {item!r} needs the form column=value")
+            parsed.append((column.strip(), pattern.strip()))
+        if (w := float(weight)) <= 0:
+            raise ValueError(f"weight in {item!r} must be positive")
+        rules.append((parsed, w))
+    return rules
+
+
+def row_weights(frame: pd.DataFrame, spec: str) -> np.ndarray:
+    """
+    Per-row loss weights for training, from a --weights spec (see parse_weights). A row matching
+    several rules gets the product of their weights. Each label's weights are then rescaled to
+    average 1, so the classes stay balanced and the loss keeps its scale: upweighting spliced AI
+    answers takes weight from the other AI answers, never from the human ones.
+
+    raises ValueError on an unknown column or a rule that matches no row (almost always a typo,
+    which would otherwise train silently with no weighting)
+    returns one weight per row of `frame`, in order
+    """
+    from fnmatch import fnmatchcase
+
+    weights = np.ones(len(frame))
+    for conditions, weight in parse_weights(spec):
+        mask = np.ones(len(frame), dtype=bool)
+        for column, pattern in conditions:
+            if column not in frame.columns:
+                raise ValueError(f"weight rule names column {column!r}, which the training data does not have")
+            mask &= frame[column].astype(str).map(lambda v: fnmatchcase(v, pattern)).to_numpy()
+        if not mask.any():
+            raise ValueError(f"weight rule {conditions} matches no training row")
+        weights[mask] *= weight
+    labels = frame["label"].to_numpy()
+    for label in np.unique(labels):
+        weights[labels == label] /= weights[labels == label].mean()
+    return weights
+
+
 def slice_flag_rates(frame: pd.DataFrame, probs, threshold: float) -> list[dict]:
     """
     Share of each slice flagged as AI at the frozen threshold. For `human`

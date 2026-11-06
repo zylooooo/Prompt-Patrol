@@ -37,8 +37,9 @@ def find_scores(run_name: str) -> Path:
     from tracking import setup_mlflow
 
     setup_mlflow()
+    # newest first: a failed run that was rerun under the same name is replaced by its rerun
     runs = mlflow.search_runs(search_all_experiments=True, filter_string=f"tags.mlflow.runName = '{run_name}'",
-                              output_format="list")
+                              order_by=["attributes.start_time DESC"], output_format="list")
     runs = [r for r in runs if r.info.status == "FINISHED"]
     if not runs:
         raise SystemExit(f"no finished run named {run_name} on DagsHub")
