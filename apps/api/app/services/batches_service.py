@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import logging
@@ -104,6 +105,31 @@ def parse_and_validate(
     return rows, failures
 
 
+def _enqueue_rows(rows: list[dict], *, batch_id: str, actor_id: str, strictness: str, retain_answer: bool) -> list[dict]:
+    """Sync, run in a thread by create_batch. Returns the rows that failed to
+    enqueue; the caller records them, since the DB session belongs to the loop."""
+    failed: list[dict] = []
+    for row in rows:
+        try:
+            enqueue_row(
+                {
+                    "batch_id": batch_id,
+                    "actor_id": actor_id,
+                    "strictness": strictness,
+                    "retain_answer": retain_answer,
+                    "external_ref": row["external_ref"],
+                    "answer_text": row["answer_text"],
+                    "question_text": row["question_text"],
+                }
+            )
+        except Exception:
+            # SQS is unavailable/throttled partway through.
+            # No external_ref here: it identifies a student. The failure row records it.
+            logger.exception("Failed to enqueue a row for batch %s.", batch_id)
+            failed.append(row)
+    return failed
+
+
 async def create_batch(
     db: AsyncSession,
     *,
@@ -115,7 +141,9 @@ async def create_batch(
     column_mapping: dict[str, str] | None,
     requires_question_text: bool,
 ) -> Batch:
-    text = download_object(upload_key)
+    # boto3 is blocking: every AWS call here runs in a thread so a batch
+    # submission never stalls the event loop for other requests.
+    text = await asyncio.to_thread(download_object, upload_key)
     rows, failures = parse_and_validate(text, column_mapping, requires_question_text)
 
     batch = Batch(
@@ -150,38 +178,28 @@ async def create_batch(
         len(failures),
     )
 
-    enqueue_failed = 0
-    for row in rows:
-        try:
-            enqueue_row(
-                {
-                    "batch_id": str(batch.id),
-                    "actor_id": str(actor_id),
-                    "strictness": strictness,
-                    "retain_answer": retain_answer,
-                    "external_ref": row["external_ref"],
-                    "answer_text": row["answer_text"],
-                    "question_text": row["question_text"],
-                }
+    failed_rows = await asyncio.to_thread(
+        _enqueue_rows,
+        rows,
+        batch_id=str(batch.id),
+        actor_id=str(actor_id),
+        strictness=strictness,
+        retain_answer=retain_answer,
+    )
+    for row in failed_rows:
+        # The row never reaches the Worker, so it must count as `failed`
+        # rather than sit as `pending` forever.
+        db.add(
+            BatchRowFailure(
+                id=uuid.uuid4(),
+                batch_id=batch.id,
+                row_number=0,
+                external_ref=row["external_ref"],
+                reason="Failed to queue row for processing.",
             )
-        except Exception:
-            # SQS is unavailable/throttled partway through. The row never
-            # reaches the Worker, so it must count as `failed` rather than
-            # sit as `pending` forever.
-            # No external_ref here: it identifies a student. The failure row below records it.
-            logger.exception("Failed to enqueue a row for batch %s.", batch.id)
-            enqueue_failed += 1
-            db.add(
-                BatchRowFailure(
-                    id=uuid.uuid4(),
-                    batch_id=batch.id,
-                    row_number=0,
-                    external_ref=row["external_ref"],
-                    reason="Failed to queue row for processing.",
-                )
-            )
-    if enqueue_failed:
-        logger.warning("Batch %s: %d of %d rows failed to enqueue.", batch.id, enqueue_failed, len(rows))
+        )
+    if failed_rows:
+        logger.warning("Batch %s: %d of %d rows failed to enqueue.", batch.id, len(failed_rows), len(rows))
         await db.commit()
 
     return batch
@@ -235,6 +253,6 @@ async def cancel_batch(db: AsyncSession, actor: User, batch_id: uuid.UUID) -> Ba
         batch.cancelled_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(batch)
-        purged = purge_batch_messages(str(batch_id))
+        purged = await asyncio.to_thread(purge_batch_messages, str(batch_id))
         logger.info("Batch %s cancelled by actor %s: %d queued rows purged.", batch_id, actor.id, purged)
     return batch

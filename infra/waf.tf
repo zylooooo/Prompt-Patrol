@@ -12,6 +12,10 @@
 # WAF console, which would include the __Host- session cookie. Metrics stay on.
 # There is deliberately no logging configuration for the same reason.
 #
+# While var.loadtest_enabled is on, a priority-0 allow rule for the load
+# generator's EIP (loadtest.tf) runs before everything else, so a PP-533 run is
+# not rate-limited by rate-all/rate-writes. It exists only during a load-test
+#
 # create_before_destroy: a web ACL cannot be deleted while a distribution still
 # references it, so a replacement must exist first.
 
@@ -42,6 +46,30 @@ resource "aws_wafv2_web_acl" "main" {
 
   default_action {
     allow {}
+  }
+
+  dynamic "rule" {
+    for_each = aws_wafv2_ip_set.loadtest
+    content {
+      name     = "loadtest-allow"
+      priority = 0
+
+      action {
+        allow {}
+      }
+
+      statement {
+        ip_set_reference_statement {
+          arn = rule.value.arn
+        }
+      }
+
+      visibility_config {
+        cloudwatch_metrics_enabled = true
+        sampled_requests_enabled   = false
+        metric_name                = "prompt-patrol-loadtest-allow"
+      }
+    }
   }
 
   rule {

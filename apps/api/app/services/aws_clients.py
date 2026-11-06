@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from functools import lru_cache
 
 import boto3
 
@@ -23,20 +24,28 @@ MAX_CANCEL_DRAIN_ITERATIONS = 200
 CANCEL_DRAIN_VISIBILITY_SECONDS = 30
 
 
+# One client per process, not per call: building a boto3 client costs ~15 ms of
+# CPU, and a fresh one per row also meant a fresh TLS connection per row
+# (PP-533 freeze: 500 of those blocked POST /api/batches for ~20 s). Clients
+# are thread-safe; each is built from its own Session because the shared
+# default session is not, and these are first called from worker threads.
+@lru_cache(maxsize=1)
 def _s3_client():
-    return boto3.client("s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL)
+    return boto3.session.Session().client("s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL)
 
 
+@lru_cache(maxsize=1)
 def _s3_presign_client():
     """A presigned PUT URL is followed by the browser, so it must be signed
     against a host the browser can reach - LocalStack's in-network hostname
     isn't. Real AWS never sets either endpoint var, so this is the same
     client as _s3_client() there."""
-    return boto3.client("s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL_PUBLIC)
+    return boto3.session.Session().client("s3", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL_PUBLIC)
 
 
+@lru_cache(maxsize=1)
 def _sqs_client():
-    return boto3.client("sqs", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL)
+    return boto3.session.Session().client("sqs", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL)
 
 
 def generate_upload_url(file_name: str, actor_id: uuid.UUID) -> tuple[str, str]:

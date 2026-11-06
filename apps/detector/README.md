@@ -115,6 +115,10 @@ For desklib, also set `DETECTOR_BACKEND=desklib` and
 `RADAR_ADAPTER_DIR=../model/radar-lora-adapter` and
 `ENSEMBLE_SETTINGS=../model/ensemble.json`.
 
+desklib runs torch with one thread per CPU the process may use, logged at
+startup as `torch threads: ...`. `DETECTOR_TORCH_THREADS` overrides it; set it
+when Docker caps CPU with `--cpus`, which that count does not see.
+
 ## Tests
 
 ```sh
