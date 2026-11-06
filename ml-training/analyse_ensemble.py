@@ -12,7 +12,8 @@ What it writes into --out:
                                   dataset's val false-flag rate at or under 1%
   paired.csv                      A+B minus each other rule, 95% interval resampling whole questions
   weight_curve.csv/.png           the share given to B, from 0 to 1: val and test
-  slices.csv, slices.png          AI caught per slice, dataset and answer length at each rule's threshold
+  slices.csv, slices.png          AI caught per slice, dataset and answer length at each rule's threshold, val
+                                  and test in the table, test in the figure
   dataset_fpr.csv/.png            students wrongly flagged per dataset, val and test
   roc_low_fpr.csv/.png            TPR against FPR up to 5%, mean over seeds
   seed_spread.png                 TPR at exactly 1% FPR, every seed of every rule
@@ -160,7 +161,9 @@ def legend_below(fig, ax, n):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--a", default="desklib-lora-confirm-qkvf-r64-e8", help="run-name base of model A")
-    ap.add_argument("--b", default="meld-lora-extended", help="run-name base of model B")
+    ap.add_argument("--b", default="meld-lora-extended",
+                    help="run-name base of model B; base@seed pairs that one seed with every seed of A (its seed-pair "
+                         "control is then the same model twice)")
     ap.add_argument("--seeds", default="1,2,3", help="seeds of A and B, paired by number")
     ap.add_argument("--extra", action="append", default=[],
                     help='another rule, "label=run-name base[@seeds]", e.g. "soup=meld-lora-soup-pair" (repeatable)')
@@ -175,7 +178,13 @@ def main() -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    A, B = load_model(args.a, seeds), load_model(args.b, seeds)
+    b_base, _, b_seed = args.b.partition("@")
+    if b_seed:  # one seed of B (e.g. the 3-seed soup) paired with every seed of A
+        B = load_model(b_base, [int(b_seed)])
+        B = B[["split", "question_id", "y_true"]].join(pd.DataFrame({s: B[int(b_seed)] for s in seeds}))
+    else:
+        B = load_model(b_base, seeds)
+    A = load_model(args.a, seeds)
     frame = A[["split", "question_id", "y_true"]].join(
         harness.load_meta().set_index("answer_id")[["n_words", "slice", "dataset"]], how="inner")
     frame = frame[frame["n_words"] >= args.min_words]
@@ -184,7 +193,7 @@ def main() -> None:
         raise SystemExit(f"{args.b} does not cover the same answers as {args.a}")
     A, B = A.loc[frame.index], B.loc[frame.index]
 
-    a_name, b_name = args.a.removesuffix("-extended"), args.b.removesuffix("-extended")
+    a_name, b_name = args.a.removesuffix("-extended"), b_base.removesuffix("-extended")
     rules = [
         Rule(a_name, lambda s: A[s], seeds, PALETTE[0]),
         Rule(b_name, lambda s: B[s], seeds, PALETTE[1]),
@@ -254,11 +263,12 @@ def main() -> None:
     for rule in main_rules:
         flagged = pd.concat([flags(rule.fn(s), frame, args.target_fpr) for s in rule.seeds], axis=1).mean(axis=1)
         f = frame.assign(flagged=flagged)
-        ai = f[(f["split"] == "test") & (f["y_true"] == 1)]
-        for by in ("slice", "dataset", "length"):
-            for group, g in ai.groupby(by, observed=True):
-                slice_rows.append({"rule": rule.name, "by": by, "group": str(group), "n": len(g),
-                                   "tpr": g["flagged"].mean()})
+        for split in ("val", "test"):
+            ai = f[(f["split"] == split) & (f["y_true"] == 1)]
+            for by in ("slice", "dataset", "length"):
+                for group, g in ai.groupby(by, observed=True):
+                    slice_rows.append({"rule": rule.name, "split": split, "by": by, "group": str(group),
+                                       "n": len(g), "tpr": g["flagged"].mean()})
         human = f[f["y_true"] == 0]
         for (split, dataset), g in human.groupby(["split", "dataset"]):
             fpr_rows.append({"rule": rule.name, "split": split, "group": dataset, "n_human": len(g),
@@ -270,7 +280,7 @@ def main() -> None:
     panels = [("slice", "Answer type"), ("dataset", "Dataset"), ("length", "Answer length (words)")]
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), gridspec_kw={"width_ratios": [1.6, 1, 1]})
     for ax, (by, title) in zip(axes, panels):
-        t = slices[(slices["by"] == by) & (slices["group"] != "human")]
+        t = slices[(slices["split"] == "test") & (slices["by"] == by) & (slices["group"] != "human")]
         groups = list(dict.fromkeys(t["group"]))
         plot_grouped_bars(t, main_rules, "tpr", groups, ax, "AI caught at the val threshold")
         ax.set(title=title, xlim=(0, 1))
