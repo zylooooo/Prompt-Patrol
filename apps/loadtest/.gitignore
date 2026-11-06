@@ -1,0 +1,8 @@
+__pycache__/
+# k6's raw CSV before run.sh gzips it; the .gz is committed.
+results/*/requests.csv
+# Regenerable from batch_seed in meta.json; not part of the committed run record.
+results/*/batch.csv
+results/*/answers.json
+# run.sh pack output (the harness tarball for the load generator).
+results/_pack/

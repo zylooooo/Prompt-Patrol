@@ -1,0 +1,343 @@
+# PP-533 load test — experiment log
+
+Lab notebook for the load test, oldest first. Two kinds of entries:
+
+- **Hand-written** (under `## Notes`): predictions written *before* a phase runs,
+  decisions and why, surprises, things that went wrong.
+- **Automatic** (under `## Runs`): `run.sh` appends one line per run when it
+  finishes. Never edit or delete these; a bad run is flagged in its
+  `results/<run-id>/meta.json` (`status`), not removed.
+
+## Notes
+
+### Entry 0 — 2026-10-22: what we know before the first run
+
+**AWS observation (CloudWatch, 2026-10-19 17:07:59 UTC, desklib, batch
+`3f2baaf3`).** 340 rows uploaded, 8 rejected at parse, 332 detector calls all
+200. Drained 17:08:00 → 17:12:46 (~286 s). Per-row gap p50 0.84 s / p95 1.08 s /
+max 1.53 s, so S ≈ 0.84 s per row including worker overhead. The UI showed 322
+processed; the 10-row gap is unexplained (no worker errors logged) and tracked
+separately, not part of this test.
+
+**Initial prediction (desklib).** If one inference takes S ≈ 0.84 s and the
+detector scores one request at a time, capacity is C = 1/S ≈ 1.2 req/s
+(~71 req/min).
+
+- Idle (single checks only): breaking point a little under 1.2 req/s.
+- Under a draining batch: roughly half, ~0.5–0.6 req/s. The sequential worker
+  always has one row waiting, so once single checks queue it takes about half
+  of the detector.
+
+To be refined with the measured S after `run.sh calibrate`, before the ramps.
+
+**Decision — WSL memory (2026-10-22).** No `.wslconfig` change. Docker has
+7.1 GB; desklib's fit is measured (memory-pressure guard in `run.sh`), not
+assumed. If desklib doesn't fit: either a temporary `.wslconfig` raise, or
+desklib on AWS only. *(Superseded by Entry 1.)*
+
+### Entry 1 — 2026-10-23: the measured runs move to AWS
+
+**Decision (user).** No more local experiment runs. The local stack shares one
+laptop between k6, the API, the worker, the detector, Postgres and LocalStack, so a
+local breaking point measures the laptop, not the product. Its detector CPU, the
+edge path (CloudFront, WAF, ALB), RDS, real SQS and real Auth0 sessions all
+differ from production, and a QUICK stub dry-run was killed for low memory on
+2026-10-22. Every measured phase (calibrate → ramps → headline → freeze) runs
+against the AWS deployment before go-live instead. That deployment is the only
+environment and stands in for staging until launch. See the AWS spec.
+
+What stays local: `run.sh smoke` (stub detector), as a check that the harness
+still works before a session on AWS. The 7 stub dry-run directories from
+2026-10-22 (3 smoke, 2 calibrate, 2 aborted ramp-idle) were harness rehearsals,
+not data, and were deleted with their `## Runs` lines. `run.sh` and the local
+stack no longer support the real model or the memory guard.
+
+### Entry 2 — 2026-10-24: prediction before the ramps
+
+Calibrate (`20261024-035532_desklib_calibrate`): S = 0.909 s, p95 1.10 s, so
+C ≈ 66 checks/min on one detector task (2 vCPU). S is end to end, so the
+detector's own capacity is slightly above 66.
+
+**ramp-idle.** Arrivals are evenly spaced and service time is nearly constant,
+so I expect almost no queueing below C:
+
+- 7–53/min (≤ 0.8C): flat, p95 ≈ 1.1–1.3 s.
+- **Onset at 59–66/min (0.9–1.0C):** p95 rises to roughly 1.5–3 s as checks
+  begin to overlap and share the 2 vCPU (the detector runs inference in a
+  threadpool with no lock).
+- **Break at 73/min (1.1C):** about 7 checks/min more than C arrive. Over a
+  2-minute plateau that is a backlog of ~14 checks × 0.9 s ≈ 13 s, so
+  p95 > 10 s (NFR3 fails) and the API's 10 s detector timeouts start.
+- 83/min (1.25C): collapse. Timed-out checks still use detector CPU, so
+  successful throughput falls *below* C and most requests fail.
+
+**ramp-batch.** The worker sends batch rows to the same detector, so the batch
+takes part of C away from single checks. I expect onset and break to move about
+one step lower each: onset ~0.65–0.8C, break ~0.9–1.0C.
+
+**What would prove this wrong:** if one inference doesn't use both vCPU,
+overlapping checks run in parallel and C is effectively higher than 66. Then
+the ramp shows no onset until 1.1–1.25C. That is a finding about the
+detector's concurrency in its own right.
+
+### Entry 3 — 2026-10-24: what the two sittings found
+
+**Prediction vs. ramps.** Idle held almost exactly: flat to 59/min, a small rise
+at 66 (p95 1.44 s), break at 73 (p95 9.05 s, 33% errors), and at 83/min every
+check timed out while the detector kept completing work. Under batch, onset 53
+and break 66, inside the predicted range. Not predicted: the batch costs ~45%
+latency even at 7/min (p50 1.33 s vs 0.91 s), and 33 batch rows failed on the
+first pass at the top steps (all succeeded on retry, DLQ stayed at 0).
+
+**Rate choice.** R = 40/min = 60% of the under-batch breaking point (66), below
+onset (53), leaving ~40% headroom for bursts that k6's evenly spaced arrivals
+don't model. Plus one stress run at R = 53 (onset), kept apart in
+`results/_stress/` so it never enters the AC4 medians.
+
+**Headline at R = 40.** Idle: p95 1.05–1.07 s over 3 runs. Loaded: p95
+2.65–2.71 s, 0 errors, 0 504s, 0 failed rows over 3 runs; one 500-row batch
+drains in ~1,017 s (~29 rows/min). The 2-minute ramp plateau predicted the
+full drain well (expected ~2.5 s).
+
+**Stress at R = 53** (`_stress/20261024-080436_desklib_headline-loaded`): p95
+5.0 s, 0 errors over a 1,884 s drain. Still inside NFR3 at onset, but the batch
+takes almost twice as long, since checks take most of the detector.
+
+**Freeze.** `POST /api/batches` took 19–21 s on all 5 submissions. While it
+ran, the API's event loop was blocked: the `/api/detector` probe had p95
+18.2 s, max 20.2 s (`20261024-075221_desklib_freeze`). Checks caught in that
+window took up to ~21 s and one got a 504 (k6's all-checks p95 11.1 s;
+successful-checks p95 8.3 s, the figure RESULTS.md uses). The detector holds
+under batch load; submitting the batch is what fails.
+
+**Detector uses one of its two vCPU.** CloudWatch detector CPU peaked at ~51%
+of the task's reservation in every ramp, including the 83/min step where every
+check timed out. Memory peaked at ~37% of 8 GB. So C ≈ 66/min is a one-core
+number. Suspected cause (not yet confirmed): PyTorch's default thread count
+on Fargate's hyperthreaded vCPU. `desklib.py` never sets it.
+
+**Fargate CPU vs. EC2 GPU.** Not justified now: S = 0.91 s against NFR3's
+10 s, and capacity is ~4× the placeholder demand (12/min, still to confirm
+with the sponsor). Cheaper levers come first: use both cores, then scale the
+detector to more tasks.
+
+**Next.** (1) Fix `create_batch` blocking the event loop, then re-run freeze and
+headline-loaded with `--variant async` (Phase 6). (2) Confirm the detector's
+thread count, use both cores, re-run calibrate and ramp-idle. (3) Get the real
+demand figure.
+
+### Entry 4 — 2026-10-24: Phase 6, after the `create_batch` fix
+
+**The fix.** The root cause wasn't heavy work. `enqueue_row` built a new boto3
+client for every row (~15 ms of CPU each, plus a fresh TLS connection), and
+ran it all on the event loop. Now the clients are built once (854dae9) and the
+S3/SQS calls run in a thread (85c23bb). The detector code is unchanged.
+
+**Freeze is gone** (`20261024-110150_desklib_freeze`). The event-loop probe had
+p95 30 ms, max 256 ms (was 18.2 s / 20.2 s), and 0 504s. `POST /api/batches`
+itself still takes 3.5–4.3 s (was 19–21 s), but nothing else waits for it.
+
+**The detector got faster on its own.** The deploy restarted the detector task
+on the same code, and it now scores in S = 0.578 s (calibrate
+`20261024-122353`), down from 0.909 s. CPU still peaked at 50%, so it's still
+one core, just a faster one. Most likely the new task landed on a newer
+Fargate host CPU. So the loaded runs (p95 1.01–1.05 s, drain 401–421 s, 0
+errors, 3 runs) can't be compared with the 2.66 s before the fix: most of that
+gain is the hardware, not the fix. Those 3 runs and the calibrate are kept in
+`results/_phase6/` so they don't mix into the AC4 medians or C, which were
+measured on the slower detector.
+
+**What this means.** Fargate doesn't promise a CPU generation, so S can move
+by ~35% between deploys. Any before/after comparison needs a calibrate in the
+same sitting.
+
+**Next.** Deploy the two-core detector change (and 4 GB), check the
+`torch threads` log line, then re-run calibrate + ramp-idle.
+
+### Entry 5 — 2026-10-24: plan for the two-core A/B (Phase 7), before any run
+
+**Question.** On the same Fargate CPU, how much does running torch on both
+vCPUs cut S and raise capacity, and does the detector fit in 4 GB? AC4 and the
+freeze are already answered; this sitting doesn't re-test them.
+
+**Why an A/B on new code, not old vs. new.** A deploy moves the detector to a
+new task, maybe on a new CPU (Entry 4: S moved 0.909 → 0.578 s with no code
+change). The current task can't report its CPU, so "calibrate now, deploy,
+calibrate again" would repeat Phase 6's confound. Both arms run the new code;
+only the thread count changes, and each arm logs its CPU model.
+
+**Changes made for this** (uncommitted until the user commits):
+
+- `desklib.py`: the startup line now reads `torch threads: intra-op N,
+  inter-op M, CPUs available K, CPU model <model name>` (from `/proc/cpuinfo`).
+- `infra`: detector memory 8192 → 4096 MiB; new `detector_torch_threads`
+  variable sets `DETECTOR_TORCH_THREADS` (null = one per vCPU). CD copies the
+  latest task-definition revision and swaps only the image, so a value set by
+  Terraform sticks across deploys. Services ignore task-definition changes in
+  Terraform, so a Terraform-only change needs `aws ecs update-service
+  --task-definition prompt-patrol-detector --force-new-deployment` (the
+  family name picks the latest revision) to roll.
+
+**Decided in advance.**
+
+| Measure                           | Keep the change if                                 |
+| --------------------------------- | -------------------------------------------------- |
+| S, 1 vs 2 threads, same CPU model | 2 threads cuts S by > 10%                          |
+| Detector CPU peak                 | goes from ~50% to near 100% (the mechanism)        |
+| ramp-idle breaking point          | reported per CPU model, as a range                 |
+| Memory at 4 GB                    | peak < ~85% in the overload step, no task restarts |
+
+**Prediction.** S drops 1.5–1.9× with 2 threads (1.9× locally on one
+physical core + its hyperthread; Fargate's 2 vCPU are likely the same shape,
+so the gain may be smaller). Memory peaks near 3 GB of 4.
+
+**Sitting order.**
+
+1. Before the push: `terraform apply -var loadtest_enabled=true
+   -var detector_torch_threads=1`, so the CD deploy of the new code copies
+   threads = 1.
+2. Push and deploy. **Arm A** (1 thread): read the log line (CPU model,
+   `intra-op 1`), calibrate first, then ramp-idle. Check A matches today
+   (CPU caps ~50%).
+3. `terraform apply -var loadtest_enabled=true` (variable left unset = one
+   thread per vCPU, the setup that would ship) + `aws ecs update-service
+   --cluster prompt-patrol --service detector --task-definition
+   prompt-patrol-detector --force-new-deployment`. The `--task-definition`
+   matters: the service still points at CD's threads = 1 revision, and
+   `--force-new-deployment` alone would restart that one. **Arm B**: read the
+   log line (`intra-op 2`). Same CPU model → calibrate + ramp-idle. Different →
+   force a new deployment until it matches, or record the mismatch and call
+   the comparison confounded.
+4. If time: ramp-batch on B.
+
+Arm runs go in `results/_phase7/threads1/` and `results/_phase7/threads2/`
+(`--variant` only takes sync|async, and render.py must not pool them).
+
+**After the A/B (Phase 8): the full suite again on the final setup.** Calibrate
+→ ramp-idle → ramp-batch → headline-idle/loaded ×3 → freeze, CPU model logged
+first. Headline at R = 40 (same load as the first AC4, so "how the system
+behaves at the old load") and at 60% of the new under-batch break ("how much
+more it takes"). The first AC4 and the final one are each a snapshot of one
+setup on one host; the A/B and Phase 6 say what caused each step, the final
+suite says where the system ends up.
+
+### Entry 6 — 2026-10-24: Phases 7 and 8, what the runs found
+
+**Phase 7 (A/B, both arms on a Xeon 6975P-C).** Two threads didn't help. S was 0.591 s
+(1 thread) vs 0.589 s (2), and ramp-idle onset/break were 112/127 per min in both arms.
+Detector CPU went 50% → 95%, so the mechanism works but the second thread does no useful
+work, probably because the 2 vCPU are two hyperthreads of one core. By the rule set in
+Entry 5 (S must drop > 10%), two threads are rejected.
+
+**Phase 8 (arm B's task, no redeploy).** Arm B's calibrate, ramp-idle and ramp-batch count
+here (copied to `results/_phase8/`). Under batch: onset 81, break 102, so R2 = 61/min.
+Memory peaked at 70% of 4 GB. Headline at 40: idle p95 699/665 ms, loaded 1,150 ms with a
+455 s drain. At 61: idle 705 ms, loaded 1,738 ms with a 651 s drain. Freeze at 61:
+`POST /api/batches` 3.1 s, probe p95 20 ms, 0 504s. Report: `report-phase7-8/RESULTS.md`.
+
+**Process notes.**
+
+- ramp-batch left ~1,500 rows queued, so the first Phase 8 queue aborted on the preflight.
+  The 6 ramp-batch batches (already measured) were cancelled through `POST /api/batches/{id}/cancel`.
+- The cookie's 4 h cap (18:12 UTC) limited the sitting to one or two runs per cell. Not
+  run: repeats of headline-loaded at 40 and 61, idle 61 #2–3, idle 40 #3.
+- `20261024-173709` aborted (queue not empty after freeze), even though the runner had
+  checked that the queue was empty. Probably a short window where SQS's approximate counts
+  read 0. The next run (`173710`) was checked: worker CPU 0 and detector CPU ~60% (what
+  61/min of checks alone needs), so no batch overlapped it.
+
+**Surprise.** At 127/min, p95 was ~17 s with 0 504s. The 10 s budget only wraps the detector
+call. Hypothesis: the API's default DB pool (15) caps in-flight checks, and the rest queue
+outside the budget. Unconfirmed.
+
+**Next.** (1) Set `detector_torch_threads = 1`. (2) Calibrate + ramp-idle at 1 vCPU / 4 GB on
+the same CPU model; cut to 1 vCPU if S stays within 10% of 0.59 s. (3) Check the DB-pool
+hypothesis.
+
+### Entry 7 — 2026-10-25: plan for the 1 vCPU test (Phase 9), written while calibrate ran
+
+**Question.** Can the detector drop from 2 vCPU to 1 vCPU (4 GB kept) without losing AC4 headroom?
+Saves ~$36/month.
+
+**Two things found before any run.**
+
+- **A 1 vCPU task sees 2 CPUs.** Rev 26 (`cpu = 1024`, threads unset) logged `intra-op 2, CPUs available 2`.
+  Fargate enforces the 1 vCPU as a quota, and `process_cpu_count` ignores it, so torch ran two
+  threads inside one vCPU's quota. Rev 27 pins `DETECTOR_TORCH_THREADS=1`; every run here is on it.
+- **1 vCPU tasks landed on older CPUs.** 7 redeploys gave one 8175M and six 8259CL, never the
+  6975P-C that Phases 7–8 used. So the "same CPU, S within 10% of 0.59 s" rule from Entry 6 can't
+  be tested. Decision (user): run on what 1 vCPU gets (8259CL), then a control: 2 vCPU / 1 thread
+  on an 8259CL, calibrate only. 1 vCPU vs the control is the vCPU effect; the control vs Phase 7
+  arm A is the CPU effect.
+
+**Runs.** calibrate → ramp-batch with `--service-time 0.589` (Phase 8's step grid, so the breaks
+compare step for step) → headline-loaded at R = 40. Then the control calibrate.
+
+**Prediction.** The 8259CL (Cascade Lake, 2019) is older than the 6975P-C, so S rises to
+~0.8–1.0 s, near the first AC4's 0.909 s. On 1 vCPU, uvicorn and the tokenizer share the vCPU
+with inference, so add a few percent. Under-batch break ~60–75/min. Headline-loaded at 40 still
+passes, p95 ~2–3 s. The control lands within ~5% of the 1 vCPU S if the second vCPU really
+adds nothing.
+
+**Decided in advance.** Cut to 1 vCPU if (a) 1 vCPU S is within 10% of the control's S (the
+vCPU costs nothing on the same CPU), and (b) headline-loaded at 40 passes AC4. If (a) fails, keep
+2 vCPU / 1 thread.
+
+### Entry 8 — 2026-10-25: Phase 9, what the runs found
+
+**The prediction was wrong.** 1 vCPU S was 1.233 s (predicted 0.8–1.0). The control (2 vCPU /
+1 thread, also an 8259CL, rev 28) was 0.779 s, so 1 vCPU is 58% slower on the same CPU. Rule (a)
+fails: **1 vCPU rejected; the detector stays at 2 vCPU / 4 GB with threads = 1.**
+
+Under batch, onset and break were both 51/min (Phase 8: 81/102), with 87 504s at 51. Headline at
+40 passed (p95 8.54 s, 0 504s), but 40 is 78% of the break and the batch took 3,199 s to drain.
+The control vs Phase 7 arm A (same config, 6975P-C, 0.591 s) puts the CPU effect at 32%.
+
+**Process notes.**
+
+- The 504s came back at 51/min, which fits the DB-pool hypothesis (15 queued × 1.23 s > 10 s).
+- The control landed on an 8259CL on its third try (8488C twice first). Results are in
+  `results/_phase9/` and `results/_phase9-control/`. Report: `report-phase9/RESULTS.md`.
+- The repo's Terraform defaults are still `detector_cpu = "2048"` and threads unset; the live
+  rev 28 got threads = 1 through `-var`. Set the default before the next plain apply.
+
+## Runs
+
+- 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
+- 2026-10-23T17:00Z `20261023-165833_stub_smoke` smoke stub sync **ok** p50=13.6 p95=38.7 err=0.0% 504=0 drain=5s
+- 2026-10-24T03:07Z `20261024-030558_stub_smoke` smoke stub sync **ok** p50=13.7 p95=52.9 err=0.0% 504=0 drain=5s
+- 2026-10-24T03:46Z `20261024-034033_desklib_ramp-idle` ramp-idle desklib sync **ok** p50=1026.0 p95=6667.9 err=0.0% 504=0 drain=-
+- 2026-10-24T04:01Z `20261024-035532_desklib_calibrate` calibrate desklib sync **ok** p50=908.6 p95=1100.3 err=0.0% 504=0 drain=-
+- 2026-10-24T04:41Z `20261024-041736_desklib_ramp-idle` ramp-idle desklib sync **ok** p50=1031.7 p95=10021.0 err=24.8% 504=232 drain=-
+- 2026-10-24T05:09Z `20261024-044353_desklib_ramp-batch` ramp-batch desklib sync **ok** p50=7776.4 p95=10023.7 err=45.2% 504=422 drain=-,-,-,-
+- 2026-10-24T06:09Z `20261024-055542_desklib_headline-idle` headline-idle desklib sync **ok** p50=907.6 p95=1052.9 err=0.0% 504=0 drain=-
+- 2026-10-24T06:24Z `20261024-060952_desklib_headline-idle` headline-idle desklib sync **ok** p50=905.0 p95=1048.1 err=0.0% 504=0 drain=-
+- 2026-10-24T06:38Z `20261024-062400_desklib_headline-idle` headline-idle desklib sync **ok** p50=905.7 p95=1072.9 err=0.0% 504=0 drain=-
+- 2026-10-24T07:02Z `20261024-063810_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=2064.7 p95=2651.7 err=0.0% 504=0 drain=1015s
+- 2026-10-24T07:27Z `20261024-070253_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=2086.7 p95=2660.5 err=0.0% 504=0 drain=1016s
+- 2026-10-24T07:52Z `20261024-072737_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=2103.1 p95=2710.1 err=0.0% 504=0 drain=1020s
+- 2026-10-24T08:00Z `20261024-075221_desklib_freeze` freeze desklib sync **ok** p50=2187.9 p95=11115.4 err=0.6% 504=1 drain=-
+- 2026-10-24T08:47Z `20261024-080436_desklib_headline-loaded` headline-loaded desklib sync **ok** p50=4022.1 p95=5023.0 err=0.0% 504=0 drain=1884s
+- 2026-10-24T10:55Z `20261024-105310_stub_smoke` smoke stub sync **ok** p50=14.2 p95=44.9 err=0.0% 504=0 drain=6s
+- 2026-10-24T11:10Z `20261024-110150_desklib_freeze` freeze desklib async **ok** p50=718.3 p95=1082.2 err=0.0% 504=0 drain=-
+- 2026-10-24T11:34Z `20261024-111010_desklib_headline-loaded` headline-loaded desklib async **ok** p50=594.8 p95=1030.9 err=0.0% 504=0 drain=412s
+- 2026-10-24T11:59Z `20261024-113436_desklib_headline-loaded` headline-loaded desklib async **ok** p50=583.5 p95=1011.9 err=0.0% 504=0 drain=401s
+- 2026-10-24T12:23Z `20261024-115902_desklib_headline-loaded` headline-loaded desklib async **ok** p50=584.4 p95=1046.1 err=0.0% 504=0 drain=421s
+- 2026-10-24T12:28Z `20261024-122353_desklib_calibrate` calibrate desklib async **ok** p50=578.2 p95=659.4 err=0.0% 504=0 drain=-
+- 2026-10-24T13:55Z `20261024-135358_stub_smoke` smoke stub sync **ok** p50=14.3 p95=40.1 err=0.0% 504=0 drain=5s
+- 2026-10-24T14:18Z `20261024-141311_desklib_calibrate` calibrate desklib async **ok** p50=590.9 p95=726.4 err=0.0% 504=0 drain=-
+- 2026-10-24T14:44Z `20261024-142055_desklib_ramp-idle` ramp-idle desklib async **ok** p50=630.0 p95=14881.1 err=0.0% 504=0 drain=-
+- 2026-10-24T15:44Z `20261024-153917_desklib_calibrate` calibrate desklib async **ok** p50=589.5 p95=716.8 err=0.0% 504=0 drain=-
+- 2026-10-24T16:08Z `20261024-154425_desklib_ramp-idle` ramp-idle desklib async **ok** p50=627.1 p95=14888.1 err=0.0% 504=0 drain=-
+- 2026-10-24T16:32Z `20261024-160818_desklib_ramp-batch` ramp-batch desklib async **ok** p50=5164.1 p95=16188.6 err=1.3% 504=1 drain=-,-,-,-,-,-
+- 2026-10-24T16:56Z `20261024-164324_desklib_headline-loaded` headline-loaded desklib async **ok** p50=751.3 p95=1149.6 err=0.0% 504=0 drain=455s
+- 2026-10-24T17:10Z `20261024-165641_desklib_headline-idle` headline-idle desklib async **ok** p50=584.1 p95=698.6 err=0.0% 504=0 drain=-
+- 2026-10-24T17:28Z `20261024-171051_desklib_headline-loaded` headline-loaded desklib async **ok** p50=1333.5 p95=1738.4 err=0.0% 504=0 drain=651s
+- 2026-10-24T17:36Z `20261024-172818_desklib_freeze` freeze desklib async **ok** p50=1335.3 p95=1718.4 err=0.0% 504=0 drain=-
+- 2026-10-24T17:37Z `20261024-173709_desklib_headline-loaded` headline-loaded desklib async **aborted** p50=? p95=? err=?% 504=? drain=- (batches queue not empty)
+- 2026-10-24T17:51Z `20261024-173710_desklib_headline-idle` headline-idle desklib async **ok** p50=591.4 p95=704.5 err=0.0% 504=0 drain=-
+- 2026-10-24T18:05Z `20261024-175120_desklib_headline-idle` headline-idle desklib async **ok** p50=587.5 p95=665.3 err=0.0% 504=0 drain=-
+- 2026-10-25T05:41Z `20261025-053526_desklib_calibrate` calibrate desklib async **ok** p50=1233.0 p95=1417.6 err=0.0% 504=0 drain=-
+- 2026-10-25T05:53Z `20261025-054208_desklib_ramp-batch` ramp-batch desklib async **ok** p50=9916.3 p95=10019.4 err=50.0% 504=95 drain=-,-,-,-,-,- (safety abort (error rate > 50%))
+- 2026-10-25T06:58Z `20261025-060128_desklib_headline-loaded` headline-loaded desklib async **ok** p50=6727.1 p95=8539.2 err=0.0% 504=0 drain=3200s
+- 2026-10-25T07:15Z `20261025-071021_desklib_calibrate` calibrate desklib async **ok** p50=778.7 p95=888.5 err=0.0% 504=0 drain=-

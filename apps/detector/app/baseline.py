@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
+import desklib
+
 logger = logging.getLogger(__name__)
 
 MODEL_VERSION = "roberta-base-openai-detector-v0"
@@ -16,8 +18,6 @@ MAX_TOKENS = 512
 # docker-compose.ensemble.yml; the default image is unchanged.
 BACKEND = os.getenv("DETECTOR_BACKEND", "roberta")
 if BACKEND == "desklib":
-    import desklib
-
     MODEL_VERSION = desklib.MODEL_VERSION
 elif BACKEND == "ensemble":
     import ensemble

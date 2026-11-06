@@ -72,3 +72,9 @@ mock_resource "aws_sesv2_email_identity" {
     dkim_signing_attributes = { tokens = ["dkim1", "dkim2", "dkim3"] }
   }
 }
+
+mock_resource "aws_wafv2_ip_set" {
+  defaults = {
+    arn = "arn:aws:wafv2:us-east-1:420974348257:global/ipset/prompt-patrol-loadtest/00000000-0000-0000-0000-000000000000"
+  }
+}
