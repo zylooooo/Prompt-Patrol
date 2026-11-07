@@ -1,0 +1,21 @@
+external_ref,answer_text,question_text
+lt-0001,File scope.,What is the scope of global variables?
+lt-0002,"If no constructor is provided, the compiler provides one by default. If a constructor is defined for a class, the compiler does not create a default constructor.",When does C++ create a default constructor?
+lt-0003,Run-time error.,Using an index outside the bounds of the array generates an error. Is this a compilation error or a run-time error?
+lt-0004,It includes a function name and parameter list. Does not include return type. Function signatures must be different.,What does a function signature include?
+lt-0005,"Inside function bodies (local) or outside all functions (global), or as class members.",Where are variables declared in a C++ program?
+lt-0006,A circular linked list has the last node point back to the head of the linked list.,What is the difference between a circular linked list and a basic linked list?
+lt-0007,A prototype declares a function's signature without a body; a definition provides the actual code.,What is the difference between a function prototype and a function definition?
+lt-0008,"A data structure of nodes, each holding a value and a pointer to the next node.",What is a linked list?
+lt-0009,a public and private area that includes the functions and variables that are used in the class,What is typically included in a class definition?
+lt-0010,"a tree with only 2 joints, left and right",What is a binary tree?
+lt-0011,"List-based, because it avoids shifting elements and has no fixed size limit.","Which implementation (array-based vs. list-based) is preferred for a queue, and why?"
+lt-0012,"In a circular linked list, the last node points back to the first; a basic linked list ends with a null pointer.",What is the difference between a circular linked list and a basic linked list?
+lt-0013,"Find the node, then replace it with its in-order successor (or predecessor) and remove that successor from its original spot.",How do you delete a node from a binary search tree?
+lt-0014,"Array-based, because it avoids the memory overhead of pointers and has better cache performance.","Which implementation (array-based vs. list-based) is preferred, and why?"
+lt-0015,"trying it with different sets of inputs, and measuring the amount of time that the algorithm actually takes.",What is the experimental approach for measuring the running time of an algorithm?
+lt-0016,A while checks the condition before running the loop body; a do...while runs the body once before checking.,What is the main difference between a while and a do...while statement?
+lt-0017,In the main() function.,Where do C++ programs begin to execute?
+lt-0018,Iteration by using loops,What is the alternative way to solve a problem that could be solved through recursive functions?
+lt-0019,it returns the size in bytes of a certain variable type,What does the sizeof operator return?
+lt-0020,the whole code,What is the scope of global variables?

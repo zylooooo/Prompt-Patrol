@@ -16,20 +16,3 @@ variable "db_deletion_protection" {
   type        = bool
   default     = false
 }
-
-variable "loadtest_enabled" {
-  description = "PP-533 load-test window: EC2 load generator + WAF allow rule for its EIP. Pre-go-live only; turn off after each sitting."
-  type        = bool
-  default     = false
-}
-
-variable "detector_torch_threads" {
-  description = "Torch intra-op threads for the detector (DETECTOR_TORCH_THREADS). PP-533: a second thread on 2 vCPU added nothing (Phase 7). null = the code's default, one per CPU the task sees."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.detector_torch_threads == null || try(var.detector_torch_threads >= 1, false)
-    error_message = "detector_torch_threads must be at least 1, or null for the default."
-  }
-}
