@@ -1,0 +1,18 @@
+{
+  "model_version": "desklib-radar-ensemble-v1",
+  "calibration_version": "desklib1.944-radar1.756-thr0.9028-v1",
+  "threshold": 0.902799,
+  "target_fpr": 0.01,
+  "min_words": 10,
+  "weight_radar": 0.5,
+  "desklib_model_version": "desklib-academic-lora-v1",
+  "desklib_temperature": 1.944,
+  "radar_model": "TrustSafeAI/RADAR-Vicuna-7B",
+  "radar_revision": "4ff1f23a69a36aa1df47b0933be6279f1b896c9b",
+  "radar_adapter": "radar-lora-extended-s3_adapter",
+  "radar_temperature": 1.756371,
+  "cleaning_version": "clean_v2",
+  "max_tokens": 256,
+  "calibrated_on": "v0.1-extended val (answers >= 10 words)",
+  "calibrated": "2026-10-25"
+}

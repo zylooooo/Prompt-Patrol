@@ -5,6 +5,13 @@ The single Terraform root for Prompt Patrol's AWS deployment. One account
 `s3://prompt-patrol-tfstate-420974348257/app/terraform.tfstate`, locked with
 S3's native lockfile (no DynamoDB table).
 
+![Prompt Patrol AWS production architecture](../docs/assets/prompt-patrol-aws-architecture.png)
+
+The diagram shows what this root deploys (source:
+[`../docs/assets/prompt-patrol-aws-architecture.drawio`](../docs/assets/prompt-patrol-aws-architecture.drawio)).
+When a change here adds, removes or rewires a resource, update the diagram in
+the same change.
+
 ## Layout
 
 One root, one state, files split by area per the
@@ -259,9 +266,9 @@ aws cloudfront create-invalidation --profile prompt-patrol --region ap-southeast
   --distribution-id "$(terraform output -raw cloudfront_distribution_id)" --paths "/*"
 ```
 
-**Cost.** Step 5 adds about $5/day (detector about $0.145/h, api $0.031/h,
+**Cost.** Step 5 adds about $5/day (detector about $0.123/h, api $0.031/h,
 worker $0.015/h, ALB $0.025/h). With the NAT/endpoints and RDS the whole stack
-is about $10/day, or about $310/month: over the $100 budget if left running.
+is about $10/day, or about $295/month: over the $100 budget if left running.
 Run it in test windows and [pause](#pausing-the-environment) between them.
 
 ## WAF, headers and CORS (step 6)

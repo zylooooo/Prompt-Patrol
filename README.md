@@ -59,6 +59,20 @@ sequenceDiagram
 
 The worker runs each row through the same `create_check` the single-check route uses, so a batch row and a single check produce the same result. The detector only ever returns a score — verdicts, thresholds, identity and persistence all stay in the API. Locally, LocalStack stands in for S3 and SQS.
 
+### AWS deployment
+
+![Prompt Patrol AWS production architecture](docs/assets/prompt-patrol-aws-architecture.png)
+
+Production runs at <https://app.prompt-patrol.com>, with every regional resource in `ap-southeast-1` (Singapore) so student data stays in Singapore. The numbered steps in the diagram are explained in its side panel. In short:
+
+- **Edge.** CloudFront serves the SPA from a private S3 bucket and forwards `/api/*` through a VPC origin to an internal ALB. WAF and the ACM certificate sit in `us-east-1`, as CloudFront requires. There is no API Gateway, and the ALB accepts traffic only from the VPC origin.
+- **Compute.** The api, worker and detector run as separate ECS Fargate services in private subnets. The api reaches the detector over Cloud Map DNS, and the worker long-polls SQS (with a DLQ) for batch rows.
+- **Egress.** Only the api task can reach the internet, through a NAT gateway, and only for the Auth0 token exchange, JWKS and Management API. Everything else uses VPC endpoints, so the worker and detector have no internet route.
+- **Data.** Checks and batches are stored in RDS PostgreSQL over TLS `verify-full`, uploaded CSVs in S3, and secrets in Secrets Manager.
+- **Delivery.** GitHub Actions assumes a deploy role via OIDC (no stored keys), pushes images to ECR, rolls the ECS services and syncs the SPA.
+
+The diagram source is [`docs/assets/prompt-patrol-aws-architecture.drawio`](docs/assets/prompt-patrol-aws-architecture.drawio). Edit it in draw.io and re-export the PNG when the infrastructure changes. [`infra/README.md`](infra/README.md) covers how each piece is provisioned.
+
 ## Local dev
 
 1. `cd apps && docker compose up -d --build` — starts Postgres, LocalStack (S3 + SQS), the detector service, the API, the batch worker, and an nginx-served production build of the frontend on <http://localhost:5173>. The API reads `apps/api/.env` (copy it from `.env.example`), and `apps/api/app/config/settings.py` refuses to start unless all six `AUTH0_*` variables are set — an incomplete Auth0 configuration is a startup failure rather than a runtime one, on the grounds that an app nobody can sign into should say so immediately. The API also applies migrations on start (`apps/api/entrypoint.sh`), so the tables are there by the time it answers its health check. A failed migration stops the container rather than leaving it serving errors, so `docker compose logs api` is the first place to look if it does not come up.
