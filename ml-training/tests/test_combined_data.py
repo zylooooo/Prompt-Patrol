@@ -60,6 +60,32 @@ def test_load_corpus_refuses_an_unknown_name():
         combined_data.load_corpus("v9")
 
 
+def test_load_corpus_refuses_a_fold_that_does_not_exist():
+    with pytest.raises(ValueError, match="unknown corpus"):
+        combined_data.load_corpus("logo-mistral")
+
+
+def write_raw_corpus(path):
+    """A tiny valid single-file raw corpus (the v0.1 / v0.1-logo-<slug> shape)."""
+    parts = {"train": "q1", "val": "q2", "test": "q3"}
+    frame = pd.concat([pd.DataFrame({
+        "answer": "some short answer", "label": [0, 1], "partition": part, "question_id": question,
+        "answer_id": [f"{part}-h", f"{part}-a"], "generator": ["human", "gpt-5.5"], "n_words": 3,
+        "dataset": "mohler", "tier": "correct",
+    }) for part, question in parts.items()], ignore_index=True)
+    frame.to_parquet(path, index=False)
+
+
+@pytest.mark.parametrize("name, file", [("v0.1", "v0.1.parquet"), ("logo-claude", "v0.1-logo-claude.parquet")])
+def test_raw_corpora_load_with_human_and_raw_ai_slices(tmp_path, name, file):
+    write_raw_corpus(tmp_path / file)
+    frames = combined_data.load_corpus(name, data_dir=tmp_path)
+    assert sorted(frames) == ["test", "train", "val"]
+    for frame in frames.values():
+        assert frame["slice"].tolist() == ["human", "raw-ai"]
+        assert "generator" in frame.columns
+
+
 def weight_frame():
     return pd.DataFrame({
         "label": [0, 0, 1, 1, 1, 1],
