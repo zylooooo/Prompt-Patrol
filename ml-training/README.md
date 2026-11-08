@@ -22,9 +22,9 @@ server so the comparison table in the report can be rebuilt from scratch.
    field — that field is the only way to tell whose run is whose.
 3. Give DVC the same credentials and `.venv/bin/dvc pull` — see
    [The data, and DVC](#the-data-and-dvc). Skipping the pull fails with a clear
-   `FileNotFoundError` rather than training on nothing. A pull only fetches what
-   has been published, though, and today that is the trial split alone — see
-   [Split versions](#split-versions) before assuming a pull will unblock a run.
+   `FileNotFoundError` rather than training on nothing. The current DVC pointer
+   contains the published training and evaluation corpora; see
+   [Split versions](#split-versions) for the available versions.
 
 ## The data, and DVC
 
@@ -63,8 +63,8 @@ Then fetch:
 .venv/bin/dvc pull
 ```
 
-That writes three files: `data/trial-data.parquet`, `data/splits/trial-v0.2.parquet`
-and its manifest. `.venv/bin/dvc status` says `Data and pipelines are up to date.`
+That writes the tracked parquet files under `data/`. `.venv/bin/dvc status` says
+`Data and pipelines are up to date.`
 when your working tree matches `data.dvc`. Run `dvc pull` again after any `git pull`
 that touches `data.dvc` — git moved the pointer, but only DVC moves the bytes.
 
@@ -78,10 +78,10 @@ on a different corpus means adding a `RunConfig` (usually a `.variant()`
 overriding `data.splits`) to [`experiments.py`](experiments.py), not editing a
 path in place.
 
-| Version       | Status                          | Used by                                                      |
-| ------------- | ------------------------------- | ------------------------------------------------------------ |
-| `trial-v0.2`  | published, what `dvc pull` gets | `TRIAL`                                                      |
-| `v0.1`        | published                       | `ROBERTA_FULL`, `ROBERTA_LORA`, `ROBERTA_DORA`, `BINOCULARS` |
+| Version           | Status                        | Used by                                    |
+| ----------------- | ----------------------------- | ------------------------------------------ |
+| `trial-v0.2`      | published smoke corpus        | `TRIAL`                                    |
+| `v0.1`            | published E2/E3 corpus        | `ROBERTA_FULL`, `ROBERTA_LORA`, `ROBERTA_DORA`, `BINOCULARS`, MELD/Desklib scripts |
 | `v0.1-logo-*` | built by `build_logo_splits.py` | `LOGO_CLAUDE` … `LOGO_QWEN` (E3)                             |
 
 **`trial-v0.2`** — 340 rows, 85 questions × 4 answers, 25% AI, group-split by
@@ -91,9 +91,14 @@ is recorded in `data/splits/trial-v0.2_manifest.json` (seed, ratios,
 smoke corpus with two known label leaks — see the `notes` on `TRIAL` — so numbers
 from it are never cited.
 
-**`v0.1`** — the real E2 corpus: Mohler, SPRAG and EngSAF human answers plus AI
-answers from six generators, question-split 70/15/15. Provenance is in
-`data/splits/v0.1_manifest.json`.
+**`v0.1`** — the published E2/E3 corpus. Run `dvc pull` from `ml-training/` to
+fetch the parquet files under `data/`. The combined Desklib and MELD scripts
+load the raw and spliced partitions with
+[`combined_data.py`](combined_data.py), which validates the required columns,
+partition integrity, unique answer IDs, and question-level separation between
+splits. The separate `v0.1-logo-*` files are still not published; leave-one-
+generator-out experiments require those additional generator-specific splits.
+
 
 **`v0.1-logo-<slug>`** — the E3 folds, one per generator, cut from `v0.1` by
 [`build_logo_splits.py`](build_logo_splits.py). Fold *G*: train and val are human +
@@ -127,6 +132,59 @@ them at bytes the remote does not have.
 .venv/bin/python trial-training.py TRIAL --inspect   # dry check, no training
 .venv/bin/python trial-training.py TRIAL             # the real run
 ```
+
+### MELD LoRA
+
+The standalone MELD checkpoint is fine-tuned with
+[`finetune_meld_lora.py`](finetune_meld_lora.py), not `trial-training.py`.
+MELD has a ModernBERT backbone plus a custom prototype scoring head; the script
+keeps the head trainable and applies LoRA to the backbone's `Wqkv` and `Wo`
+projections while preserving MELD's top-quantile document score.
+
+```bash
+.venv/bin/python finetune_meld_lora.py --epochs 1 --max-train-rows 200 --run-name smoke
+.venv/bin/python finetune_meld_lora.py --epochs 3 --seed 1 --run-name meld-lora-extended-s1
+.venv/bin/python finetune_meld_lora.py --train-on mohler --epochs 3
+.venv/bin/python finetune_meld_lora.py --data combined --epochs 3   # old v0.1 + spliced corpus
+```
+
+It trains on the extended corpus (`v0.1-extended`) by default. As in the
+Desklib script, only answers of at least `--min-words` words (default 10) fit
+the temperature and threshold and enter the metrics and charts, and every val
+and test row is written to `outputs/<run>_scores.parquet` for `harness.py`
+(`meld-untouched` and `meld-lora`).
+
+The first command is a GPU pipeline check. The checkpoint is about 4.1 GB and
+MELD's released scoring contract uses FP32, 2046-token windows, and no window
+overlap, so this run is substantially heavier than the Desklib adapter. The
+Slurm batch versions are [`cluster/extended_meld.sh`](cluster/extended_meld.sh) (extended corpus, one run per seed) and [`cluster/meld_lora.sh`](cluster/meld_lora.sh) (older final runs).
+
+Each MELD and desklib LoRA run logs epoch metrics to MLflow (`train/loss`, `val/loss`,
+`val/auroc`, `val/pauroc`, `val/tpr_at_fpr_0.01`, learning rate, and epoch duration),
+figures under `plots/` ([`meld_lora_plots.py`](meld_lora_plots.py)), and chart-ready
+CSV artifacts under the run's `charts/` artifact directory:
+
+- `*_training_history.csv` — loss, validation AUROC, partial AUROC and TPR at 1% FPR, learning rate, and duration
+- `*_curves.csv` — ROC and precision-recall points for baseline and LoRA
+- `*_calibration_bins.csv` — reliability-diagram bins for baseline and LoRA
+- `*_slice_metrics.csv` — dataset and corpus-slice metrics
+
+The run also logs per-slice AUROC, TPR, FPR, and sample count as MLflow metrics,
+and the MELD test prediction CSV contains both `prob` and `baseline_prob`.
+
+Both scripts take `--weights` for per-row loss weights, e.g.
+`--weights 'dataset=mohler&slice=human:2,slice=spliced-*:2'`
+(see `combined_data.row_weights`; each label's weights are rescaled to average 1),
+and `--model-name` to give a setting its own name in the scores file.
+
+### desklib + MELD
+
+[`analyse_ensemble.py`](analyse_ensemble.py) analyses a two-model combination from
+the runs' scores files. It compares the combination against each model alone and
+against each model's own seeds averaged, and writes tables and figures to `--out`.
+[`soup_meld_lora.py`](soup_meld_lora.py) averages MELD seeds' weights into one model.
+The experiment plan and its commands are in
+[`docs/desklib-meld-experiment-plan.md`](../docs/desklib-meld-experiment-plan.md).
 
 The argument is the **variable name in `experiments.py`**, so `ROBERTA_LORA`,
 `ROBERTA_DORA` and `ROBERTA_FULL` all work the same way. It defaults to `TRIAL`.
