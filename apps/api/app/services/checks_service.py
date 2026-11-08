@@ -67,6 +67,7 @@ async def create_check(
     retain_answer: bool,
     batch_id: uuid.UUID | None = None,
     batch_file_name: str | None = None,
+    batch_row_number: int | None = None,
 ) -> Check:
     start = time.perf_counter()
     try:
@@ -87,6 +88,7 @@ async def create_check(
         actor_id=actor_id,
         batch_id=batch_id,
         batch_file_name=batch_file_name,
+        batch_row_number=batch_row_number,
         external_ref=external_ref,
         verdict=VerdictEnum(verdict),
         raw_score=result.raw_score,

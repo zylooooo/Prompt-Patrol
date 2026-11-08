@@ -233,3 +233,107 @@ async def test_drain_dlq_once_writes_batch_row_failure(db_session):
     assert failure.row_number == 5
     assert "retries" in failure.reason
     fake_sqs.delete_message.assert_called_once()
+
+
+# --- Redelivery idempotency, DECISION LOG [0.33.0] ---------------------------
+
+
+async def _seed_batch(db_session, *, cancelled: bool = False) -> tuple[User, Batch]:
+    user = User(id=uuid.uuid4(), email=f"{uuid.uuid4().hex[:8]}@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+    batch = Batch(
+        id=uuid.uuid4(),
+        actor_id=user.id,
+        batch_file_name="a.csv",
+        strictness=StrictnessEnum.standard,
+        retain_answer=True,
+        requires_question_text=False,
+        row_total=2,
+        cancelled_at=datetime.now(UTC) if cancelled else None,
+    )
+    db_session.add(batch)
+    await db_session.commit()
+    return user, batch
+
+
+def _row_payload(user: User, batch: Batch, row_number: int) -> dict:
+    return {
+        "batch_id": str(batch.id),
+        "actor_id": str(user.id),
+        "strictness": "standard",
+        "retain_answer": True,
+        "row_number": row_number,
+        "external_ref": f"stu-{row_number}",
+        "answer_text": "This is a long enough answer to be scored properly.",
+        "question_text": None,
+    }
+
+
+async def _failures(db_session, batch_id: uuid.UUID) -> list[BatchRowFailure]:
+    # Takes the id, not the Batch: the duplicate path rolls back, which
+    # expires loaded objects, and an async session cannot lazy-load them.
+    return list(
+        (await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch_id))).scalars()
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_guard_records_a_redelivered_row_once(db_session):
+    user, batch = await _seed_batch(db_session, cancelled=True)
+    batch_id = batch.id
+    payload = _row_payload(user, batch, 3)
+
+    await process_message(db_session, payload)
+    await process_message(db_session, payload)  # SQS redelivery
+
+    assert [f.row_number for f in await _failures(db_session, batch_id)] == [3]
+
+
+@pytest.mark.asyncio
+async def test_a_redelivered_row_is_scored_once(db_session):
+    from models import Check
+    from services.detector_client import Score
+
+    user, batch = await _seed_batch(db_session)
+    batch_id = batch.id
+    payload = _row_payload(user, batch, 2)
+
+    with patch("services.checks_service.score_text", new=AsyncMock(return_value=Score(0.1, False))):
+        await process_message(db_session, payload)
+        await process_message(db_session, payload)  # SQS redelivery
+
+    checks = list((await db_session.execute(select(Check).where(Check.batch_id == batch_id))).scalars())
+    assert [c.batch_row_number for c in checks] == [2]
+
+
+@pytest.mark.asyncio
+async def test_dlq_drain_records_a_redelivered_row_once_and_still_deletes_it(db_session):
+    user, batch = await _seed_batch(db_session)
+    batch_id = batch.id
+    message = {"Body": json.dumps(_row_payload(user, batch, 5)), "ReceiptHandle": "h"}
+    fake_sqs = MagicMock()
+    fake_sqs.receive_message.return_value = {"Messages": [message, message]}
+
+    with patch("worker.main._sqs_client", return_value=fake_sqs):
+        await drain_dlq_once(db_session)
+
+    assert [f.row_number for f in await _failures(db_session, batch_id)] == [5]
+    assert fake_sqs.delete_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dlq_drain_keeps_going_after_one_message_fails_to_commit(db_session):
+    """The drain shares one session across the pass. A failed commit must not
+    leave it needing a rollback, or every later message fails too."""
+    user, batch = await _seed_batch(db_session)
+    batch_id = batch.id
+    bad = {"Body": json.dumps({**_row_payload(user, batch, 2), "batch_id": str(uuid.uuid4())}), "ReceiptHandle": "bad"}
+    good = {"Body": json.dumps(_row_payload(user, batch, 3)), "ReceiptHandle": "good"}
+    fake_sqs = MagicMock()
+    fake_sqs.receive_message.return_value = {"Messages": [bad, good]}
+
+    with patch("worker.main._sqs_client", return_value=fake_sqs):
+        await drain_dlq_once(db_session)
+
+    assert [f.row_number for f in await _failures(db_session, batch_id)] == [3]
