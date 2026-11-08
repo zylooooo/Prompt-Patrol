@@ -56,6 +56,7 @@ async def test_process_message_skips_scoring_for_a_cancelled_batch(db_session):
         "actor_id": str(user.id),
         "strictness": "standard",
         "retain_answer": True,
+        "row_number": 4,
         "external_ref": "stu-1",
         "answer_text": "This is a long enough answer to be scored properly.",
         "question_text": None,
@@ -69,6 +70,7 @@ async def test_process_message_skips_scoring_for_a_cancelled_batch(db_session):
         await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch.id))
     ).scalar_one()
     assert failure.external_ref == "stu-1"
+    assert failure.row_number == 4
     assert "cancelled" in failure.reason.lower()
 
 
@@ -130,6 +132,8 @@ async def test_poll_once_removes_a_cancelled_batchs_message_from_the_queue(db_se
         await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch.id))
     ).scalar_one()
     assert "cancelled" in failure.reason.lower()
+    # Body has no row_number, like a message queued before 0.32.0.
+    assert failure.row_number == 0
 
 
 @pytest.mark.asyncio
@@ -210,6 +214,7 @@ async def test_drain_dlq_once_writes_batch_row_failure(db_session):
                 "strictness": "standard",
                 "retain_answer": True,
                 "question_text": None,
+                "row_number": 5,
             }
         ),
         "ReceiptHandle": "fake-handle",
@@ -225,5 +230,6 @@ async def test_drain_dlq_once_writes_batch_row_failure(db_session):
         await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch.id))
     ).scalar_one()
     assert failure.external_ref == "stu-1"
+    assert failure.row_number == 5
     assert "retries" in failure.reason
     fake_sqs.delete_message.assert_called_once()

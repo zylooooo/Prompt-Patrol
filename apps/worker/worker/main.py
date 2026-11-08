@@ -46,7 +46,7 @@ async def process_message(db, payload: dict) -> None:
             BatchRowFailure(
                 id=uuid.uuid4(),
                 batch_id=batch_id,
-                row_number=0,
+                row_number=payload.get("row_number", 0),
                 external_ref=payload.get("external_ref"),
                 reason="Batch cancelled by instructor.",
             )
@@ -90,7 +90,7 @@ async def drain_dlq_once(db) -> int:
                 BatchRowFailure(
                     id=uuid.uuid4(),
                     batch_id=uuid.UUID(payload["batch_id"]),
-                    row_number=0,
+                    row_number=payload.get("row_number", 0),
                     external_ref=payload.get("external_ref"),
                     reason="Detector processing failed after repeated retries.",
                 )
