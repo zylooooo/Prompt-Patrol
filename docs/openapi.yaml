@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.30.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.32.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,12 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.32.0 `BatchRowFailure.row_number` is the row's real line in the file
+#          for every per-row failure, including rows that fail to enqueue,
+#          rows skipped because the batch was cancelled, and rows the Worker
+#          gives up on after the DLQ redrive. `0` now means only a
+#          whole-file problem (empty file, missing column). No request or
+#          response shape changes. See DECISION LOG [0.32.0].
 #   0.30.0 AWS edge hardening (CD step 6): WAF web ACL (IP reputation, two
 #          per-IP rate rules, Common Rule Set and Known Bad Inputs with their
 #          body rules in Count), a CloudFront security-headers policy, and
@@ -2153,11 +2159,13 @@ paths:
         `column_mapping`). At most **500 data rows** are processed: every
         later row becomes a failure ("row not processed") rather than the
         file being rejected. `row_number` is the line in the file, so the
-        first data row is `2` (the header is line 1). `row_number` `0` means
-        the failure is not tied to a line: a whole-file problem (empty file,
-        missing column, with `external_ref` null), or a valid row that could
-        not be enqueued to SQS (with its `external_ref` set) — recorded as a
-        failure so it never sits as `pending` forever.
+        first data row is `2` (the header is line 1). This holds for every
+        per-row failure, whether found at parse time or later (a row that
+        could not be enqueued to SQS, a row skipped because the batch was
+        cancelled, a row the detector failed on after every retry), so a
+        row never sits as `pending` forever. `row_number` `0` means only a
+        whole-file problem (empty file, missing column), with
+        `external_ref` null. See DECISION LOG [0.32.0].
 
         Returns `202` immediately; `Batch.row_total` counts valid plus
         rejected rows (a whole-file problem counts as one), not yet how many
@@ -3049,10 +3057,11 @@ components:
         row_number:
           type: integer
           description: |
-            Line in the uploaded file (first data row is `2`), or `0` when
-            the failure is not tied to a line: a whole-file problem, a row
-            that could not be enqueued, or a row skipped because the batch
-            was cancelled. See `POST /api/batches`.
+            Line in the uploaded file (first data row is `2`) for every
+            per-row failure, or `0` for a whole-file problem (empty file,
+            missing column). Not unique: a redelivered SQS message can
+            record the same line twice. See `POST /api/batches` and
+            DECISION LOG [0.32.0].
         external_ref: { type: string, nullable: true }
         reason: { type: string }
 
@@ -3238,6 +3247,30 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.32.0] Every per-row batch failure keeps its real line number.
+#
+#   PROBLEM. `parse_and_validate` knew each row's line but dropped it from
+#   the rows it enqueued, so the SQS payload had none. The three places
+#   that record a failure after parsing (enqueue failure, the Worker's
+#   cancelled-batch guard, the DLQ drain) all wrote `0`. The contract
+#   documented the first two as "not tied to a line" and did not mention
+#   the DLQ at all. The rows did come from a line, and the SPA keyed the
+#   failure list on `row_number`, so several `0` rows gave duplicate React
+#   keys on a list that re-renders on every poll.
+#   DECISION. The row dict and the SQS message carry `row_number`, and all
+#   three paths write it. `0` is kept for whole-file problems only. The
+#   Worker reads `payload.get("row_number", 0)` so messages queued before
+#   this deploy are still recorded. The SPA keys the list on its position
+#   (append-only, ordered by `created_at`), not on `row_number`.
+#   WHY NOT A UNIQUE KEY FROM `row_number`. SQS delivery is at least once:
+#   a cancelled-batch message whose delete fails is recorded again on
+#   redelivery, so one line can have two failures.
+#   OPTION REJECTED. Returning the failure `id` for the SPA to key on: a new
+#   response field only to serve as a React key, when position already is
+#   stable.
+#   CEILING. The double-recording above also overcounts `failed` for that
+#   batch; making the Worker's failure writes idempotent is a separate fix.
 #
 # [0.30.0] WAF, security headers and S3 CORS at the AWS edge.
 #
