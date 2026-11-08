@@ -54,11 +54,19 @@ _ARROW = re.compile(r"\$?\\[Rr]ightarrow\$?")
 _EMPTY_CALL = re.compile(
     r"\b(?!(?:and|as|by|in|is|of|or|the|use[sd]?|using|with|brackets?|parenthes[ie]s)\s)([A-Za-z_]\w*)\s*\(\s*\)"
 )
-_CHARACTERS = str.maketrans({
-    "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
-    "\u2013": "-", "\u2014": "-", "\u2026": "...", "\u00a0": " ",
-    "`": None,
-})
+_CHARACTERS = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2026": "...",
+        "\u00a0": " ",
+        "`": None,
+    }
+)
 
 
 def clean_text(text):
