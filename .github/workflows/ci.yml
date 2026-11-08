@@ -283,8 +283,17 @@ jobs:
           cache: pip
           cache-dependency-path: apps/data-pipeline/requirements*.txt
 
+      # Retried: requirements.txt pulls the spaCy model wheel from a GitHub
+      # release URL, which intermittently returns 504, and pip's own retries
+      # skip 504 (its status_forcelist is 500/502/503/520/527).
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          for attempt in 1 2 3; do
+            if pip install -r requirements-dev.txt; then exit 0; fi
+            echo "::warning::pip install failed (attempt $attempt of 3)"
+            sleep 20
+          done
+          exit 1
 
       - name: Run unit tests
         run: pytest
