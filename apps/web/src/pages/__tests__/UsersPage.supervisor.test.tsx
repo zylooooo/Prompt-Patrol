@@ -422,7 +422,7 @@ describe("UsersPage - pending invites", () => {
   });
 });
 
-describe("UsersPage - email typo check", () => {
+describe("UsersPage - SMU-only email check", () => {
   async function fill(email: string) {
     fireEvent.change(screen.getByLabelText(/SMU email/), {
       target: { value: email },
@@ -433,58 +433,66 @@ describe("UsersPage - email typo check", () => {
     );
   }
 
-  it("pauses once on a near-miss domain and lets the admin keep it", async () => {
+  it("refuses a non-SMU address with the reason, without sending it", async () => {
     const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
     createMock.mockReturnValue({ mutateAsync, isPending: false });
     renderPage();
-    await fill("ann@gmial.com");
+    await fill("ann@gmail.com");
 
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
-    await screen.findByText(/Did you mean/);
-    expect(mutateAsync).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Keep as typed" }));
+    await screen.findByText(/Only SMU email addresses can be added/);
     expect(screen.queryByText(/Did you mean/)).toBeNull();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("asks inline for a full address when the @ is missing", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await fill("annsmu.edu.sg");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Enter a full email address");
+    expect(alert.id).toBe("add-email-error");
+    // The browser's own tooltip is off; our notice is the only message.
+    expect(screen.getByLabelText(/SMU email/).closest("form")?.noValidate).toBe(
+      true,
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("offers the SMU fix for a near miss, with no way to keep the typo", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    createMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    await fill("ann@smu.edu.s");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    await screen.findByText(/Only SMU email addresses can be added/);
+    expect(screen.getByText(/Did you mean/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Keep as typed" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use suggestion" }));
+    expect(screen.getByLabelText(/SMU email/)).toHaveProperty(
+      "value",
+      "ann@smu.edu.sg",
+    );
+    expect(screen.queryByText(/Only SMU email addresses/)).toBeNull();
+
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   });
 
-  it("swaps in the suggestion", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
-    createMock.mockReturnValue({ mutateAsync, isPending: false });
+  it("clears the refusal once the address is edited", async () => {
     renderPage();
-    await fill("ann@gmial.com");
-
+    await fill("ann@gmail.com");
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
-    fireEvent.click(await screen.findByRole("button", { name: /^Use / }));
+    await screen.findByText(/Only SMU email addresses/);
 
-    expect(screen.getByLabelText(/SMU email/)).toHaveProperty(
-      "value",
-      "ann@gmail.com",
-    );
-  });
-
-  it("pauses again if the address is edited and then restored", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
-    createMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-    await fill("ann@gmial.com");
-    const submit = () =>
-      fireEvent.click(screen.getByRole("button", { name: "Add account" }));
-
-    submit();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Keep as typed" }),
-    );
     fireEvent.change(screen.getByLabelText(/SMU email/), {
-      target: { value: "ann@gmial.co" },
+      target: { value: "ann@smu.edu.sg" },
     });
-    fireEvent.change(screen.getByLabelText(/SMU email/), {
-      target: { value: "ann@gmial.com" },
-    });
-    submit();
-
-    await screen.findByText(/Did you mean/);
-    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Only SMU email addresses/)).toBeNull();
   });
 });
