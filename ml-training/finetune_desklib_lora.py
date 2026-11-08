@@ -47,7 +47,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import load_corpus, row_weights, slice_flag_rates
+from combined_data import CORPORA, load_corpus, row_weights, slice_flag_rates
 from meld_lora_plots import log_lora_charts
 from metrics import calibration_metrics, evaluate, oracle_tpr_at_fpr, threshold_at_fpr
 from scores import save_scores, score_rows
@@ -285,8 +285,11 @@ def jsonable(out: dict) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", default="extended", choices=["extended", "combined"],
-                    help="corpus to use: extended = v0.1-extended (default); combined = the earlier v0.1 + spliced")
+    ap.add_argument("--data", default="extended", choices=CORPORA,
+                    help="corpus to use: extended = v0.1-extended (default); combined = the earlier v0.1 + spliced; "
+                         "v0.1 and logo-<generator> = raw answers only, for E3 leave-one-generator-out")
+    ap.add_argument("--experiment", default=MLFLOW_EXPERIMENT,
+                    help="MLflow experiment to log to; E3 runs go to E3-reliability")
     ap.add_argument("--min-words", type=int, default=10,
                     help="only answers of at least this many words fit the temperature and threshold and enter "
                          "the metrics (the app does not score shorter ones); 0 keeps every answer. "
@@ -353,7 +356,7 @@ def main() -> None:
     scorer = Scorer(device=args.device)
     device, tokenizer = scorer.device, scorer.tokenizer
 
-    setup_mlflow(MLFLOW_EXPERIMENT)
+    setup_mlflow(args.experiment)
     with mlflow.start_run(run_name=run_name):
         # reporting.py drops run_role="smoke" from every table, so a pipeline check
         # (capped train rows) can never be mistaken for a result
