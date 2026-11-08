@@ -299,6 +299,31 @@ One row per answer, val and test only, for the untouched model and the tuned one
 `-untouched` model whose `y_prob` is not `sigmoid(logit)`. `load_scores(path)` reads a file
 back with the same checks.
 
+## RAID benchmark
+
+[`eval_raid.py`](eval_raid.py) scores our detectors on [RAID](https://github.com/liamdugan/raid),
+an out-of-domain benchmark (news, Reddit, recipes, poetry and more, 11 generators, 11
+adversarial attacks). RAID's test labels are hidden: only its leaderboard bot scores test,
+and it posts the results publicly on the submission PR. So candidates are compared first on
+a fixed labelled sample of RAID's **train** split, and only the chosen ones are scored on test.
+
+```bash
+pip install --no-deps raid-bench==0.2.0     # --no-deps: it pins numpy 1.26 / pandas 2.2
+STEP=sample sbatch --time=03:00:00 Prompt-Patrol/ml-training/cluster/raid.sh
+STEP=score SPLIT=train-sample COMPONENTS="desklib-v0.1 desklib-v0.1-extended meld-v0.1 meld-v0.1-extended" \
+  sbatch Prompt-Patrol/ml-training/cluster/raid.sh
+.venv/bin/python eval_raid.py evaluate --candidates desklib-v0.1 desklib-v0.1-extended \
+  meld-v0.1 meld-v0.1-extended ensemble-v0.1 ensemble-v0.1-extended
+STEP=score SPLIT=test COMPONENTS="<chosen>" sbatch Prompt-Patrol/ml-training/cluster/raid.sh
+.venv/bin/python eval_raid.py submit --candidate <chosen> --name <leaderboard-name> --contact "<email>"
+```
+
+`v0.1` is the E3 `control` fold (raw v0.1 answers); `v0.1-extended` is what the release was
+built from. The scores are calibrated log-odds (`logit / T`, with each run's validation
+temperature). RAID fits its own threshold per domain on human texts at 5% and 1% FPR, so
+our threshold and abstention band don't enter. Scoring is chunked and resumable: if a job
+hits its time limit, resubmit it unchanged.
+
 ## Reading results back
 
 ```bash
