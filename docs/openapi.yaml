@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.32.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.33.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,11 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.33.0 A batch row is recorded at most once, however many times SQS
+#          delivers its message: at most one `BatchRowFailure` per non-zero
+#          `row_number`, and at most one check per row. `completed` and
+#          `failed` no longer overcount after a redelivery. No request or
+#          response shape changes. See DECISION LOG [0.33.0].
 #   0.32.0 `BatchRowFailure.row_number` is the row's real line in the file
 #          for every per-row failure, including rows that fail to enqueue,
 #          rows skipped because the batch was cancelled, and rows the Worker
@@ -3059,9 +3064,10 @@ components:
           description: |
             Line in the uploaded file (first data row is `2`) for every
             per-row failure, or `0` for a whole-file problem (empty file,
-            missing column). Not unique: a redelivered SQS message can
-            record the same line twice. See `POST /api/batches` and
-            DECISION LOG [0.32.0].
+            missing column). Each non-zero line appears at most once per
+            batch, even when SQS redelivers its message. `0` can repeat only
+            for messages queued before 0.32.0. See `POST /api/batches` and
+            DECISION LOGs [0.32.0], [0.33.0].
         external_ref: { type: string, nullable: true }
         reason: { type: string }
 
@@ -3248,6 +3254,46 @@ components:
 # =============================================================================
 # DECISION LOG
 #
+# [0.33.0] The Worker records each batch row at most once.
+#
+#   PROBLEM. SQS delivers at least once. A message comes back when its
+#   delete fails after the commit, or when the 600 s visibility timeout runs
+#   out mid-call. The cancel guard, the DLQ drain and the scoring path each
+#   wrote a fresh row on every delivery, so one line could have two
+#   failures or two checks, and `failed` / `completed` overcounted (with
+#   `pending` clamped to 0, hiding it). Separately, the DLQ drain never
+#   rolled back its shared session after a failed commit, so one bad
+#   message failed every later message in that pass.
+#   DECISION. The row's own key `(batch_id, row_number)` is the idempotency
+#   key, enforced by Postgres: a unique index on `batch_row_failures` where
+#   `row_number > 0`, and a new internal `checks.batch_row_number` column
+#   with a unique index on `(batch_id, batch_row_number)`. The Worker treats
+#   the resulting IntegrityError as "already recorded", rolls back, and
+#   deletes the message as usual. The drain now rolls back on any failure.
+#   `batch_row_number` is not exposed in `CheckResult`.
+#   WHY A DB CONSTRAINT. A check-then-insert races between Worker tasks;
+#   only the database can make the write atomic.
+#   WHY row_number > 0. `0` is the one whole-file failure, and messages
+#   queued before 0.32.0 default to `0`; several of those are distinct rows.
+#   Their checks store NULL, which a unique index never matches.
+#   WHY CATCH IntegrityError, NOT `ON CONFLICT DO NOTHING`. It works on both
+#   Postgres and the SQLite unit tests, and leaves `create_check`'s ORM insert
+#   unchanged. Batches and users are never hard-deleted, so on these inserts
+#   a unique-index hit is the only IntegrityError possible.
+#   OPTION REJECTED. A FIFO queue: its deduplication covers only repeated
+#   sends within 5 minutes, not redelivery after a failed delete, and it is
+#   an infrastructure change with throughput limits. A table of processed
+#   SQS `MessageId`s: an extra table and lookup when the row key already
+#   identifies the work.
+#   NO DUPLICATE CLEAN-UP. Migration 0016 does not delete existing
+#   duplicates; none have been seen, and if one exists the migration fails
+#   loudly rather than deleting audit rows on a guess.
+#   CEILING. A redelivered scoring message still calls the detector before
+#   the insert is refused; the result is discarded. A row can still have
+#   both a check and a failure (an enqueue that timed out after SQS
+#   accepted it, then scored), which counts it twice; fixing that needs a
+#   cross-table check, not worth it at this rate.
+#
 # [0.32.0] Every per-row batch failure keeps its real line number.
 #
 #   PROBLEM. `parse_and_validate` knew each row's line but dropped it from
@@ -3271,6 +3317,7 @@ components:
 #   stable.
 #   CEILING. The double-recording above also overcounts `failed` for that
 #   batch; making the Worker's failure writes idempotent is a separate fix.
+#   CLOSED by [0.33.0].
 #
 # [0.30.0] WAF, security headers and S3 CORS at the AWS edge.
 #
