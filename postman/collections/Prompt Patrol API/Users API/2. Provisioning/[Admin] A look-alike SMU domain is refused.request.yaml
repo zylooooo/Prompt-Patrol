@@ -1,0 +1,24 @@
+$kind: http-request
+name: "[Admin] A look-alike SMU domain is refused"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  evilsmu.edu.sg ends in "smu.edu.sg" but is not SMU or a subdomain of it; the match is on the whole domain or a "." boundary (DECISION LOG [0.31.0]).
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "pp-outsider-{{$timestamp}}@evilsmu.edu.sg",
+      "role": "instructor"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400", () => pm.response.to.have.status(400));
+      pm.test("message explains the SMU-only rule", () => pm.expect(pm.response.json().message).to.include("Only SMU email addresses can be added."));
+    language: text/javascript
+order: 6600

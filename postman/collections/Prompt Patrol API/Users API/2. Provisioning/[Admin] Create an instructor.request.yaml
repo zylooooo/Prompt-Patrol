@@ -3,7 +3,7 @@ name: "[Admin] Create an instructor"
 description: |-
   Runs as: root_admin (ADMIN_SESSION)
 
-  Sends a real Auth0 invite to a +alias address. The new instructor never signs in; later steps use them as a second supervisor, and Cleanup deletes them. Stores NEW_INSTRUCTOR_USER_ID and NEW_INSTRUCTOR_EMAIL.
+  Sends a real Auth0 invite to a +alias of your INVITE_EMAIL_USER @ INVITE_EMAIL_DOMAIN address. The new instructor never signs in; later steps use them as a second supervisor, and Cleanup deletes them. Stores NEW_INSTRUCTOR_USER_ID and NEW_INSTRUCTOR_EMAIL.
 url: "{{BASE_URL}}/api/users/"
 method: POST
 headers:
@@ -12,7 +12,7 @@ body:
   type: json
   content: |-
     {
-      "email": "ashloozhiyi5+pp-instructor-{{$timestamp}}@gmail.com",
+      "email": "{{INVITE_EMAIL_USER}}+pp-instructor-{{$timestamp}}@{{INVITE_EMAIL_DOMAIN}}",
       "role": "instructor"
     }
 scripts:

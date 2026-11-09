@@ -11,7 +11,7 @@ body:
   type: json
   content: |-
     {
-      "email": "ashloozhiyi5+pp-unused@gmail.com"
+      "email": "pp-unused@smu.edu.sg"
     }
 scripts:
   - type: afterResponse

@@ -16,6 +16,7 @@ from exceptions import (
     Auth0ProvisioningError,
     CannotAddTeachingAssistantError,
     EmailAlreadyExistsError,
+    EmailDomainNotAllowedError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
     UserNotFoundError,
@@ -41,6 +42,25 @@ logger = logging.getLogger(__name__)
 # Normalizes an email address for consistent storage and comparison.
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+# Ad all allowed email domains here, currently only SMU email domains and sub domains are allowed
+ALLOWED_EMAIL_DOMAIN = "smu.edu.sg"
+
+
+def assert_allowed_email_domain(email: str) -> None:
+    """Helper function to check if the email addresses are within the allowed domains and subdomains.
+    
+    New accounts must be SMU addresses, subdomains included.
+    Expects a normalised email. Callers run it before any lookup so the
+    refusal never depends on whether the address already has an account.
+    """
+    local, _, domain = email.rpartition("@")
+    if not local or (domain != ALLOWED_EMAIL_DOMAIN and not domain.endswith("." + ALLOWED_EMAIL_DOMAIN)):
+        raise EmailDomainNotAllowedError(
+            f"Only SMU email addresses can be added. Use one ending in {ALLOWED_EMAIL_DOMAIN}, "
+            f"such as name@{ALLOWED_EMAIL_DOMAIN} or name@scis.{ALLOWED_EMAIL_DOMAIN}."
+        )
 
 
 class LoginRejection(enum.StrEnum):
@@ -650,12 +670,14 @@ async def create_user(
         logger.warning("Actor %s attempted to provision a root_admin user, always rejected.", actor.id)
         raise PermissionError("root_admin cannot be provisioned via this endpoint")
 
+    email = normalize_email(email)
+    assert_allowed_email_domain(email)
+
     if supervisor_id is not None:
         if role != UserRoleEnum.teaching_assistant:
             raise InvalidSupervisorError("Only a teaching assistant can be given a supervisor.")
         await _assert_supervisor_available(db, supervisor_id)
 
-    email = normalize_email(email)
     rows = await _rows_for_email(db, email)
     if any(row.status != UserStatusEnum.deleted for row in rows):
         logger.warning("Attempted to provision duplicate email: %s", email)
@@ -679,6 +701,8 @@ async def add_teaching_assistant(db: AsyncSession, actor: User, email: str) -> U
         raise PermissionError(f"role {actor.role} may not add teaching assistants")
 
     email = normalize_email(email)
+    # Before the lookup, so the 400 never reveals whether the email has an account.
+    assert_allowed_email_domain(email)
     rows = await _rows_for_email(db, email)
     live = next((row for row in rows if row.status != UserStatusEnum.deleted), None)
 

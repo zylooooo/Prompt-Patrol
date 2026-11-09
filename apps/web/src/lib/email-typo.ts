@@ -1,13 +1,7 @@
-const COMMON_DOMAINS = [
-  "gmail.com",
-  "outlook.com",
-  "hotmail.com",
-  "yahoo.com",
-  "icloud.com",
-  "smu.edu.sg",
-];
+// Only SMU addresses can be added ([0.31.0]), so only SMU near misses are worth correcting.
+const COMMON_DOMAINS = ["smu.edu.sg"];
 
-// Real domains that sit within edit distance 2 of a common one; never "correct" them.
+// Real domains within edit distance 2 of smu.edu.sg; never "correct" them to SMU.
 const KNOWN_OK_DOMAINS = [
   "ntu.edu.sg",
   "sit.edu.sg",
@@ -36,7 +30,7 @@ function distance(a: string, b: string): number {
   return row[b.length];
 }
 
-/** The corrected address when the domain is a near miss of a common one, else null. Never blocks; only suggests. */
+/** The corrected address when the domain is a near miss of smu.edu.sg, else null. Only suggests; the caller decides. */
 export function suggestEmailDomain(email: string): string | null {
   const at = email.lastIndexOf("@");
   if (at < 1 || at === email.length - 1) return null;

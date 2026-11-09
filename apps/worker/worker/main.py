@@ -5,6 +5,7 @@ import uuid
 
 import boto3
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from config import AWS_ENDPOINT_URL, AWS_REGION, SQS_BATCHES_DLQ_URL, SQS_BATCHES_QUEUE_URL, configure_logging
 from db import async_session
@@ -23,6 +24,22 @@ _sqs = boto3.client("sqs", region_name=AWS_REGION, endpoint_url=AWS_ENDPOINT_URL
 
 def _sqs_client():
     return _sqs
+
+
+async def _commit_once(db) -> None:
+    """Commit, treating a unique-index hit as "this row is already recorded".
+
+    SQS delivers at least once, so a message can come back after its row was
+    written (delete failed, or the visibility timeout ran out mid-call). The
+    unique indexes on (batch_id, row_number) turn that into an IntegrityError
+    here, and the caller then deletes the message as usual. Batches and users
+    are never hard-deleted, so the foreign keys cannot be what fired.
+    DECISION LOG [0.33.0]."""
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.info("Batch row already recorded; skipping duplicate delivery.")
 
 
 async def process_message(db, payload: dict) -> None:
@@ -46,25 +63,34 @@ async def process_message(db, payload: dict) -> None:
             BatchRowFailure(
                 id=uuid.uuid4(),
                 batch_id=batch_id,
-                row_number=0,
+                row_number=payload.get("row_number", 0),
                 external_ref=payload.get("external_ref"),
                 reason="Batch cancelled by instructor.",
             )
         )
-        await db.commit()
+        await _commit_once(db)
         return
 
-    await create_check(
-        db,
-        actor_id=uuid.UUID(payload["actor_id"]),
-        answer_text=payload["answer_text"],
-        question_text=payload.get("question_text"),
-        external_ref=payload["external_ref"],
-        strictness=payload["strictness"],
-        retain_answer=payload["retain_answer"],
-        batch_id=batch_id,
-        batch_file_name=None,
-    )
+    try:
+        await create_check(
+            db,
+            actor_id=uuid.UUID(payload["actor_id"]),
+            answer_text=payload["answer_text"],
+            question_text=payload.get("question_text"),
+            external_ref=payload["external_ref"],
+            strictness=payload["strictness"],
+            retain_answer=payload["retain_answer"],
+            batch_id=batch_id,
+            batch_file_name=None,
+            # Messages queued before 0.32.0 have no row_number: store NULL,
+            # which the unique index ignores, instead of colliding on 0.
+            batch_row_number=payload.get("row_number") or None,
+        )
+    except IntegrityError:
+        # A redelivery of a row that was already scored. The detector call is
+        # repeated and thrown away; rare enough not to pre-check for.
+        await db.rollback()
+        logger.info("Batch row already scored; skipping duplicate delivery.")
 
 
 async def drain_dlq_once(db) -> int:
@@ -90,13 +116,17 @@ async def drain_dlq_once(db) -> int:
                 BatchRowFailure(
                     id=uuid.uuid4(),
                     batch_id=uuid.UUID(payload["batch_id"]),
-                    row_number=0,
+                    row_number=payload.get("row_number", 0),
                     external_ref=payload.get("external_ref"),
                     reason="Detector processing failed after repeated retries.",
                 )
             )
-            await db.commit()
+            await _commit_once(db)
         except Exception:
+            # The session is shared across this pass: without the rollback,
+            # one failed commit fails every later message with
+            # PendingRollbackError.
+            await db.rollback()
             logger.exception("Failed to record DLQ message as a batch row failure.")
             continue
         await asyncio.to_thread(
