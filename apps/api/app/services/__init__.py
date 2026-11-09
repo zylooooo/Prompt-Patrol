@@ -8,6 +8,7 @@ from .checks_service import (
     create_check,
     get_check_by_id,
     list_checks,
+    purge_expired_checks,
 )
 from .detector_client import MODEL_VERSION, Status
 from .detector_client import health as detector_health
@@ -75,6 +76,7 @@ __all__ = [
     "create_check",
     "get_check_by_id",
     "list_checks",
+    "purge_expired_checks",
     "MODEL_VERSION",
     "Status",
     "detector_health",

@@ -28,7 +28,9 @@ class Batch(Base):
     # half-finished batch expects.
     requires_question_text: Mapped[bool] = mapped_column(Boolean, nullable=False)
     row_total: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), server_default=func.now(), index=True
+    )
     # Set once, never cleared. Rows already enqueued before this is set still
     # drain out of SQS - the Worker checks it per-message and records a
     # batch_row_failure instead of scoring, rather than trying to purge
