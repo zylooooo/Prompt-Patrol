@@ -21,7 +21,8 @@ import RowAction from "../components/ui/RowAction";
 import RowActionMenu from "../components/ui/RowActionMenu";
 import EmailTypoHint from "../components/ui/EmailTypoHint";
 import FormNotice from "../components/ui/FormNotice";
-import { useEmailTypoGuard } from "../hooks/useEmailTypoGuard";
+import { emailProblem } from "../lib/email-domain";
+import { suggestEmailDomain } from "../lib/email-typo";
 import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -54,12 +55,27 @@ export default function TeachingAssistantsPage() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const emailField = useRef<HTMLInputElement>(null);
 
-  const typo = useEmailTypoGuard(email, setEmail);
+  // A smu.edu.sg near miss, offered under the SMU-only error.
+  const [suggestion, setSuggestion] = useState<string | null>(null);
 
   function onSubmit() {
-    if (!typo.check()) return;
     setError(null);
     setEmailError(null);
+    const problem = emailProblem(email.trim());
+    if (problem) {
+      setEmailError(problem);
+      setSuggestion(suggestEmailDomain(email.trim()));
+      return;
+    }
+    // The server treats this as a no-op 200 ([0.21.0]); catch it here instead.
+    // Leaks nothing: the caller can already see their own team.
+    const typed = email.trim().toLowerCase();
+    const onTeam = assistants?.find((a) => a.email.toLowerCase() === typed);
+    if (onTeam) {
+      setSuggestion(null);
+      setEmailError(`${onTeam.email} is already on your team.`);
+      return;
+    }
     setConfirming(email.trim());
   }
 
@@ -75,7 +91,11 @@ export default function TeachingAssistantsPage() {
         `${typed} is on your team. New accounts get an email to set a password.`,
       );
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      // 400 here is the SMU-only rule ([0.31.0]); both are about the email.
+      if (
+        err instanceof ApiError &&
+        (err.status === 400 || err.status === 409)
+      ) {
         setEmailError(err.message);
       } else {
         setError(
@@ -213,6 +233,7 @@ export default function TeachingAssistantsPage() {
       <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
         <p className={SECTION_LABEL}>Add teaching assistant</p>
         <form
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
             onSubmit();
@@ -228,15 +249,16 @@ export default function TeachingAssistantsPage() {
               onChange={(e) => {
                 setEmail(e.target.value);
                 setEmailError(null);
+                setSuggestion(null);
               }}
               placeholder="name@smu.edu.sg"
               aria-invalid={emailError ? true : undefined}
               aria-describedby={
                 emailError
-                  ? "add-email-error"
-                  : typo.suggestion
-                    ? "add-email-hint"
-                    : undefined
+                  ? suggestion
+                    ? "add-email-error add-email-hint"
+                    : "add-email-error"
+                  : undefined
               }
               className={`w-64 ${FIELD}`}
             />
@@ -247,18 +269,19 @@ export default function TeachingAssistantsPage() {
           >
             {addAssistant.isPending ? "Adding…" : "Add teaching assistant"}
           </Button>
-          {(typo.suggestion || emailError) && (
+          {emailError && (
             <div className="flex basis-full flex-col gap-1.5">
+              <FormNotice tone="error" id="add-email-error" role="alert">
+                {emailError}
+              </FormNotice>
               <EmailTypoHint
-                suggestion={typo.suggestion}
-                onUse={typo.applySuggestion}
-                onKeep={typo.keepAsTyped}
+                suggestion={suggestion}
+                onUse={() => {
+                  if (suggestion) setEmail(suggestion);
+                  setSuggestion(null);
+                  setEmailError(null);
+                }}
               />
-              {emailError && (
-                <FormNotice tone="error" id="add-email-error" role="alert">
-                  {emailError}
-                </FormNotice>
-              )}
             </div>
           )}
         </form>

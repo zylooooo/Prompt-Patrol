@@ -179,8 +179,10 @@ export default function BatchResultsTable({
             not be checked. The rest were scored.
           </p>
           <ul className="mt-1.5 space-y-0.5 text-muted-foreground">
-            {shownFailures.map((failure) => (
-              <li key={failure.rowNumber}>
+            {/* Index, not rowNumber: a redelivered SQS message can record one
+                line twice. The list is append-only, so position is stable. */}
+            {shownFailures.map((failure, i) => (
+              <li key={i}>
                 <span className="font-mono">
                   {failure.externalRef ?? `Row ${failure.rowNumber}`}
                 </span>{" "}

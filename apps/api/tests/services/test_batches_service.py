@@ -80,6 +80,8 @@ async def test_create_batch_writes_batch_row_and_failures_and_enqueues(db_sessio
     enqueued_payload = mock_enqueue.call_args.args[0]
     assert enqueued_payload["batch_id"] == str(batch.id)
     assert enqueued_payload["actor_id"] == str(user.id)
+    # stu-2 is on line 3; the Worker needs it to record a later failure.
+    assert enqueued_payload["row_number"] == 3
 
     progress = await get_batch_progress(db_session, user, batch.id)
     assert progress["row_total"] == 2
@@ -89,6 +91,32 @@ async def test_create_batch_writes_batch_row_and_failures_and_enqueues(db_sessio
     assert len(progress["failures"]) == 1
     assert progress["failures"][0].external_ref == "stu-1"
     assert "answer_text" in progress["failures"][0].reason
+
+
+@pytest.mark.asyncio
+async def test_create_batch_records_enqueue_failures_with_their_line(db_session):
+    user = User(id=uuid.uuid4(), email="instr-enq@smu.edu.sg", role=UserRoleEnum.instructor)
+    db_session.add(user)
+    await db_session.commit()
+
+    with (
+        patch("services.batches_service.download_object", return_value=GOOD_CSV),
+        patch("services.batches_service.enqueue_row", side_effect=RuntimeError("SQS down")),
+    ):
+        batch = await create_batch(
+            db_session,
+            actor_id=user.id,
+            upload_key="batches/fake-key.csv",
+            file_name="answers.csv",
+            strictness="standard",
+            retain_answer=True,
+            column_mapping=None,
+            requires_question_text=False,
+        )
+
+    progress = await get_batch_progress(db_session, user, batch.id)
+    assert progress["pending"] == 0
+    assert sorted((f.row_number, f.external_ref) for f in progress["failures"]) == [(2, "stu-1"), (3, "stu-2")]
 
 
 @pytest.mark.asyncio

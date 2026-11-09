@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Index, Integer, String, Uuid
+from sqlalchemy import Boolean, Enum, ForeignKey, Index, Integer, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -28,7 +28,9 @@ class Batch(Base):
     # half-finished batch expects.
     requires_question_text: Mapped[bool] = mapped_column(Boolean, nullable=False)
     row_total: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), server_default=func.now(), index=True
+    )
     # Set once, never cleared. Rows already enqueued before this is set still
     # drain out of SQS - the Worker checks it per-message and records a
     # batch_row_failure instead of scoring, rather than trying to purge
@@ -50,4 +52,17 @@ class BatchRowFailure(Base):
     reason: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), server_default=func.now())
 
-    __table_args__ = (Index("ix_batch_row_failures_batch_id", "batch_id"),)
+    __table_args__ = (
+        Index("ix_batch_row_failures_batch_id", "batch_id"),
+        # One failure per CSV line, so an SQS redelivery to the Worker's cancel
+        # guard or DLQ drain records nothing new. row_number 0 (whole-file
+        # problem)
+        Index(
+            "uq_batch_row_failures_batch_row",
+            "batch_id",
+            "row_number",
+            unique=True,
+            postgresql_where=text("row_number > 0"),
+            sqlite_where=text("row_number > 0"),
+        ),
+    )

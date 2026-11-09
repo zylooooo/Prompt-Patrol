@@ -38,9 +38,13 @@ class Check(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     # The author. Reads are scoped to this - see services/checks.list_checks.
     actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
-    # Set only by the Worker (apps/worker), never client-supplied - see
-    # DECISION LOG [0.13.0] in docs/openapi.yaml.
+    # Set only by the Worker (apps/worker), never client-supplied
     batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # The CSV line this check came from. Internal only, not in CheckResult: it
+    # exists so an SQS redelivery cannot score the same row twice (see
+    # uq_checks_batch_row and DECISION LOG [0.33.0]). NULL for single checks
+    # and for messages queued before 0.32.0 carried row_number.
+    batch_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # The uploaded file's name, repeated on every row of the run. Denormalised
     # on purpose: it is the only part of a batch that cannot be derived from
     # its rows (the id, timestamp, strictness and counts all can), and a
@@ -80,7 +84,9 @@ class Check(Base):
     # The timestamp the check is created, written by the API server, not the database.
     # server_default is kept so that if a row is inserted outside the app, there is
     # still a default value.
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), server_default=func.now(), index=True
+    )
 
     __table_args__ = (
         # The history page's only query: this author's checks, newest first,
@@ -88,4 +94,10 @@ class Check(Base):
         # together here.
         Index("ix_checks_actor_id_created_at", "actor_id", "created_at"),
         Index("ix_checks_batch_id", "batch_id"),
+        Index(
+            "uq_checks_batch_row",
+            "batch_id",
+            "batch_row_number",
+            unique=True,
+        ),
     )

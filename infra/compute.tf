@@ -597,7 +597,7 @@ resource "aws_ecs_service" "detector" {
 # Free, so not paused; the schedule that uses it is.
 resource "aws_iam_role" "scheduler" {
   name        = "prompt-patrol-scheduler"
-  description = "EventBridge Scheduler: run the session purge on the API task definition"
+  description = "EventBridge Scheduler: run the session and check purges on the API task definition"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -653,6 +653,38 @@ resource "aws_scheduler_schedule" "purge_sessions" {
     role_arn = aws_iam_role.scheduler.arn
     input = jsonencode({
       containerOverrides = [{ name = "api", command = ["python", "-m", "scripts.purge_sessions"] }]
+    })
+
+    ecs_parameters {
+      task_definition_arn = "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/${local.api_family}" # family: latest ACTIVE revision, so CD deploys reach the purge
+      launch_type         = "FARGATE"
+      task_count          = 1
+
+      network_configuration {
+        subnets          = aws_subnet.egress[*].id
+        security_groups  = [aws_security_group.api.id]
+        assign_public_ip = false
+      }
+    }
+  }
+}
+
+# Daily 03:30 Singapore: python -m scripts.purge_checks
+resource "aws_scheduler_schedule" "purge_checks" {
+  count                        = var.paused ? 0 : 1
+  name                         = "prompt-patrol-purge-checks"
+  schedule_expression          = "cron(30 3 * * ? *)"
+  schedule_expression_timezone = "Asia/Singapore"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_ecs_cluster.main.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input = jsonencode({
+      containerOverrides = [{ name = "api", command = ["python", "-m", "scripts.purge_checks"] }]
     })
 
     ecs_parameters {
