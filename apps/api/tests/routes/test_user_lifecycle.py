@@ -612,3 +612,22 @@ async def test_renaming_someone_else_is_404_unless_root_admin(client, db_session
     response = await client.patch(f"/api/users/{mine.id}", json={"display_name": "Nickname"})
 
     assert response.status_code == 404
+
+
+# DECISION LOG [0.31.0]: both create endpoints refuse a non-SMU email with a 400.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "path", "body"),
+    [
+        (UserRoleEnum.root_admin, "/api/users/", {"email": "ann@gmail.com", "role": "instructor"}),
+        (UserRoleEnum.instructor, "/api/users/teaching-assistants", {"email": "ann@gmail.com"}),
+    ],
+)
+async def test_create_endpoints_refuse_a_non_smu_email(client, db_session, role, path, body):
+    await _signed_in(client, db_session, role)
+
+    response = await client.post(path, json=body)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert response.json()["message"].startswith("Only SMU email addresses can be added.")

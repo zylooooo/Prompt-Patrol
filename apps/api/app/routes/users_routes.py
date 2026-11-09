@@ -10,6 +10,7 @@ from exceptions import (
     Auth0ProvisioningError,
     CannotAddTeachingAssistantError,
     EmailAlreadyExistsError,
+    EmailDomainNotAllowedError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
     UserNotFoundError,
@@ -111,6 +112,9 @@ async def add_teaching_assistant_route(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only instructors add teaching assistants to a team.",
         )
+    except EmailDomainNotAllowedError as exc:
+        # Depends only on the typed email, so it is safe to be specific.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except CannotAddTeachingAssistantError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ADD_TA_REFUSED)
     except Auth0ProvisioningError:
@@ -176,8 +180,8 @@ async def provision_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to create a user with this role.",
         )
-    except InvalidSupervisorError as exc:
-        # Its message is written for the caller (see the exception class).
+    except (InvalidSupervisorError, EmailDomainNotAllowedError) as exc:
+        # Its message is written for the caller.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except EmailAlreadyExistsError:
         raise HTTPException(
