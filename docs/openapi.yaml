@@ -18,6 +18,12 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.31.0 New accounts must have an SMU email: `smu.edu.sg` or any
+#          subdomain of it (e.g. `scis.smu.edu.sg`). POST /api/users and
+#          POST /api/users/teaching-assistants return `400` for any other
+#          domain, before any lookup or Auth0 call. Existing accounts and
+#          sign-in are unchanged. No request or response shape changes.
+#          See DECISION LOG [0.31.0].
 #   0.30.0 AWS edge hardening (CD step 6): WAF web ACL (IP reputation, two
 #          per-IP rate rules, Common Rule Set and Known Bad Inputs with their
 #          body rules in Count), a CloudFront security-headers policy, and
@@ -346,7 +352,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.30.0
+  version: 0.31.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -1078,6 +1084,9 @@ paths:
 
         No display name is taken: the new user chooses their own after first
         sign-in (`PATCH /api/users/{id}`), so `display_name` starts null.
+
+        `email` must be an SMU address (`smu.edu.sg` or a subdomain),
+        otherwise `400` — see DECISION LOG [0.31.0].
       requestBody:
         required: true
         content:
@@ -1256,6 +1265,11 @@ paths:
         No confirmation token — the SPA asks the caller to confirm the email
         they typed before sending, which shows nothing the caller did not
         already enter.
+
+        `email` must be an SMU address (`smu.edu.sg` or a subdomain),
+        otherwise `400`. Checked before the email is looked up, for every
+        row of the table above, so the `400` says nothing about whether the
+        address has an account — see DECISION LOG [0.31.0].
       requestBody:
         required: true
         content:
@@ -2466,6 +2480,7 @@ components:
         email:
           type: string
           format: email
+          description: "`smu.edu.sg` or a subdomain of it, else `400` ([0.31.0])."
         role:
           type: string
           enum: [instructor, teaching_assistant]
@@ -2487,6 +2502,7 @@ components:
         email:
           type: string
           format: email
+          description: "`smu.edu.sg` or a subdomain of it, else `400` ([0.31.0])."
 
     SupervisorLinkRequest:
       type: object
@@ -3238,6 +3254,40 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.31.0] Only SMU email addresses can be given an account.
+#
+#   PROBLEM. Both create endpoints took any well-formed email, so a typo
+#   (`@gmial.com`) or a personal address became a working Auth0 credential.
+#   The SPA's "Did you mean" hint does not block, and a client check can be
+#   skipped anyway. The sponsor confirmed only SMU staff and students use
+#   the tool.
+#   DECISION. The email's domain must be `smu.edu.sg` or end in
+#   `.smu.edu.sg` (so `scis.smu.edu.sg` passes, `evilsmu.edu.sg` does not).
+#   Checked on POST /api/users and POST /api/users/teaching-assistants right
+#   after the role check, before the email is looked up or Auth0 is called,
+#   so a refusal leaves nothing to clean up. `400 invalid_request` with a
+#   message naming the rule.
+#   WHY BEFORE THE LOOKUP. On add-TA, an existing active TA is linked with no
+#   Auth0 call. Checking only on the "new account" branch would let a
+#   non-SMU email answer `200` if it already has an account and `400` if not,
+#   which tells an instructor whether that address is registered ([0.21.0]
+#   hides exactly that). Checking the input alone reveals nothing, so the
+#   `400` message can be specific.
+#   WHY NOT AT SIGN-IN. Sign-in is already invite-only: Disable Sign Ups
+#   means only credentials this API created exist, and `resolve_user`
+#   needs a matching `users` row. A sign-in check would block no one new,
+#   and would lock out any existing non-SMU account the moment it shipped,
+#   root_admin included.
+#   OPTION REJECTED. An Auth0 post-login Action: same reason, and it puts an
+#   access rule outside the `users` table (see [0.6.0]).
+#   NOT COVERED. `scripts.provision_user` skips the rule on purpose: it is the
+#   seed and break-glass path for root_admin. Existing non-SMU accounts keep
+#   working, but a deleted one cannot be re-provisioned and an instructor
+#   cannot link one by email.
+#   CEILING. One hardcoded domain. A guest lecturer with an outside address
+#   would need a root_admin override or an allowed-domains setting; neither
+#   exists yet.
 #
 # [0.30.0] WAF, security headers and S3 CORS at the AWS edge.
 #

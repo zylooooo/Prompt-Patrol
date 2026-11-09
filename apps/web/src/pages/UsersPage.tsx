@@ -32,7 +32,8 @@ import { useToast } from "../hooks/useToast";
 import RowAction from "../components/ui/RowAction";
 import EmailTypoHint from "../components/ui/EmailTypoHint";
 import FormNotice from "../components/ui/FormNotice";
-import { useEmailTypoGuard } from "../hooks/useEmailTypoGuard";
+import { emailProblem } from "../lib/email-domain";
+import { suggestEmailDomain } from "../lib/email-typo";
 import RowActionMenu, {
   type RowActionMenuItem,
 } from "../components/ui/RowActionMenu";
@@ -157,12 +158,18 @@ export default function UsersPage() {
     [users, filter, trimmedQuery],
   );
 
-  const typo = useEmailTypoGuard(email, setEmail);
+  // A smu.edu.sg near miss, offered under the SMU-only error.
+  const [suggestion, setSuggestion] = useState<string | null>(null);
 
   async function onAdd() {
-    if (!typo.check()) return;
     setError(null);
     setEmailError(null);
+    const problem = emailProblem(email.trim());
+    if (problem) {
+      setEmailError(problem);
+      setSuggestion(suggestEmailDomain(email.trim()));
+      return;
+    }
     try {
       const created = await createAccount.mutateAsync({
         email: email.trim(),
@@ -405,6 +412,7 @@ export default function UsersPage() {
       <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
         <p className={SECTION_LABEL}>Add account</p>
         <form
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
             void onAdd();
@@ -419,15 +427,16 @@ export default function UsersPage() {
               onChange={(e) => {
                 setEmail(e.target.value);
                 setEmailError(null);
+                setSuggestion(null);
               }}
               placeholder="name@smu.edu.sg"
               aria-invalid={emailError ? true : undefined}
               aria-describedby={
                 emailError
-                  ? "add-email-error"
-                  : typo.suggestion
-                    ? "add-email-hint"
-                    : undefined
+                  ? suggestion
+                    ? "add-email-error add-email-hint"
+                    : "add-email-error"
+                  : undefined
               }
               className={`w-56 ${FIELD}`}
             />
@@ -475,18 +484,19 @@ export default function UsersPage() {
           >
             {createAccount.isPending ? "Adding…" : "Add account"}
           </Button>
-          {(typo.suggestion || emailError) && (
+          {emailError && (
             <div className="flex basis-full flex-col gap-1.5">
+              <FormNotice tone="error" id="add-email-error" role="alert">
+                {emailError}
+              </FormNotice>
               <EmailTypoHint
-                suggestion={typo.suggestion}
-                onUse={typo.applySuggestion}
-                onKeep={typo.keepAsTyped}
+                suggestion={suggestion}
+                onUse={() => {
+                  if (suggestion) setEmail(suggestion);
+                  setSuggestion(null);
+                  setEmailError(null);
+                }}
               />
-              {emailError && (
-                <FormNotice tone="error" id="add-email-error" role="alert">
-                  {emailError}
-                </FormNotice>
-              )}
             </div>
           )}
         </form>

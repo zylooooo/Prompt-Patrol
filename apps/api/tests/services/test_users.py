@@ -7,6 +7,7 @@ from sqlalchemy import select
 from exceptions import (
     Auth0ProvisioningError,
     EmailAlreadyExistsError,
+    EmailDomainNotAllowedError,
     InvalidStatusTransitionError,
     InvalidSupervisorError,
     UserNotFoundError,
@@ -29,6 +30,8 @@ from services.checks_service import get_check_by_id, list_checks
 from services.users_service import (
     LoginRejection,
     _can_view_user,
+    add_teaching_assistant,
+    assert_allowed_email_domain,
     change_user_role,
     create_user,
     deactivate_user,
@@ -1489,3 +1492,60 @@ async def test_delete_cancels_unfinished_batches_and_leaves_finished_ones(db_ses
     assert finished.cancelled_at is None
     assert others.cancelled_at is None
     assert purged == [str(running.id)]
+
+
+# DECISION LOG [0.31.0]: new accounts must be smu.edu.sg or a subdomain.
+@pytest.mark.parametrize("email", ["a@smu.edu.sg", "a.2024@scis.smu.edu.sg", "a@x.y.smu.edu.sg"])
+def test_smu_addresses_are_allowed(email):
+    assert_allowed_email_domain(email)
+
+
+@pytest.mark.parametrize(
+    "email",
+    ["a@gmail.com", "a@evilsmu.edu.sg", "a@smu.edu.sg.evil.com", "a@smu.edu", "smu.edu.sg", "@smu.edu.sg", "a@"],
+)
+def test_non_smu_addresses_are_refused(email):
+    with pytest.raises(EmailDomainNotAllowedError):
+        assert_allowed_email_domain(email)
+
+
+@pytest.mark.asyncio
+async def test_create_user_refuses_a_non_smu_email_before_calling_auth0(db_session, monkeypatch):
+    admin = _user(UserRoleEnum.root_admin)
+    await _seed(db_session, admin)
+
+    async def must_not_invite(email):
+        raise AssertionError("Auth0 must not be called for a refused domain")
+
+    monkeypatch.setattr("services.users_service.invite_user", must_not_invite)
+    with pytest.raises(EmailDomainNotAllowedError):
+        await create_user(db_session, admin, "  Someone@Gmail.com ", UserRoleEnum.instructor)
+
+    assert (await db_session.execute(select(User).where(User.email == "someone@gmail.com"))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_add_ta_refuses_a_non_smu_email_even_when_it_has_an_account(db_session):
+    # Refusing only new accounts would answer 200 here and 400 for an unknown
+    # address, telling the instructor which emails are registered.
+    instructor = _user(UserRoleEnum.instructor)
+    existing = _user(UserRoleEnum.teaching_assistant, email="legacy@gmail.com")
+    await _seed(db_session, instructor, existing)
+
+    with pytest.raises(EmailDomainNotAllowedError):
+        await add_teaching_assistant(db_session, instructor, "legacy@gmail.com")
+
+
+@pytest.mark.asyncio
+async def test_add_ta_refuses_a_new_non_smu_email_before_calling_auth0(db_session, monkeypatch):
+    instructor = _user(UserRoleEnum.instructor)
+    await _seed(db_session, instructor)
+
+    async def must_not_invite(email):
+        raise AssertionError("Auth0 must not be called for a refused domain")
+
+    monkeypatch.setattr("services.users_service.invite_user", must_not_invite)
+    with pytest.raises(EmailDomainNotAllowedError):
+        await add_teaching_assistant(db_session, instructor, "newcomer@gmail.com")
+
+    assert (await db_session.execute(select(User).where(User.email == "newcomer@gmail.com"))).first() is None

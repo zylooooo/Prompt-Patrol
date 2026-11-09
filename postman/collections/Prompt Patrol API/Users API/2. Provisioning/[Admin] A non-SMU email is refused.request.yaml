@@ -1,0 +1,25 @@
+$kind: http-request
+name: "[Admin] A non-SMU email is refused"
+description: |-
+  Runs as: root_admin (ADMIN_SESSION)
+
+  Only smu.edu.sg or a subdomain of it can be given an account (DECISION LOG [0.31.0]). Refused before Auth0 is called, so no invite is sent and no account is created.
+url: "{{BASE_URL}}/api/users/"
+method: POST
+headers:
+  Cookie: __Host-session={{ADMIN_SESSION}}
+body:
+  type: json
+  content: |-
+    {
+      "email": "pp-outsider-{{$timestamp}}@gmail.com",
+      "role": "instructor"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("400", () => pm.response.to.have.status(400));
+      pm.test("invalid_request", () => pm.expect(pm.response.json().error).to.eql("invalid_request"));
+      pm.test("message explains the SMU-only rule", () => pm.expect(pm.response.json().message).to.include("Only SMU email addresses can be added."));
+    language: text/javascript
+order: 6500

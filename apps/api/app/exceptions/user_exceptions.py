@@ -20,5 +20,13 @@ class InvalidSupervisorError(Exception):
     already see every user - there is nothing to enumerate."""
 
 
+class EmailDomainNotAllowedError(Exception):
+    """Error thrown when users try to create an account using an unsupported domain.
+    Right now, only SMU email domains and sub-domains are allowed.
+
+    The message is returned to the caller as-is. Safe for instructors too: it
+    depends only on the email they typed, never on what is in the table."""
+
+
 class CannotAddTeachingAssistantError(Exception):
     """An instructor typed an email that is not new and not an active TA."""

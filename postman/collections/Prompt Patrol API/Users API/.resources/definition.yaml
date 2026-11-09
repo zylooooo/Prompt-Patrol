@@ -12,7 +12,8 @@ description: |-
   bottom; each folder builds on the state the previous one left.
 
   SIDE EFFECTS
-  - Real Auth0 invites go to +aliases of ashloozhiyi5@gmail.com: two in
+  - Real Auth0 invites go to +aliases of your INVITE_EMAIL_USER @
+    INVITE_EMAIL_DOMAIN address (your SMU inbox): two in
     "2. Provisioning" plus one resend, one in "9. Adding TAs by email".
   - Only accounts the run creates are deactivated, re-roled or deleted;
     "8. Role change and delete" and "11. Cleanup" remove them, leaving the TA
