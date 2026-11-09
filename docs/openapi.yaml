@@ -3,7 +3,7 @@ openapi: 3.0.3
 # =============================================================================
 # Prompt Patrol — API Contract
 # =============================================================================
-# STATUS: v0.30.0 — DRAFT. Auth + users + checks + batches modules.
+# STATUS: v0.33.0 — DRAFT. Auth + users + checks + batches modules.
 #
 # This is a living document. Modules are added incrementally:
 #   [x] auth      — authentication & session lifecycle
@@ -18,6 +18,17 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.33.0 A batch row is recorded at most once, however many times SQS
+#          delivers its message: at most one `BatchRowFailure` per non-zero
+#          `row_number`, and at most one check per row. `completed` and
+#          `failed` no longer overcount after a redelivery. No request or
+#          response shape changes. See DECISION LOG [0.33.0].
+#   0.32.0 `BatchRowFailure.row_number` is the row's real line in the file
+#          for every per-row failure, including rows that fail to enqueue,
+#          rows skipped because the batch was cancelled, and rows the Worker
+#          gives up on after the DLQ redrive. `0` now means only a
+#          whole-file problem (empty file, missing column). No request or
+#          response shape changes. See DECISION LOG [0.32.0].
 #   0.31.0 New accounts must have an SMU email: `smu.edu.sg` or any
 #          subdomain of it (e.g. `scis.smu.edu.sg`). POST /api/users and
 #          POST /api/users/teaching-assistants return `400` for any other
@@ -2167,11 +2178,13 @@ paths:
         `column_mapping`). At most **500 data rows** are processed: every
         later row becomes a failure ("row not processed") rather than the
         file being rejected. `row_number` is the line in the file, so the
-        first data row is `2` (the header is line 1). `row_number` `0` means
-        the failure is not tied to a line: a whole-file problem (empty file,
-        missing column, with `external_ref` null), or a valid row that could
-        not be enqueued to SQS (with its `external_ref` set) — recorded as a
-        failure so it never sits as `pending` forever.
+        first data row is `2` (the header is line 1). This holds for every
+        per-row failure, whether found at parse time or later (a row that
+        could not be enqueued to SQS, a row skipped because the batch was
+        cancelled, a row the detector failed on after every retry), so a
+        row never sits as `pending` forever. `row_number` `0` means only a
+        whole-file problem (empty file, missing column), with
+        `external_ref` null. See DECISION LOG [0.32.0].
 
         Returns `202` immediately; `Batch.row_total` counts valid plus
         rejected rows (a whole-file problem counts as one), not yet how many
@@ -3065,10 +3078,12 @@ components:
         row_number:
           type: integer
           description: |
-            Line in the uploaded file (first data row is `2`), or `0` when
-            the failure is not tied to a line: a whole-file problem, a row
-            that could not be enqueued, or a row skipped because the batch
-            was cancelled. See `POST /api/batches`.
+            Line in the uploaded file (first data row is `2`) for every
+            per-row failure, or `0` for a whole-file problem (empty file,
+            missing column). Each non-zero line appears at most once per
+            batch, even when SQS redelivers its message. `0` can repeat only
+            for messages queued before 0.32.0. See `POST /api/batches` and
+            DECISION LOGs [0.32.0], [0.33.0].
         external_ref: { type: string, nullable: true }
         reason: { type: string }
 
@@ -3255,6 +3270,70 @@ components:
 # =============================================================================
 # DECISION LOG
 #
+# [0.33.0] The Worker records each batch row at most once.
+#
+#   PROBLEM. SQS delivers at least once. A message comes back when its
+#   delete fails after the commit, or when the 600 s visibility timeout runs
+#   out mid-call. The cancel guard, the DLQ drain and the scoring path each
+#   wrote a fresh row on every delivery, so one line could have two
+#   failures or two checks, and `failed` / `completed` overcounted (with
+#   `pending` clamped to 0, hiding it). Separately, the DLQ drain never
+#   rolled back its shared session after a failed commit, so one bad
+#   message failed every later message in that pass.
+#   DECISION. The row's own key `(batch_id, row_number)` is the idempotency
+#   key, enforced by Postgres: a unique index on `batch_row_failures` where
+#   `row_number > 0`, and a new internal `checks.batch_row_number` column
+#   with a unique index on `(batch_id, batch_row_number)`. The Worker treats
+#   the resulting IntegrityError as "already recorded", rolls back, and
+#   deletes the message as usual. The drain now rolls back on any failure.
+#   `batch_row_number` is not exposed in `CheckResult`.
+#   WHY A DB CONSTRAINT. A check-then-insert races between Worker tasks;
+#   only the database can make the write atomic.
+#   WHY row_number > 0. `0` is the one whole-file failure, and messages
+#   queued before 0.32.0 default to `0`; several of those are distinct rows.
+#   Their checks store NULL, which a unique index never matches.
+#   WHY CATCH IntegrityError, NOT `ON CONFLICT DO NOTHING`. It works on both
+#   Postgres and the SQLite unit tests, and leaves `create_check`'s ORM insert
+#   unchanged. Batches and users are never hard-deleted, so on these inserts
+#   a unique-index hit is the only IntegrityError possible.
+#   OPTION REJECTED. A FIFO queue: its deduplication covers only repeated
+#   sends within 5 minutes, not redelivery after a failed delete, and it is
+#   an infrastructure change with throughput limits. A table of processed
+#   SQS `MessageId`s: an extra table and lookup when the row key already
+#   identifies the work.
+#   NO DUPLICATE CLEAN-UP. Migration 0016 does not delete existing
+#   duplicates; none have been seen, and if one exists the migration fails
+#   loudly rather than deleting audit rows on a guess.
+#   CEILING. A redelivered scoring message still calls the detector before
+#   the insert is refused; the result is discarded. A row can still have
+#   both a check and a failure (an enqueue that timed out after SQS
+#   accepted it, then scored), which counts it twice; fixing that needs a
+#   cross-table check, not worth it at this rate.
+#
+# [0.32.0] Every per-row batch failure keeps its real line number.
+#
+#   PROBLEM. `parse_and_validate` knew each row's line but dropped it from
+#   the rows it enqueued, so the SQS payload had none. The three places
+#   that record a failure after parsing (enqueue failure, the Worker's
+#   cancelled-batch guard, the DLQ drain) all wrote `0`. The contract
+#   documented the first two as "not tied to a line" and did not mention
+#   the DLQ at all. The rows did come from a line, and the SPA keyed the
+#   failure list on `row_number`, so several `0` rows gave duplicate React
+#   keys on a list that re-renders on every poll.
+#   DECISION. The row dict and the SQS message carry `row_number`, and all
+#   three paths write it. `0` is kept for whole-file problems only. The
+#   Worker reads `payload.get("row_number", 0)` so messages queued before
+#   this deploy are still recorded. The SPA keys the list on its position
+#   (append-only, ordered by `created_at`), not on `row_number`.
+#   WHY NOT A UNIQUE KEY FROM `row_number`. SQS delivery is at least once:
+#   a cancelled-batch message whose delete fails is recorded again on
+#   redelivery, so one line can have two failures.
+#   OPTION REJECTED. Returning the failure `id` for the SPA to key on: a new
+#   response field only to serve as a React key, when position already is
+#   stable.
+#   CEILING. The double-recording above also overcounts `failed` for that
+#   batch; making the Worker's failure writes idempotent is a separate fix.
+#   CLOSED by [0.33.0].
 # [0.31.0] Only SMU email addresses can be given an account.
 #
 #   PROBLEM. Both create endpoints took any well-formed email, so a typo
