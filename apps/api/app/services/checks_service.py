@@ -5,14 +5,15 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import CursorResult, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exceptions import DetectorTimeoutError, DetectorUnavailableError
-from models import AbstainReasonEnum, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
+from models import AbstainReasonEnum, Batch, BatchRowFailure, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 
 from .detector_client import CALIBRATION_VERSION, MODEL_VERSION, score_text
 
@@ -195,3 +196,54 @@ async def get_check_by_id(db: AsyncSession, actor: User, check_id: uuid.UUID) ->
     if not _may_read_any_check(actor) and not actor.owns(check.actor_id, check.created_at):
         return None
     return check
+
+
+# Sponsor's retention policy: check history is kept for 3 months, then deleted.
+CHECK_RETENTION = timedelta(days=90)
+
+
+# Hard-deletes every check, batch and batch failure past retention, in chunks.
+async def purge_expired_checks(db: AsyncSession, batch_size: int = 500) -> tuple[int, int]:
+    """Returns (checks deleted, batches deleted).
+
+    A batch goes as one unit, aged by its own created_at: its progress is
+    counted from its checks and failures, so deleting only some of them would
+    leave a batch that reads as pending forever. The second loop then takes
+    single checks, and checks whose batch row no longer exists. It skips
+    checks of a surviving batch: the API and Worker clocks can disagree by a
+    few seconds, so such a check can look older than the cutoff while its
+    batch does not.
+    """
+    # Both cuts are served by ix_checks_created_at / ix_batches_created_at
+    cutoff = datetime.now(UTC) - CHECK_RETENTION
+    checks = batches = 0
+    while True:
+        ids = list((await db.execute(select(Batch.id).where(Batch.created_at < cutoff).limit(batch_size))).scalars())
+        if not ids:
+            break
+        await db.execute(delete(BatchRowFailure).where(BatchRowFailure.batch_id.in_(ids)))
+        result = cast(CursorResult, await db.execute(delete(Check).where(Check.batch_id.in_(ids))))
+        await db.execute(delete(Batch).where(Batch.id.in_(ids)))
+        await db.commit()
+        checks += result.rowcount
+        batches += len(ids)
+    while True:
+        result = cast(
+            CursorResult,
+            await db.execute(
+                delete(Check).where(
+                    Check.id.in_(
+                        select(Check.id)
+                        .where(
+                            Check.created_at < cutoff,
+                            or_(Check.batch_id.is_(None), Check.batch_id.not_in(select(Batch.id))),
+                        )
+                        .limit(batch_size * 10)
+                    )
+                )
+            ),
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            return checks, batches
+        checks += result.rowcount
