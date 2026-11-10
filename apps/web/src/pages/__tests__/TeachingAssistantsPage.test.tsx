@@ -129,27 +129,80 @@ describe("TeachingAssistantsPage - pending invites", () => {
   });
 });
 
-describe("TeachingAssistantsPage - email typo check", () => {
+describe("TeachingAssistantsPage - SMU-only email check", () => {
   function fill(email: string) {
     fireEvent.change(screen.getByLabelText(/SMU email/), {
       target: { value: email },
     });
   }
 
-  it("pauses once on a near-miss domain and lets the instructor keep it", async () => {
+  it("refuses a non-SMU address with the reason, without sending it", async () => {
     const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
     addMock.mockReturnValue({ mutateAsync, isPending: false });
     renderPage();
-    fill("ann@gmial.com");
+    fill("ann@gmail.com");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
-    await screen.findByText(/Did you mean/);
-    expect(mutateAsync).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Keep as typed" }));
+    await screen.findByText(/Only SMU email addresses can be added/);
     expect(screen.queryByText(/Did you mean/)).toBeNull();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("says an assistant is already on my team, without sending it", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    fill(" TA-OLD@smu.edu.sg ");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+    await screen.findByText("ta-old@smu.edu.sg is already on your team.");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("asks inline for a full address when the @ is missing", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    fill("annsmu.edu.sg");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Enter a full email address");
+    expect(alert.id).toBe("add-email-error");
+    // The browser's own tooltip is off; our notice is the only message.
+    expect(screen.getByLabelText(/SMU email/).closest("form")?.noValidate).toBe(
+      true,
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("offers the SMU fix for a near miss, with no way to keep the typo", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+    fill("ann@smu.edu.s");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+    await screen.findByText(/Only SMU email addresses can be added/);
+    expect(screen.getByText(/Did you mean/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Keep as typed" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use suggestion" }));
+    expect(screen.getByLabelText(/SMU email/)).toHaveProperty(
+      "value",
+      "ann@smu.edu.sg",
+    );
+    expect(screen.queryByText(/Only SMU email addresses/)).toBeNull();
+
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
@@ -161,56 +214,29 @@ describe("TeachingAssistantsPage - email typo check", () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   });
 
-  it("swaps in the suggestion", async () => {
+  it("clears the refusal once the address is edited", async () => {
     renderPage();
-    fill("ann@gmial.com");
-
+    fill("ann@gmail.com");
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /^Use / }));
+    await screen.findByText(/Only SMU email addresses/);
 
-    expect(screen.getByLabelText(/SMU email/)).toHaveProperty(
-      "value",
-      "ann@gmail.com",
-    );
-  });
-
-  it("pauses again if the address is edited and then restored", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "x" }));
-    addMock.mockReturnValue({ mutateAsync, isPending: false });
-    renderPage();
-    fill("ann@gmial.com");
-    const submit = () =>
-      fireEvent.click(
-        screen.getByRole("button", { name: "Add teaching assistant" }),
-      );
-
-    submit();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Keep as typed" }),
-    );
     fireEvent.change(screen.getByLabelText(/SMU email/), {
-      target: { value: "ann@gmial.co" },
+      target: { value: "ann@smu.edu.sg" },
     });
-    fireEvent.change(screen.getByLabelText(/SMU email/), {
-      target: { value: "ann@gmial.com" },
-    });
-    submit();
-
-    await screen.findByText(/Did you mean/);
-    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Only SMU email addresses/)).toBeNull();
   });
 });
 
 describe("TeachingAssistantsPage - adding and removing", () => {
   it("adds by email alone and says the same thing whatever happened", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue(SIGNED_IN);
+    const mutateAsync = vi.fn().mockResolvedValue(user({ id: "ta-third" }));
     addMock.mockReturnValue({ mutateAsync, isPending: false });
     renderPage();
 
     fireEvent.change(screen.getByLabelText("SMU email"), {
-      target: { value: "ta-old@smu.edu.sg" },
+      target: { value: "ta-third@smu.edu.sg" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Add teaching assistant" }),
@@ -224,11 +250,11 @@ describe("TeachingAssistantsPage - adding and removing", () => {
     );
 
     await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith("ta-old@smu.edu.sg"),
+      expect(mutateAsync).toHaveBeenCalledWith("ta-third@smu.edu.sg"),
     );
     expect(screen.queryByLabelText(/Name/)).toBeNull();
     expect(showToastMock).toHaveBeenCalledWith(
-      "ta-old@smu.edu.sg is on your team. New accounts get an email to set a password.",
+      "ta-third@smu.edu.sg is on your team. New accounts get an email to set a password.",
     );
   });
 
@@ -256,6 +282,30 @@ describe("TeachingAssistantsPage - adding and removing", () => {
 
     // No jest-dom in this repo: assert on textContent.
     expect((await screen.findByRole("alert")).textContent).toContain(refusal);
+  });
+
+  it("shows the server's SMU-only 400 under the email field", async () => {
+    const refusal = "Only SMU email addresses can be added.";
+    const { ApiError } = await import("../../api/client");
+    const mutateAsync = vi.fn().mockRejectedValue(new ApiError(400, refusal));
+    addMock.mockReturnValue({ mutateAsync, isPending: false });
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("SMU email"), {
+      target: { value: "someone@smu.edu.sg" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add teaching assistant" }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Add to my team",
+      }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(refusal);
+    expect(alert.id).toBe("add-email-error");
   });
 
   it("returns to the field untouched when the instructor wants to edit", async () => {

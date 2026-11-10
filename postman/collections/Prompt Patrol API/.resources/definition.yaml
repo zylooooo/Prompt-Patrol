@@ -13,6 +13,10 @@ description: |-
      teaching assistant (separate browser profiles) and put each
      __Host-session cookie value in ADMIN_SESSION, INSTRUCTOR_SESSION and
      TA_SESSION in the local copy.
+  4. Put your own SMU address in INVITE_EMAIL_USER (the part before the @)
+     and INVITE_EMAIL_DOMAIN (e.g. smu.edu.sg or scis.smu.edu.sg). Only SMU
+     addresses can be given an account (DECISION LOG [0.31.0]), and the
+     Users API sends real invites to +aliases of it.
 
   RUN
   Send the requests one at a time, top to bottom, and check each one's Test

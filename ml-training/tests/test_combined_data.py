@@ -112,3 +112,64 @@ def test_with_question_refuses_a_question_without_text():
     frame = pd.DataFrame({"question_id": ["q1", "q9"], "answer": ["x", "y"]})
     with pytest.raises(ValueError, match="no question text"):
         combined_data.with_question(frame, {"q1": "What?"}, "[SEP]")
+
+
+def test_load_corpus_refuses_a_fold_that_does_not_exist():
+    with pytest.raises(ValueError, match="unknown corpus"):
+        combined_data.load_corpus("logo-mistral")
+
+
+def write_raw_corpus(path):
+    """A tiny valid single-file raw corpus (the v0.1 / v0.1-logo-<slug> shape)."""
+    parts = {"train": "q1", "val": "q2", "test": "q3"}
+    frame = pd.concat([pd.DataFrame({
+        "answer": "some short answer", "label": [0, 1], "partition": part, "question_id": question,
+        "answer_id": [f"{part}-h", f"{part}-a"], "generator": ["human", "gpt-5.5"], "n_words": 3,
+        "dataset": "mohler", "tier": "correct",
+    }) for part, question in parts.items()], ignore_index=True)
+    frame.to_parquet(path, index=False)
+
+
+@pytest.mark.parametrize("name, file", [("v0.1", "v0.1.parquet"), ("logo-claude", "v0.1-logo-claude.parquet")])
+def test_raw_corpora_load_with_human_and_raw_ai_slices(tmp_path, name, file):
+    write_raw_corpus(tmp_path / file)
+    frames = combined_data.load_corpus(name, data_dir=tmp_path)
+    assert sorted(frames) == ["test", "train", "val"]
+    for frame in frames.values():
+        assert frame["slice"].tolist() == ["human", "raw-ai"]
+        assert "generator" in frame.columns
+
+
+def weight_frame():
+    return pd.DataFrame({
+        "label": [0, 0, 1, 1, 1, 1],
+        "dataset": ["mohler", "sprag", "mohler", "mohler", "sprag", "sprag"],
+        "slice": ["human", "human", "raw-ai", "spliced-25", "spliced-50", "paraphrased-heavy"],
+    })
+
+
+def test_no_weight_spec_gives_equal_weights():
+    assert combined_data.row_weights(weight_frame(), "").tolist() == [1.0] * 6
+
+
+def test_weights_match_wildcards_and_keep_each_label_averaging_one():
+    w = combined_data.row_weights(weight_frame(), "slice=spliced-*:3")
+    # AI rows 3, 3, 1, 1 before rescaling, to mean 1
+    assert w[2:].tolist() == pytest.approx([0.5, 1.5, 1.5, 0.5])
+    assert w[:2].tolist() == [1.0, 1.0]
+
+
+def test_conditions_combine_with_and():
+    w = combined_data.row_weights(weight_frame(), "dataset=mohler&slice=human:3")
+    assert w[:2].tolist() == pytest.approx([1.5, 0.5])
+
+
+def test_a_rule_that_matches_nothing_is_refused():
+    with pytest.raises(ValueError, match="matches no training row"):
+        combined_data.row_weights(weight_frame(), "slice=splcied-*:2")
+
+
+@pytest.mark.parametrize("spec", ["slice=human", "slice:2", "slice=human:0", "nosuch=x:2"])
+def test_a_malformed_rule_is_refused(spec):
+    with pytest.raises(ValueError):
+        combined_data.row_weights(weight_frame(), spec)

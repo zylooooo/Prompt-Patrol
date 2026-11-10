@@ -4,13 +4,11 @@ import RowAction from "./RowAction";
 interface EmailTypoHintProps {
   suggestion: string | null;
   onUse: () => void;
-  onKeep: () => void;
 }
 
 export default function EmailTypoHint({
   suggestion,
   onUse,
-  onKeep,
 }: EmailTypoHintProps) {
   if (!suggestion) return null;
   return (
@@ -20,10 +18,7 @@ export default function EmailTypoHint({
           Did you mean{" "}
           <span className="font-mono text-foreground">{suggestion}</span>?
         </span>
-        <span className="flex gap-1">
-          <RowAction onClick={onUse}>Use suggestion</RowAction>
-          <RowAction onClick={onKeep}>Keep as typed</RowAction>
-        </span>
+        <RowAction onClick={onUse}>Use suggestion</RowAction>
       </span>
     </FormNotice>
   );

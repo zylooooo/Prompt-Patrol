@@ -241,8 +241,8 @@ run "running" {
     error_message = "Worker env has SQS_BATCHES_DLQ_URL."
   }
   assert {
-    condition     = length(aws_scheduler_schedule.purge_sessions) == 1
-    error_message = "Session purge schedule exists while running."
+    condition     = length(aws_scheduler_schedule.purge_sessions) == 1 && length(aws_scheduler_schedule.purge_checks) == 1
+    error_message = "Session and check purge schedules exist while running."
   }
   assert {
     condition     = aws_ssm_parameter.image_tag.name == "/prompt-patrol/image-tag" && aws_ssm_parameter.image_tag.type == "String"
@@ -259,6 +259,10 @@ run "running" {
   assert {
     condition     = aws_scheduler_schedule.purge_sessions[0].target[0].ecs_parameters[0].task_definition_arn == "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/prompt-patrol-api"
     error_message = "The purge schedule must target the family (latest ACTIVE revision), not a pinned revision."
+  }
+  assert {
+    condition     = aws_scheduler_schedule.purge_checks[0].target[0].ecs_parameters[0].task_definition_arn == "arn:aws:ecs:ap-southeast-1:420974348257:task-definition/prompt-patrol-api"
+    error_message = "The check purge schedule must target the family (latest ACTIVE revision), not a pinned revision."
   }
 }
 
@@ -283,9 +287,9 @@ run "paused" {
     condition = (
       length(aws_ecs_service.api) + length(aws_ecs_service.worker) + length(aws_ecs_service.detector) == 0 &&
       length(aws_ecs_task_definition.api) + length(aws_ecs_task_definition.worker) + length(aws_ecs_task_definition.detector) == 0 &&
-      length(aws_scheduler_schedule.purge_sessions) == 0
+      length(aws_scheduler_schedule.purge_sessions) + length(aws_scheduler_schedule.purge_checks) == 0
     )
-    error_message = "Services, task definitions and the purge schedule are paused."
+    error_message = "Services, task definitions and the purge schedules are paused."
   }
   assert {
     condition     = length(aws_ssm_parameter.image_tag.name) > 0

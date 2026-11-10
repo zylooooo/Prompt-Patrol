@@ -96,6 +96,7 @@ def parse_and_validate(
 
         rows.append(
             {
+                "row_number": row_number,
                 "external_ref": fields["external_ref"].strip(),
                 "answer_text": fields["answer_text"].strip(),
                 "question_text": fields.get("question_text", "").strip() or None,
@@ -117,6 +118,7 @@ def _enqueue_rows(rows: list[dict], *, batch_id: str, actor_id: str, strictness:
                     "actor_id": actor_id,
                     "strictness": strictness,
                     "retain_answer": retain_answer,
+                    "row_number": row["row_number"],
                     "external_ref": row["external_ref"],
                     "answer_text": row["answer_text"],
                     "question_text": row["question_text"],
@@ -193,7 +195,7 @@ async def create_batch(
             BatchRowFailure(
                 id=uuid.uuid4(),
                 batch_id=batch.id,
-                row_number=0,
+                row_number=row["row_number"],
                 external_ref=row["external_ref"],
                 reason="Failed to queue row for processing.",
             )
