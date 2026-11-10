@@ -111,6 +111,53 @@ plagiarism/AI-detector tool.
    (delegated authority, not identical permissions) — don't flatten the
    RBAC tiers into one generic "user" experience.
 
+## Voice and Copy
+
+One voice from the invite email through sign-in, the app and sign-out. The
+Auth0 screens and the three emails in `docs/assets/*.liquid` are the
+reference: if app copy reads differently from them, the app is wrong.
+
+**Tone.** Calm, plain and friendly. Short sentences, no jargon, no blame.
+Say what happened, then what to do next. Never show a status code, stack
+trace or raw server string.
+
+**Honest about uncertainty.** A result is a prompt for human review, never a
+verdict on the student. `uncertain` is a normal outcome, not an error. Never
+call an answer "AI" outright, and never show `raw_score` as a percentage.
+Don't quote error rates the served detector can't back up.
+
+**Mechanics.**
+
+- "Prompt Patrol": two words, capital P's, everywhere.
+- Sentence case for every heading, tab, button and nav item ("Check
+  history", not "Check History").
+- Toasts and messages are full sentences ending in a full stop. Button
+  labels and headings have none.
+- Write numbers as digits; use "…" for in-progress states ("Saving…").
+
+**Preferred terms.**
+
+| Use                        | Not                                      |
+| -------------------------- | ---------------------------------------- |
+| Sign in / Sign out         | Log in, Login, Log out                   |
+| check (noun and verb)      | screen, scan                             |
+| batch                      | job, upload (for the whole run)          |
+| flagged for review         | AI-generated, detected, caught           |
+| result                     | verdict (in UI copy)                     |
+| your Prompt Patrol administrator | admin, root administrator, course administrator |
+| set up an account          | provision                                |
+| teaching assistant         | TA (in UI copy)                          |
+
+**Before / after.**
+
+| Before                                                  | After                                                                         |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Invalid input                                           | We couldn't read row 4. Check it has an answer, then upload the file again.  |
+| Request failed with status 502                          | We couldn't reach Prompt Patrol. Check your connection and try again.        |
+| Likely AI-generated                                     | Flagged for review                                                            |
+| Ask an admin to provision your account                  | Ask your Prompt Patrol administrator to set up your account                  |
+| Flags about 1 in 100 in error                           | A balance between catching more answers and flagging fewer by mistake        |
+
 ## Accessibility & Inclusion
 
 No project-specific accessibility standard has been established yet beyond

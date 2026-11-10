@@ -12,7 +12,7 @@ test.describe("signed out", () => {
 test("the seeded instructor lands on the check page", async ({ page }) => {
   await page.goto("/check");
   await expect(
-    page.getByRole("heading", { name: "Screen New Answers" }),
+    page.getByRole("heading", { name: "Check answers" }),
   ).toBeVisible();
   await expect(
     page.getByRole("complementary").getByText("E2E Instructor"),

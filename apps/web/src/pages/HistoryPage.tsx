@@ -32,7 +32,7 @@ const FILTER_TABS: SegmentedToggleOption<Filter>[] = [
   { value: "all", label: "All" },
   { value: "ai_generated", label: "Flagged" },
   { value: "uncertain", label: "Uncertain" },
-  { value: "human_written", label: "Human" },
+  { value: "human_written", label: "Likely human-written" },
 ];
 
 const DAY_RANGES: DropdownOption<number>[] = [
@@ -62,7 +62,7 @@ function matchesDays(entry: HistoryEntry, days: number): boolean {
 }
 
 export default function HistoryPage() {
-  usePageTitle("Screening History");
+  usePageTitle("Check history");
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data, isPending, isError, refetch } = useHistory();
@@ -188,8 +188,8 @@ export default function HistoryPage() {
   return (
     <Page>
       <PageHeader
-        title="Screening History"
-        subtitle="Every check is stored with its score, verdict, and model version."
+        title="Check history"
+        subtitle="Each check is kept for 90 days with its score, result and model version."
         actions={unassigned ? undefined : <ModelStatusBadge />}
       />
 
@@ -202,7 +202,7 @@ export default function HistoryPage() {
             />
             <span>
               <span className="font-medium">{activeBatch.active.fileName}</span>{" "}
-              is still being screened
+              is still being checked
               {activeProgress.data && (
                 <span className="text-muted-foreground">
                   {" "}
@@ -240,16 +240,16 @@ export default function HistoryPage() {
       ) : isError ? (
         <ErrorState
           className="mt-8"
-          title="Could not load your history"
-          description="Something went wrong reaching the server. Nothing has been lost."
+          title="We couldn't load your history"
+          description="Your checks are safe. Try again in a moment."
           onRetry={() => void refetch()}
         />
       ) : !hasAny ? (
         <section className="mt-8 shrink-0 rounded-xl bg-surface p-12 text-center shadow-md">
           <p className="text-lg font-medium text-foreground">No checks yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Checked answers will appear here. Run your first check from the
-            Screen New Answers page.
+            Checked answers appear here. Run your first check from the Check
+            answers page.
           </p>
         </section>
       ) : (

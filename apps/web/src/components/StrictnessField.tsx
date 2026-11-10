@@ -19,7 +19,7 @@ export default function StrictnessField({
 }: StrictnessFieldProps) {
   return (
     <fieldset>
-      <legend className={SECTION_LABEL}>Flagging Strictness</legend>
+      <legend className={SECTION_LABEL}>Flagging strictness</legend>
 
       <div className="mt-3">
         <SegmentedToggle

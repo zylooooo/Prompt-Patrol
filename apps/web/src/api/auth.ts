@@ -1,5 +1,7 @@
 import type { UserRole } from "../types";
 import { ApiError, apiRequest } from "./client";
+import { clearActiveBatch } from "../lib/activeBatch";
+import { clearBatchDraft, clearCheckDraft } from "../lib/checkDraft";
 
 export interface User {
   id: string;
@@ -54,6 +56,11 @@ const STUB_ERA_KEYS = [
 
 export function clearPreviousUserData(): void {
   for (const key of STUB_ERA_KEYS) localStorage.removeItem(key);
+  // The in-flight batch's id and file name (which can name a course), and the
+  // unsent answer draft, belong to the person signing out.
+  clearActiveBatch();
+  clearCheckDraft();
+  clearBatchDraft();
 }
 
 export function clearSignedOutState(): void {

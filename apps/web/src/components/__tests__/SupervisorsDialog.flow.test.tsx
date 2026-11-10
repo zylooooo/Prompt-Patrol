@@ -75,7 +75,7 @@ describe("SupervisorsDialog with the real hooks", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Teach One" }));
     await screen.findByText(
-      "Nobody supervises this account, so they can't screen answers.",
+      "Nobody supervises this account, so they can't check answers.",
     );
 
     await user.click(

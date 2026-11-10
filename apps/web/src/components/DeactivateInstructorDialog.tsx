@@ -1,3 +1,4 @@
+import { describeError } from "../lib/errorText";
 import {
   displayName,
   isActive,
@@ -74,9 +75,7 @@ export default function DeactivateInstructorDialog({
       onClose();
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Could not deactivate the account.",
+        describeError(err, "We couldn't deactivate the account. Try again."),
       );
     } finally {
       setBusy(false);
@@ -188,7 +187,7 @@ export default function DeactivateInstructorDialog({
             {option(
               "leave",
               "Leave them for now",
-              "They keep their accounts but can't screen until this instructor is reactivated or someone adds them to a team.",
+              "They keep their accounts but can't check answers until this instructor is reactivated or someone adds them to a team.",
             )}
           </div>
         </>

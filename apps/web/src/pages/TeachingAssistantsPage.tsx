@@ -1,3 +1,4 @@
+import { describeError } from "../lib/errorText";
 import DataTable, {
   TABLE_ACTIONS_LABELLED_COLUMN_WIDTH,
   TABLE_STATUS_COLUMN_WIDTH,
@@ -21,7 +22,7 @@ import RowAction from "../components/ui/RowAction";
 import RowActionMenu from "../components/ui/RowActionMenu";
 import EmailTypoHint from "../components/ui/EmailTypoHint";
 import FormNotice from "../components/ui/FormNotice";
-import { emailProblem } from "../lib/email-domain";
+import { emailProblem, SMU_ONLY_MESSAGE } from "../lib/email-domain";
 import { suggestEmailDomain } from "../lib/email-typo";
 import ErrorState from "../components/ui/ErrorState";
 import PageHeader from "../components/ui/PageHeader";
@@ -91,16 +92,17 @@ export default function TeachingAssistantsPage() {
         `${typed} is on your team. New accounts get an email to set a password.`,
       );
     } catch (err) {
-      // 400 here is the SMU-only rule ([0.31.0]); both are about the email.
-      if (
-        err instanceof ApiError &&
-        (err.status === 400 || err.status === 409)
-      ) {
-        setEmailError(err.message);
-      } else {
-        setError(
-          err instanceof Error ? err.message : "Could not add the account.",
+      if (err instanceof ApiError && err.status === 400) {
+        // The SMU-only rule ([0.31.0]). emailProblem() catches it before
+        // submit, so this is only the server's backstop; the copy is ours.
+        setEmailError(SMU_ONLY_MESSAGE);
+      } else if (err instanceof ApiError && err.status === 409) {
+        // Deliberately one opaque message for every refusal ([0.21.0]).
+        setEmailError(
+          "This email can't be added to your team. Contact your Prompt Patrol administrator.",
         );
+      } else {
+        setError(describeError(err, "We couldn't add the account. Try again."));
       }
     } finally {
       setConfirming(null);
@@ -117,7 +119,7 @@ export default function TeachingAssistantsPage() {
       await resendInvite.mutateAsync(target.id);
       showToast(`Invite resent to ${target.email}.`);
     } catch {
-      showToast(`Couldn't resend the invite to ${target.email}. Try again.`, {
+      showToast(`We couldn't resend the invite to ${target.email}. Try again.`, {
         tone: "error",
       });
     }
@@ -135,8 +137,7 @@ export default function TeachingAssistantsPage() {
       showToast(`${displayName(target)} removed from your team.`);
       setConfirmRemove(null);
     } catch (err) {
-      const reason = err instanceof Error ? err.message : "Try again.";
-      showToast(`Couldn't remove ${displayName(target)}. ${reason}`, {
+      showToast(`We couldn't remove ${displayName(target)}. ${describeError(err, "Try again.")}`, {
         tone: "error",
       });
       setConfirmRemove(null);
@@ -226,7 +227,7 @@ export default function TeachingAssistantsPage() {
   return (
     <Page>
       <PageHeader
-        title="Manage My Assistants"
+        title="My teaching assistants"
         subtitle="Accounts you supervise."
       />
 
@@ -299,8 +300,8 @@ export default function TeachingAssistantsPage() {
       {isError ? (
         <ErrorState
           className="mt-6"
-          title="Could not load your list"
-          description="Something went wrong reaching the server. Nothing has changed."
+          title="We couldn't load your teaching assistants"
+          description="Nothing has changed. Try again in a moment."
           onRetry={() => void refetch()}
         />
       ) : (
@@ -318,7 +319,7 @@ export default function TeachingAssistantsPage() {
                   No teaching assistants yet
                 </p>
                 <p className="mx-auto mt-2 max-w-sm text-muted-foreground">
-                  Add one above by email. They will be able to screen answers
+                  Add one above by email. They will be able to check answers
                   for your courses.
                 </p>
               </div>
@@ -362,7 +363,7 @@ export default function TeachingAssistantsPage() {
           <p className="text-sm leading-relaxed text-muted-foreground">
             They leave your team. Their account stays active, and anyone else
             who supervises them keeps them. If you were their only instructor,
-            they can't screen answers until someone adds them again.
+            they can't check answers until someone adds them again.
           </p>
         </Modal>
       )}

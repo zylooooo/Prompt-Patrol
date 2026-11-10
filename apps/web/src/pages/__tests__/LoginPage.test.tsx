@@ -35,13 +35,21 @@ describe("LoginPage — redirect reasons", () => {
     expect(alertText()).toBeNull();
   });
 
+  // A routine session end is a calm notice, not an error alert.
   it.each([
     ["?error=session_expired", "30 minutes without activity"],
     ["?error=session_ended", "maximum of 4 hours"],
     ["?error=session_revoked", "ended, either by signing out"],
     ["?error=session_unknown", "couldn't recognise your session"],
-    ["?error=account_deactivated", "turned off while you were signed in"],
     ["?error=signed_out", "You're signed out"],
+  ])("explains %s as a notice", (search, expected) => {
+    renderAt(search);
+    expect(screen.getByRole("status").textContent).toContain(expected);
+    expect(alertText()).toBeNull();
+  });
+
+  it.each([
+    ["?error=account_deactivated", "turned off while you were signed in"],
     ["?error=not_provisioned", "isn't set up"],
     ["?error=sign_in_cancelled", "cancelled"],
     ["?error=sign_in_failed", "couldn't complete sign-in"],

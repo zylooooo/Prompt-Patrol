@@ -6,7 +6,7 @@ import { TextLink } from "./ui/TextButton";
 import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
-import { describeCheckFailure } from "../lib/checkFailure";
+import { describeCheckFailure } from "../lib/errorText";
 import { STRICTNESS_TEXT, type CheckResult } from "../types";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
@@ -96,7 +96,7 @@ export default function ResultPanel({
             {showSavedLink && (
               <MetaRow name="Saved">
                 <TextLink to={`/history/${result.checkId}`}>
-                  to history · view entry
+                  View in history
                 </TextLink>
               </MetaRow>
             )}

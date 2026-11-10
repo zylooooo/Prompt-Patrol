@@ -34,7 +34,7 @@ function ChooseName({ id, email }: { id: string; email: string }) {
       // The session refetch this triggers is what lifts the gate.
       await rename.mutateAsync({ id, name: name.trim() });
     } catch {
-      setError("Couldn't save your name. Try again.");
+      setError("We couldn't save your name. Try again.");
     }
   }
 

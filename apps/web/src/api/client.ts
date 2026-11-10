@@ -96,8 +96,8 @@ export async function apiRequest<T>(
     throw new ApiError(
       NETWORK_ERROR_STATUS,
       deadline.signal.aborted
-        ? "The server took too long to respond."
-        : "Could not reach the server.",
+        ? "Prompt Patrol took too long to respond. Try again in a moment."
+        : "We couldn't reach Prompt Patrol. Check your connection and try again.",
     );
   } finally {
     deadline.done();

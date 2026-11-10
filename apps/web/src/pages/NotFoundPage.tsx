@@ -8,7 +8,7 @@ export default function NotFoundPage() {
   const { user, isPending } = useAuth();
 
   const destination = user
-    ? { to: "/", label: "Back to the triage queue" }
+    ? { to: "/", label: "Go to Check answers" }
     : { to: "/login", label: "Go to sign in" };
 
   return (
@@ -26,8 +26,8 @@ export default function NotFoundPage() {
             We patrolled everywhere.
           </h1>
           <p className="max-w-md text-sm leading-relaxed text-muted-foreground md:text-base">
-            This page isn't on our beat. The URL might be mistyped, or the route
-            hasn't shipped yet. Either way, Prompt Patrol is one click away.
+            This page isn't on our beat. The link may be mistyped or out of
+            date. Either way, Prompt Patrol is one click away.
           </p>
           <div className="flex flex-col items-center gap-3 md:flex-row md:items-center">
             <Button
@@ -41,7 +41,7 @@ export default function NotFoundPage() {
               tone="muted"
               className="text-sm"
             >
-              or take a step back
+              Or take a step back
             </TextButton>
           </div>
         </div>

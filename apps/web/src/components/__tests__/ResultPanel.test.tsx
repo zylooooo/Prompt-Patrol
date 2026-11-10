@@ -39,17 +39,37 @@ describe("ResultPanel — failure wording", () => {
         }
       />,
     );
-    expect(alertText()).toContain("temporarily unavailable");
+    expect(alertText()).toContain("detector is unavailable");
   });
 
-  it("passes through a client-side refusal, which is already written for this screen", () => {
+  it("never shows the server's own message, which isn't in the product voice", () => {
+    // Copy is keyed on the stable `error` code; a 400's message is a
+    // validation rule like "answer_text: String should have at least 20
+    // characters" (PRODUCT.md, Voice and Copy).
     render(
       <ResultPanel
         status="error"
-        error={new ApiError(400, "Enter at least 10 characters.")}
+        error={
+          new ApiError(
+            400,
+            "answer_text: String should have at least 20 characters",
+            "invalid_request",
+          )
+        }
       />,
     );
-    expect(alertText()).toContain("Enter at least 10 characters.");
+    expect(alertText()).toContain("The check didn't go through");
+    expect(alertText()).not.toContain("answer_text");
+  });
+
+  it("asks for the question when the detector needs it", () => {
+    render(
+      <ResultPanel
+        status="error"
+        error={new ApiError(400, "question_text is required", "question_text_required")}
+      />,
+    );
+    expect(alertText()).toContain("Add the question");
   });
 
   it("keeps the generic line for a server error, rather than leaking internal wording", () => {
@@ -59,13 +79,13 @@ describe("ResultPanel — failure wording", () => {
         error={new ApiError(500, "IntegrityError on relation checks")}
       />,
     );
-    expect(alertText()).toContain("The check failed");
+    expect(alertText()).toContain("The check didn't go through");
     expect(alertText()).not.toContain("IntegrityError");
   });
 
   it("keeps the generic line when there is no error object at all", () => {
     render(<ResultPanel status="error" />);
-    expect(alertText()).toContain("The check failed");
+    expect(alertText()).toContain("The check didn't go through");
   });
 
   it("says nothing about failure when a check succeeded", () => {
@@ -110,8 +130,8 @@ describe("ResultPanel — the demo caveat", () => {
     render(
       <ResultPanel status="success" result={result()} showSavedLink={false} />,
     );
-    expect(screen.getByText(/uncalibrated/)).toBeDefined();
-    expect(screen.getByText(/not evidence of misconduct/)).toBeDefined();
+    expect(screen.getByText(/aren't calibrated/)).toBeDefined();
+    expect(screen.getByText(/aren't evidence of misconduct/)).toBeDefined();
   });
 
   it("drops the caveat once a calibrated model scores the check", () => {
@@ -124,6 +144,6 @@ describe("ResultPanel — the demo caveat", () => {
         showSavedLink={false}
       />,
     );
-    expect(screen.queryByText(/uncalibrated/)).toBeNull();
+    expect(screen.queryByText(/aren't calibrated/)).toBeNull();
   });
 });
