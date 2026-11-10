@@ -37,7 +37,7 @@ import mlflow
 import numpy as np
 import torch
 
-from combined_data import load_corpus
+from combined_data import CORPORA, load_corpus
 from finetune_meld_lora import MLFLOW_EXPERIMENT, OUT_DIR, evaluate_protocol, load_meld, predict_logits
 from meld_lora_plots import log_lora_charts
 from scores import load_scores, save_scores, score_rows
@@ -117,6 +117,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=1,
                     help="the seed recorded in the scores file. Number pair soups after their first member so "
                          "analyse_ensemble.py lines soup s up with the score average of seeds s and s+1")
+    ap.add_argument("--data", default="extended", choices=CORPORA,
+                    help="the corpus the members were trained on; val and test are scored from it")
+    ap.add_argument("--experiment", default=MLFLOW_EXPERIMENT,
+                    help="MLflow experiment to log to; E3 runs go to E3-reliability")
     ap.add_argument("--min-words", type=int, default=10)
     ap.add_argument("--target-fpr", type=float, default=0.01)
     ap.add_argument("--device", default="cuda")
@@ -141,7 +145,7 @@ def main() -> None:
         raise SystemExit(f"members were trained on different MELD releases {sorted(revisions)}; they can't be averaged")
     revision = revisions.pop()
 
-    frames = load_corpus("extended")
+    frames = load_corpus(args.data)
     val, test = frames["val"].reset_index(drop=True), frames["test"].reset_index(drop=True)
     meld, scorer, model_dir = load_meld(args.device, revision)
     model, tokenizer, device = scorer.model, scorer.tok, scorer.device
@@ -182,14 +186,14 @@ def main() -> None:
     if args.offline:
         tmp = Path(tempfile.mkdtemp(prefix="meld-soup-offline-"))
         mlflow.set_tracking_uri(f"sqlite:///{tmp / 'mlflow.db'}")
-        mlflow.create_experiment(MLFLOW_EXPERIMENT, artifact_location=(tmp / "artifacts").as_uri())
+        mlflow.create_experiment(args.experiment, artifact_location=(tmp / "artifacts").as_uri())
         print(f"OFFLINE: logging to {mlflow.get_tracking_uri()}, nothing goes to DagsHub")
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    mlflow.set_experiment(args.experiment)
     with mlflow.start_run(run_name=run_name):
         mlflow.set_tags({"owner": args.owner, "run_role": "train", "tuning_method": "lora-soup",
                          "model_family": "meld", "data_mode": "in-distribution"})
         mlflow.log_params({"base_model": "anon-review-meld-2026/meld", "meld_revision": model_dir.name,
-                           "data": "extended", "min_words": args.min_words, "target_fpr": args.target_fpr,
+                           "data": args.data, "min_words": args.min_words, "target_fpr": args.target_fpr,
                            "soup_members": ",".join(members), "soup_member_run_ids": ",".join(f[3] for f in files),
                            "model_name": args.model_name, "seed": args.seed,
                            "val_n": len(val), "test_n": len(test)})

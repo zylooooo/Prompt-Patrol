@@ -46,7 +46,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import load_corpus, row_weights, slice_flag_rates
+from combined_data import CORPORA, load_corpus, row_weights, slice_flag_rates
 from metrics import calibration_metrics, evaluate, oracle_tpr_at_fpr, threshold_at_fpr
 from scores import save_scores, score_rows
 from meld_lora_plots import log_lora_charts
@@ -333,8 +333,11 @@ def train(model, meld, tokenizer, train, val, args, device, cap, window, log_met
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", default="extended", choices=["extended", "combined"],
-                    help="extended = v0.1-extended (default); combined = the earlier v0.1 + spliced")
+    ap.add_argument("--data", default="extended", choices=CORPORA,
+                    help="extended = v0.1-extended (default); combined = the earlier v0.1 + spliced; "
+                         "v0.1 and logo-<generator> = raw answers only, for E3 leave-one-generator-out")
+    ap.add_argument("--experiment", default=MLFLOW_EXPERIMENT,
+                    help="MLflow experiment to log to; E3 runs go to E3-reliability")
     ap.add_argument("--min-words", type=int, default=10,
                     help="only answers of at least this many words fit the temperature and threshold and "
                          "enter the metrics; 0 keeps every answer. All val and test rows are scored and saved")
@@ -403,11 +406,11 @@ def main():
     if args.offline:
         tmp = Path(tempfile.mkdtemp(prefix="meld-offline-"))
         mlflow.set_tracking_uri(f"sqlite:///{tmp / 'mlflow.db'}")
-        mlflow.create_experiment(MLFLOW_EXPERIMENT, artifact_location=(tmp / "artifacts").as_uri())
-        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        mlflow.create_experiment(args.experiment, artifact_location=(tmp / "artifacts").as_uri())
+        mlflow.set_experiment(args.experiment)
         print(f"OFFLINE: logging to {mlflow.get_tracking_uri()}, nothing goes to DagsHub")
     else:
-        setup_mlflow(MLFLOW_EXPERIMENT)
+        setup_mlflow(args.experiment)
     with mlflow.start_run(run_name=run_name):
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
                          "tuning_method": "lora", "model_family": "meld", "data_mode": mode})

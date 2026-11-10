@@ -110,14 +110,28 @@ def load_extended(corpus: str = EXTENDED, data_dir: Path = DATA_DIR) -> dict[str
     return frames
 
 
-def load_corpus(name: str = "extended") -> dict[str, pd.DataFrame]:
+# E3 leave-one-generator-out folds, cut from v0.1 by build_logo_splits.py: fold <slug> never shows
+# that generator in train or val. `v0.1` is the matching control, with every generator in training.
+LOGO_FOLDS = ("claude", "deepseek", "gemini", "gpt", "llama", "qwen")
+CORPORA = ("extended", "combined", "v0.1", *(f"logo-{slug}" for slug in LOGO_FOLDS))
+
+
+def load_corpus(name: str = "extended", data_dir: Path = DATA_DIR) -> dict[str, pd.DataFrame]:
     """`extended` is the corpus we train and evaluate on from now on; `combined` is the earlier
-    v0.1 + spliced set, kept so old results can be reproduced."""
+    v0.1 + spliced set, kept so old results can be reproduced.
+
+    `v0.1` and `logo-<slug>` are raw answers only (slices human and raw-ai), for E3: each LOGO fold
+    is compared with `v0.1` on the same test answers, so the gap is the unseen generator alone and
+    not the missing spliced, paraphrased and edited training rows."""
     if name == "extended":
-        return load_extended()
+        return load_extended(data_dir=data_dir)
     if name == "combined":
-        return load_combined()
-    raise ValueError(f"unknown corpus {name!r}; choose 'extended' or 'combined'")
+        return load_combined(Path(data_dir) / "v0.1.parquet", Path(data_dir) / "v0.1-spliced.parquet")
+    if name == "v0.1":
+        return load_combined(Path(data_dir) / "v0.1.parquet", include_spliced=False)
+    if name.startswith("logo-") and name.removeprefix("logo-") in LOGO_FOLDS:
+        return load_combined(Path(data_dir) / f"v0.1-{name}.parquet", include_spliced=False)
+    raise ValueError(f"unknown corpus {name!r}; choose from {', '.join(CORPORA)}")
 
 
 def parse_weights(spec: str) -> list[tuple[list[tuple[str, str]], float]]:
