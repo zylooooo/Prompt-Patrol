@@ -124,7 +124,7 @@ async def test_get_progress_includes_failure_reasons(client, db_session):
     assert body["failed"] == 1
     assert len(body["failures"]) == 1
     assert body["failures"][0]["external_ref"] == "stu-1"
-    assert "answer_text" in body["failures"][0]["reason"]
+    assert "answer" in body["failures"][0]["reason"]
 
 
 @pytest.mark.asyncio
