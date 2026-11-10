@@ -18,6 +18,11 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.35.0 The Auth0 Post-Login Action that clears
+#          `app_metadata.pending_activation` (planned in [0.10.0], never
+#          built) now exists, so password-reset emails use reset copy
+#          instead of invite copy. Auth0 dashboard only. No code, request or
+#          response shape changes. See DECISION LOG [0.35.0].
 #   0.34.0 Check history retention: a daily job hard-deletes checks older
 #          than 90 days, and each batch older than 90 days together with all
 #          of its checks and row failures. Afterwards GET /api/checks/{check_id}
@@ -3284,6 +3289,33 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.35.0] Reset emails said "Set up your account": the [0.10.0] flag was
+#          never cleared.
+#
+#   PROBLEM. [0.10.0] has `invite_user` set `app_metadata.pending_activation`
+#   and the Change Password email template branch on it, with a Post-Login
+#   Action clearing it on first sign-in. That Action was left "NOT DONE YET"
+#   and never built, so the flag stayed `true` for every user and every
+#   password reset was sent the invite copy.
+#   DECISION. Built it as [0.10.0] describes: a custom Action
+#   `clear-pending-activation` (Login / Post Login, Node 22), bound in the
+#   Post Login flow, running
+#   `api.user.setAppMetadata('pending_activation', null)` when the flag is
+#   set (`null` deletes the key; dashboard/Management API metadata updates
+#   merge, so `{}` would not). Dashboard configuration only, not in this
+#   repo, same as the template itself. The 6 existing users who had already
+#   signed in were backfilled by hand; users who have never signed in keep
+#   the flag on purpose.
+#   KNOWN EDGE. Someone who sets their password but never signs in still
+#   gets invite copy on a later reset. Accepted: they have not finished
+#   activating.
+#   REJECTED. A Post Change Password Action would clear the flag at the
+#   exact moment of activation, but that trigger cannot write
+#   `app_metadata` without calling the Management API, which means storing
+#   the M2M secret in the Action. Post Login needs no secret. Branching the
+#   template on login count instead of a flag doesn't work either: it isn't
+#   an Auth0 email template variable.
 #
 # [0.34.0] Check history is hard-deleted after 90 days.
 #
