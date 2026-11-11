@@ -47,7 +47,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
-from combined_data import CORPORA, load_corpus, row_weights, slice_flag_rates
+from combined_data import CORPORA, load_corpus, load_questions, row_weights, slice_flag_rates, with_question
 from meld_lora_plots import log_lora_charts
 from metrics import calibration_metrics, evaluate, oracle_tpr_at_fpr, threshold_at_fpr
 from scores import save_scores, score_rows
@@ -100,13 +100,15 @@ def balance_train(train: pd.DataFrame, seed: int) -> pd.DataFrame:
 # model
 # --------------------------------------------------------------------------
 
-def build_lora_model(scorer, r: int, alpha: int, dropout: float, targets: list[str]):
+def build_lora_model(scorer, r: int, alpha: int, dropout: float, targets: list[str], dora: bool = False):
     from peft import LoraConfig, get_peft_model
 
     # LoRA on the DeBERTa attention projections; the 1-logit classifier head is
     # trained in full (and saved with the adapter) because it was fit for the
     # original task and should be free to adapt.
-    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout,
+    # dora=True splits each adapted weight into a direction (the low-rank update) and a learned
+    # magnitude (DoRA); everything else is the same as LoRA
+    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, use_dora=dora,
                      target_modules=targets, modules_to_save=["classifier"])
     model = get_peft_model(scorer.model, cfg)
 
@@ -307,6 +309,13 @@ def main() -> None:
     ap.add_argument("--alpha", type=int, default=32)
     ap.add_argument("--dropout", type=float, default=0.05)
     ap.add_argument("--targets", default="query_proj,value_proj")
+    ap.add_argument("--question", action="store_true",
+                    help="give the model the question as well: the input becomes '<question> [SEP] <answer>'. "
+                         "Extended corpus only; the untouched baseline is skipped (it stays answer-only). "
+                         "Give the run its own --model-name, e.g. desklib-lora-question")
+    ap.add_argument("--dora", action="store_true",
+                    help="use DoRA instead of plain LoRA (peft use_dora); give the run its own --model-name, "
+                         "e.g. desklib-dora")
     ap.add_argument("--weights", default="",
                     help="per-row loss weights, e.g. 'dataset=mohler&slice=human:2,slice=spliced-*:2' "
                          "(combined_data.parse_weights); each label's weights are rescaled to average 1")
@@ -325,6 +334,13 @@ def main() -> None:
                     help="sweep runs are excluded from headline tables; pick the config by VAL, never test")
     args = ap.parse_args()
 
+    if args.question:
+        if args.data != "extended":
+            raise SystemExit("--question needs --data extended (the question text is keyed by its question ids)")
+        if not args.no_baseline:
+            print("--question: skipping the untouched baseline, which stays answer-only (see the answer-only runs)")
+            args.no_baseline = True
+
     train_on = [d for d in args.train_on.split(",") if d]
     mode = f"train-{'+'.join(train_on)}" if train_on else "in-distribution"
     # the seed is in the default name: the scores file is named after the run, so repeats must not collide
@@ -333,7 +349,9 @@ def main() -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train, val, test = select_splits(load_corpus(args.data), train_on or None)
+    frames = load_corpus(args.data)
+    questions = load_questions(frames) if args.question else None  # fails here, before the model loads
+    train, val, test = select_splits(frames, train_on or None)
     if not args.no_balance:
         before = train["label"].value_counts().to_dict()
         train = balance_train(train, args.seed)
@@ -355,13 +373,16 @@ def main() -> None:
 
     scorer = Scorer(device=args.device)
     device, tokenizer = scorer.device, scorer.tokenizer
+    if args.question:
+        train, val, test = (with_question(f, questions, tokenizer.sep_token) for f in (train, val, test))
+        print(f"model input with the question, e.g.: {train['answer'].iloc[0][:200]!r}")
 
     setup_mlflow(args.experiment)
     with mlflow.start_run(run_name=run_name):
         # reporting.py drops run_role="smoke" from every table, so a pipeline check
         # (capped train rows) can never be mistaken for a result
         mlflow.set_tags({"owner": args.owner, "run_role": "smoke" if args.max_train_rows else args.run_role,
-                         "tuning_method": "lora",
+                         "tuning_method": "dora" if args.dora else "lora",
                          "model_family": "deberta", "data_mode": mode})
         mlflow.log_params({
             "base_model": "desklib/ai-text-detector-academic-v1.01", "data": args.data,
@@ -370,7 +391,7 @@ def main() -> None:
             "calibrated": not args.no_calibrate, "target_fpr": args.target_fpr,
             "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
             "lora_r": args.r, "lora_alpha": args.alpha, "lora_dropout": args.dropout,
-            "lora_targets": args.targets, "max_len": MAX_LEN, "seed": args.seed,
+            "lora_targets": args.targets, "dora": args.dora, "question": args.question, "max_len": MAX_LEN, "seed": args.seed,
             "weights": args.weights or "none", "model_name": args.model_name,
             "train_n": len(train), "val_n": len(val), "test_n": len(test),
         })
@@ -389,7 +410,7 @@ def main() -> None:
             payload["baseline"] = jsonable(base)
             base_test_p = expit(base_test_logits)
 
-        model = build_lora_model(scorer, args.r, args.alpha, args.dropout, args.targets.split(","))
+        model = build_lora_model(scorer, args.r, args.alpha, args.dropout, args.targets.split(","), args.dora)
         model.to(device)
         print("\nTraining...")
         best_epoch, best_auc, history = train_lora(model, tokenizer, train, val, args, device,

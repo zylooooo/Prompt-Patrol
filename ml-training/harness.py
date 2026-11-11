@@ -185,6 +185,28 @@ def evaluate_model(df: pd.DataFrame, model: str, min_words: int | None = MIN_WOR
     return out
 
 
+def validation_table(df: pd.DataFrame, min_words: int | None = MIN_WORDS, models=None,
+                     fpr: float = metrics.HEADLINE_FPR) -> pd.DataFrame:
+    """One row per run, from the VALIDATION rows only: for choosing a setting without touching test.
+
+    `val_auroc` is threshold-free. `val_tpr` / `val_fpr` are at the threshold fitted on these same
+    val rows at `fpr`, so val_tpr is in-sample (a ranking aid, not a result to report). Rank a
+    sweep by val_auroc and use val_tpr as a check, since the goal is TPR at a low FPR.
+    """
+    runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])
+    if models is not None:
+        runs = runs[runs["model"].isin(list(models))]
+    rows = []
+    for r in runs.itertuples(index=False):
+        d = _select(df, r.model, r.run_id)
+        val = _rows(d, "val", min_words)
+        op = metrics.operating_point_metrics(val["y_true"], val["y_prob"], _frozen_threshold(d, min_words, fpr))
+        rows.append({"model": r.model, "run_id": r.run_id, "seed": r.seed, "min_words": min_words or 0,
+                     "n_val": len(val), "val_auroc": metrics.ranking_metrics(val["y_true"], val["y_prob"])["auroc"],
+                     "val_tpr": op["recall"], "val_fpr": op["fpr"]})
+    return pd.DataFrame(rows)
+
+
 def compare_models(df: pd.DataFrame, models=None, min_words=(None, MIN_WORDS), **kwargs) -> pd.DataFrame:
     """One row per run and filter, for the comparison table. Each run has its own frozen threshold."""
     runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])
@@ -258,12 +280,59 @@ def compare_pair(df: pd.DataFrame, model_a: str, model_b: str, min_words: int | 
     }
 
 
+def equal_fpr_table(df: pd.DataFrame, fprs=(0.005, 0.01, 0.02, 0.05), min_words: int | None = MIN_WORDS,
+                    models=None) -> pd.DataFrame:
+    """One row per run: the best test TPR at each FPR in `fprs`, so models can be compared at the SAME FPR.
+
+    The threshold is picked with the test labels in hand (the oracle), so these are upper bounds, not what
+    a frozen threshold delivers. Use them to ask whether one model ranks better than another: a higher
+    deployed TPR can come only from a looser threshold (a higher realised FPR), which this table removes.
+    """
+    runs = df[["model", "run_id", "seed"]].drop_duplicates().sort_values(["model", "seed", "run_id"])
+    if models is not None:
+        runs = runs[runs["model"].isin(list(models))]
+    rows = []
+    for r in runs.itertuples(index=False):
+        test = _rows(_select(df, r.model, r.run_id), "test", min_words)
+        rows.append({"model": r.model, "run_id": r.run_id, "seed": r.seed, "min_words": min_words or 0,
+                     **{f"tpr_at_fpr_{f:g}": metrics.oracle_tpr_at_fpr(test["y_true"], test["y_prob"], f) for f in fprs}})
+    return pd.DataFrame(rows)
+
+
 def slice_table(df: pd.DataFrame, model: str, by: str = "slice", min_words: int | None = MIN_WORDS,
                 run_id: str | None = None) -> pd.DataFrame:
     """Per-group results on test (for example by slice, dataset or generator), frozen val threshold."""
     d = _select(df, model, run_id)
     return pd.DataFrame(metrics.slice_report(_rows(d, "test", min_words), by=by,
                                              threshold=_frozen_threshold(d, min_words)))
+
+
+def slice_summary(df: pd.DataFrame, model: str, by: str = "slice", min_words: int | None = MIN_WORDS) -> pd.DataFrame:
+    """Per-group rate averaged over ALL runs of a model, however many there are.
+
+    One row per group: `rate` is the TPR for groups of AI answers and the FPR for the human group
+    (`rate_type` says which), with the mean, std, min and max over the runs. Each run uses its own
+    frozen threshold. The std is NaN when there is only one run, and `unstable` is True if any run
+    saw a group too small to trust.
+    """
+    run_ids = list(df.loc[df["model"] == model, "run_id"].drop_duplicates())
+    if not run_ids:
+        raise ValueError(f"no runs of {model!r} in the scores")
+    tables = []
+    for run_id in run_ids:
+        t = slice_table(df, model, by=by, min_words=min_words, run_id=run_id)
+        is_ai = t["deployed_tpr"].notna()
+        tables.append(pd.DataFrame({
+            "slice_value": t["slice_value"], "n": t["n"], "unstable": t["unstable"],
+            "rate_type": np.where(is_ai, "TPR", "FPR"),
+            "rate": np.where(is_ai, t["deployed_tpr"], t["deployed_fpr"]),
+        }))
+    out = pd.concat(tables).groupby("slice_value").agg(
+        rate_type=("rate_type", "first"), n=("n", "first"), n_runs=("rate", "size"),
+        rate_mean=("rate", "mean"), rate_std=("rate", "std"),
+        rate_min=("rate", "min"), rate_max=("rate", "max"), unstable=("unstable", "any"),
+    ).reset_index()
+    return out[["slice_value", "rate_type", "n", "n_runs", "rate_mean", "rate_std", "rate_min", "rate_max", "unstable"]]
 
 
 def risk_coverage(df: pd.DataFrame, model: str, min_words: int | None = MIN_WORDS, split: str = "val",
