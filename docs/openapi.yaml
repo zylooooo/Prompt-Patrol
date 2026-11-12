@@ -18,6 +18,14 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.36.0 Strictness is behind a server flag, `STRICTNESS_ENABLED`, off by
+#          default. Off, GET /api/detector lists only `standard` in
+#          `strictness_levels`, and POST /api/checks / POST /api/batches
+#          return `400` for any other level. The SPA hides the strictness
+#          picker and the result's strictness row when one level is offered.
+#          No schema change: the `Strictness` enum keeps all three values, and
+#          stored checks keep their `strictness_applied`. See DECISION LOG
+#          [0.36.0].
 #   0.35.0 The Auth0 Post-Login Action that clears
 #          `app_metadata.pending_activation` (planned in [0.10.0], never
 #          built) now exists, so password-reset emails use reset copy
@@ -376,7 +384,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.35.0
+  version: 0.36.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -586,6 +594,11 @@ info:
 
     Target FPRs are provisional pending E2/E3 calibration results — the enum
     is stable, the numbers behind it are not.
+
+    Only `standard` (1% FPR) has a fitted threshold today, so the server
+    offers only `standard` until the `STRICTNESS_ENABLED` flag is turned on:
+    read the levels from `GET /api/detector` `strictness_levels`, never a
+    hardcoded list. See DECISION LOG [0.36.0].
 
     A raw threshold from the client would defeat this entirely: score scales
     are model-specific, so a stored `0.5` means something different after every
@@ -3289,6 +3302,24 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.36.0] Strictness is behind a feature flag until it is calibrated.
+#
+#   PROBLEM. Only the served detector's 1% FPR threshold has been fitted.
+#   With DETECTOR_THRESHOLD set, all three levels map to that one value, so
+#   the picker offered a choice that changed nothing.
+#   DECISION. A server env flag, `STRICTNESS_ENABLED` (default off), drives
+#   both sides through the existing capability flag: off, `strictness_levels`
+#   lists only `standard` and the SPA hides any choice with fewer than two
+#   options. Turning it on needs no frontend release. A client that still
+#   sends `lenient`/`strict` gets `400`, same as any level not on offer,
+#   instead of being silently remapped to `standard`, so a stored
+#   `strictness_applied` always matches what was asked for.
+#   UNCHANGED. The `Strictness` enum, the threshold table, and the Worker:
+#   batch rows queued with another level before the flag went off still
+#   score at their own level.
+#   REJECTED. A separate `VITE_` build flag in the SPA: two switches that can
+#   disagree, and turning it on would need a frontend rebuild.
 #
 # [0.35.0] Reset emails said "Set up your account": the [0.10.0] flag was
 #          never cleared.

@@ -2,6 +2,15 @@ import ResultPanel from "../ResultPanel";
 import { ApiError } from "../../api/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+
+// ResultPanel reads detector capabilities (the strictness flag).
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient()}>
+    {children}
+  </QueryClientProvider>
+);
 
 /**
  * A failed check used to read the same sentence whatever went wrong. The
@@ -66,7 +75,13 @@ describe("ResultPanel — failure wording", () => {
     render(
       <ResultPanel
         status="error"
-        error={new ApiError(400, "question_text is required", "question_text_required")}
+        error={
+          new ApiError(
+            400,
+            "question_text is required",
+            "question_text_required",
+          )
+        }
       />,
     );
     expect(alertText()).toContain("Add the question");
@@ -129,6 +144,7 @@ describe("ResultPanel — the demo caveat", () => {
     // looks authoritative on an integrity screen is the failure to avoid.
     render(
       <ResultPanel status="success" result={result()} showSavedLink={false} />,
+      { wrapper },
     );
     expect(screen.getByText(/aren't calibrated/)).toBeDefined();
     expect(screen.getByText(/aren't evidence of misconduct/)).toBeDefined();
@@ -143,6 +159,7 @@ describe("ResultPanel — the demo caveat", () => {
         result={result({ detector: { ...detector, calibrationVersion: "v1" } })}
         showSavedLink={false}
       />,
+      { wrapper },
     );
     expect(screen.queryByText(/aren't calibrated/)).toBeNull();
   });

@@ -2,13 +2,14 @@ from .aws_clients import download_object, enqueue_row, generate_upload_url
 from .batches_service import cancel_batch, create_batch, get_batch_progress, parse_and_validate
 from .checks_service import (
     DETECTOR_CAPABILITIES,
-    THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
     create_check,
+    detector_capabilities,
     get_check_by_id,
     list_checks,
     purge_expired_checks,
+    strictness_levels,
 )
 from .detector_client import MODEL_VERSION, Status
 from .detector_client import health as detector_health
@@ -70,7 +71,8 @@ __all__ = [
     "add_teaching_assistant",
     "update_display_name",
     "DETECTOR_CAPABILITIES",
-    "THRESHOLDS",
+    "detector_capabilities",
+    "strictness_levels",
     "DetectorTimeoutError",
     "DetectorUnavailableError",
     "create_check",

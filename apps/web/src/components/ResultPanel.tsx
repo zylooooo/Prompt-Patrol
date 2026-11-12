@@ -7,7 +7,8 @@ import { fmtDateTime } from "../lib/format";
 import LoadingState from "./ui/LoadingState";
 import { SECTION_LABEL } from "./ui/section-label";
 import { describeCheckFailure } from "../lib/errorText";
-import { STRICTNESS_TEXT, type CheckResult } from "../types";
+import { STRICTNESS_TEXT, type CheckResult, type Strictness } from "../types";
+import { useStrictnessLevels } from "../hooks/useChecks";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
 
 interface ResultPanelProps {
@@ -26,6 +27,13 @@ function MetaRow({ name, children }: { name: string; children: ReactNode }) {
       </span>
     </div>
   );
+}
+
+// Its own component so only a rendered result reads capabilities (the
+// server's STRICTNESS_ENABLED flag).
+function StrictnessRow({ strictness }: { strictness: Strictness }) {
+  if (useStrictnessLevels().length === 0) return null;
+  return <MetaRow name="Strictness">{STRICTNESS_TEXT[strictness]}</MetaRow>;
 }
 
 export default function ResultPanel({
@@ -89,9 +97,7 @@ export default function ResultPanel({
 
           <div className="mt-6">
             <MetaRow name="Model">{result.detector.modelVersion}</MetaRow>
-            <MetaRow name="Strictness">
-              {STRICTNESS_TEXT[result.detector.strictnessApplied]}
-            </MetaRow>
+            <StrictnessRow strictness={result.detector.strictnessApplied} />
             <MetaRow name="Checked">{fmtDateTime(result.createdAt)}</MetaRow>
             {showSavedLink && (
               <MetaRow name="Saved">

@@ -28,6 +28,14 @@ vi.mock("../../api/checks", async () => ({
   checkAnswer: vi.fn(),
 }));
 
+// Strictness flag on, so the picker renders and its draft can be checked.
+vi.mock("../../hooks/useChecks", async () => ({
+  ...(await vi.importActual<typeof import("../../hooks/useChecks")>(
+    "../../hooks/useChecks",
+  )),
+  useStrictnessLevels: () => ["lenient", "standard", "strict"],
+}));
+
 vi.mock("../../components/ResultPanel", () => ({
   default: () => null,
 }));

@@ -1,12 +1,7 @@
-import SegmentedToggle, {
-  type SegmentedToggleOption,
-} from "./ui/SegmentedToggle";
+import SegmentedToggle from "./ui/SegmentedToggle";
 import { SECTION_LABEL } from "./ui/section-label";
+import { useStrictnessLevels } from "../hooks/useChecks";
 import { STRICTNESS_HINT, STRICTNESS_TEXT, type Strictness } from "../types";
-
-const LEVELS: SegmentedToggleOption<Strictness>[] = (
-  ["lenient", "standard", "strict"] as const
-).map((level) => ({ value: level, label: STRICTNESS_TEXT[level] }));
 
 interface StrictnessFieldProps {
   value: Strictness;
@@ -17,13 +12,19 @@ export default function StrictnessField({
   value,
   onChange,
 }: StrictnessFieldProps) {
+  const levels = useStrictnessLevels();
+  if (levels.length === 0) return null;
+
   return (
     <fieldset>
       <legend className={SECTION_LABEL}>Flagging strictness</legend>
 
       <div className="mt-3">
         <SegmentedToggle
-          options={LEVELS}
+          options={levels.map((level) => ({
+            value: level,
+            label: STRICTNESS_TEXT[level],
+          }))}
           value={value}
           onChange={onChange}
           ariaLabel="Flagging strictness"

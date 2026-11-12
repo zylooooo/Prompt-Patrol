@@ -140,10 +140,10 @@ async def sign_out_everywhere(db: AsyncSession, raw_token: str) -> User | None:
     """Ends every session this user holds, not just the browser that asked.
 
     Nothing in the product can reach a session on a device you no longer hold:
-    there is no device list, and the only other lever is an admin deactivating 
-    the whole account. Ending just the calling browser would leave someone who 
-    signed out on a shared machine with no remedy at all. The cost is bounded 
-    the other way - sessions already die after 30 minutes idle or 4 hours absolute, 
+    there is no device list, and the only other lever is an admin deactivating
+    the whole account. Ending just the calling browser would leave someone who
+    signed out on a shared machine with no remedy at all. The cost is bounded
+    the other way - sessions already die after 30 minutes idle or 4 hours absolute,
     and signing back in is one Auth0 click.
 
     The user is resolved from a *live* session on purpose: a stale token must not

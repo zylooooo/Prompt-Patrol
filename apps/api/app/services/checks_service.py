@@ -34,18 +34,32 @@ if _band := os.getenv("ABSTENTION_BAND"):
     ABSTENTION_BAND = float(_band)
 MIN_ANSWER_WORDS = 10
 
+# Feature flag: off until per-level thresholds are fitted (see above). Off, only "standard" is offered
+# (GET /api/detector) and accepted (POST checks/batches); the SPA hides the picker when one level is
+# left. STRICTNESS_ENABLED=true brings all three back with no frontend release.
+STRICTNESS_ENABLED = os.getenv("STRICTNESS_ENABLED", "false").lower() == "true"
+
+
+def strictness_levels() -> list[str]:
+    return list(TARGET_FPR) if STRICTNESS_ENABLED else ["standard"]
+
+
 DETECTOR_CAPABILITIES: dict = {
     "model_version": MODEL_VERSION,
     "requires_question_text": False,
     "min_answer_chars": 10,
     "max_answer_chars": 10000,
     "max_tokens_scored": 512,
-    "strictness_levels": [{"level": level, "target_fpr": fpr} for level, fpr in TARGET_FPR.items()],
     "calibration_version": CALIBRATION_VERSION if CALIBRATION_VERSION else None,
     "supports_confidence": False,
     "supports_explanation": False,
     "supports_spans": False,
 }
+
+
+def detector_capabilities() -> dict:
+    levels = [{"level": level, "target_fpr": TARGET_FPR[level]} for level in strictness_levels()]
+    return {**DETECTOR_CAPABILITIES, "strictness_levels": levels}
 
 
 # TODO: the decision logic for wether each answer will be flagged. This can be tweaked in the future.

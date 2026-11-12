@@ -59,13 +59,21 @@ def parse_and_validate(
     upload stays the source of truth in S3."""
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
-        return [], [{"row_number": 0, "external_ref": None, "reason": "The file is empty. Add a header row and some answers, then upload it again."}]
+        return [], [
+            {
+                "row_number": 0,
+                "external_ref": None,
+                "reason": "The file is empty. Add a header row and some answers, then upload it again.",
+            }
+        ]
 
     mapping = column_mapping or {}
     header_to_field = {h: mapping.get(h, h) for h in reader.fieldnames}
     missing = set(REQUIRED_FIELDS) - set(header_to_field.values())
     if missing:
-        reason = f"The file is missing a column: {', '.join(sorted(missing))}. Add it, or map one of your columns to it."
+        reason = (
+            f"The file is missing a column: {', '.join(sorted(missing))}. Add it, or map one of your columns to it."
+        )
         return [], [{"row_number": 0, "external_ref": None, "reason": reason}]
 
     rows: list[dict] = []
@@ -106,7 +114,9 @@ def parse_and_validate(
     return rows, failures
 
 
-def _enqueue_rows(rows: list[dict], *, batch_id: str, actor_id: str, strictness: str, retain_answer: bool) -> list[dict]:
+def _enqueue_rows(
+    rows: list[dict], *, batch_id: str, actor_id: str, strictness: str, retain_answer: bool
+) -> list[dict]:
     """Sync, run in a thread by create_batch. Returns the rows that failed to
     enqueue; the caller records them, since the DB session belongs to the loop."""
     failed: list[dict] = []

@@ -12,16 +12,16 @@ from db import get_db
 from models import User, UserRoleEnum, VerdictEnum
 from schemas import CheckListResponse, CheckResponse, CheckSummary
 from services import (
-    DETECTOR_CAPABILITIES,
     MODEL_VERSION,
-    THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
     Status,
     create_check,
+    detector_capabilities,
     detector_health,
     get_check_by_id,
     list_checks,
+    strictness_levels,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class DetectorStatusResponse(BaseModel):
 
 @router.get("/detector")
 async def get_detector_capabilities(user: User = Depends(require_any_user)):
-    return DETECTOR_CAPABILITIES
+    return detector_capabilities()
 
 
 @router.get("/detector/status", response_model=DetectorStatusResponse)
@@ -77,8 +77,8 @@ async def create_check_route(
     user: User = Depends(require_screening),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.strictness not in THRESHOLDS:
-        raise _error(400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}.")
+    if body.strictness not in strictness_levels():
+        raise _error(400, "invalid_request", f"strictness must be one of {strictness_levels()}.")
 
     answer_text = body.answer_text
     if len(answer_text) > 10000:
