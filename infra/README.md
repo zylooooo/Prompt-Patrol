@@ -28,7 +28,7 @@ One root, one state, files split by area per the
 | `ecr.tf`                            | ECR repositories, lifecycle policies, scan-on-push rule     |
 | `compute.tf`                        | ECS cluster, services, IAM, security groups, purge schedule |
 | `edge.tf`                           | ALB, VPC origin, SPA bucket, CloudFront, domain + ACM cert  |
-| `email.tf`                          | SES domain identity, DKIM/DMARC records, Auth0's SES user   |
+| `email.tf`                          | Resend DKIM/SPF records (mail. subdomain), DMARC record     |
 | `github-oidc.tf`                    | GitHub OIDC provider and the deploy role                    |
 | `tests/`                            | `terraform test` files (mock provider, run in CI)           |
 
@@ -358,13 +358,13 @@ The api refuses to start when `FRONTEND_URL` and `AUTH0_REDIRECT_URI`
 disagree on host, so keep the gap between the secret and the apply short.
 Also update the smoke test's `FRONTEND_URL` in `.github/workflows/ci.yml`.
 
-**Email.** Auth0 sends the invite and password emails through SES as
-`no-reply@prompt-patrol.com`. The IAM user `prompt-patrol-auth0-ses` may send
-only as that address. Its access key is made by hand
-(`aws iam create-access-key`) and pasted into Auth0 > Branding > Email
-Provider, so it never enters state. Rotate it the same way, then delete the
-old key. SES must be out of the sandbox before Auth0 is switched to it: the
-sandbox only delivers to verified addresses.
+**Email.** Auth0 sends the invite and password emails through Resend from
+the verified subdomain `mail.prompt-patrol.com`, so the From address must
+end in `@mail.prompt-patrol.com`. `email.tf` holds Resend's DNS records and
+the DMARC record. The Resend API key (Sending access, scoped to this domain) is
+pasted straight into Auth0 > Branding > Email Provider, so it is never in
+state. To rotate it: create a new key in Resend, paste it into Auth0, send a
+test email, then revoke the old key.
 
 ## The state bucket is not managed here
 

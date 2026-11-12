@@ -281,3 +281,7 @@ crash.*.log
 *.secret.tfvars
 # Personal AWS account reference (local only)
 infra/AWS-ACCOUNTS.md
+
+# desklib + MELD bundle: downloaded from DagsHub by apps/detector/fetch_model.py, never committed
+# (docs/desklib-meld-release.md; golden.json holds corpus text). The pin is model/desklib-meld.lock.json.
+apps/detector/model/desklib-meld/
