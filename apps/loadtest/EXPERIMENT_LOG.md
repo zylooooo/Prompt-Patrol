@@ -301,6 +301,48 @@ The control vs Phase 7 arm A (same config, 6975P-C, 0.591 s) puts the CPU effect
 - The repo's Terraform defaults are still `detector_cpu = "2048"` and threads unset; the live
   rev 28 got threads = 1 through `-var`. Set the default before the next plain apply.
 
+### Entry 9 — 2026-11-13: desklib + MELD (PP-312) plan, written before any run
+
+**Why a new test.** desklib + MELD replaced desklib on 2026-11-12 (deploy `c344507`, detector
+rev 32: 2 vCPU / 8 GB / threads = 1, Xeon 8259CL). A smoke batch on 2026-11-12 16:25Z scored
+one row every ~2.2 s (detector access log; the worker's httpx line lands within ~2 ms of each,
+so the time is inside the detector). Detector CPU sat at exactly 50% for the whole batch: one
+of two vCPU, pinned. On the same CPU model desklib was 0.779 s (Entry 8 control), so the new
+model looks ~2.8x slower, and Entry 8's 40/min headline is likely above the new capacity. The
+answers are short (trial corpus: median 13 words, 79 chars, max 86 words), so this is not a
+long-answer effect.
+
+**Hypothesis: the detector is weight-bandwidth-bound, not token-bound.** For a 13-word answer
+each check reads every weight once: desklib ~1.7 GB fp32, plus MELD ~3.8 GB. Weight bytes /
+time is similar for both (desklib 1.7 GB / 0.78 s ≈ 2.2 GB/s; desklib + MELD 5.5 GB / 2.2 s ≈
+2.5 GB/s). It also fits Phase 7 (a second thread on the same physical core added nothing) and
+Phase 9 (1 vCPU 58% slower). If true: threads on one core won't help, more physical cores
+might, and the biggest levers are software (several answers per forward pass, int8 weights).
+
+**Phases and rules** (same harness; `--model desklib-meld`; preflight now also checks the
+served model and that the session's 4 h cap outlasts the phase):
+
+| # | Config | Question | Rule |
+|---|---|---|---|
+| 10 | as live: 2 vCPU / 8 GB / 1 thread | S, C, onset/break idle and under batch; AC4 at R | baseline |
+| 10b | same runs | does S grow with answer length? (`words` tag in requests.csv) | flat within 20% from p10 to p90 length → bandwidth-bound |
+| 11 | 2 vCPU / 2 threads | threads on a bigger model | keep if S drops > 10% |
+| 12 | 4 vCPU / 8 GB, threads 2 and 4 | more cores | only if it moves AC4 from fail to pass; cost (~+$70/mo) decided after |
+
+R (user, 2026-11-13): 50% of Phase 10's under-batch break, as the README suggests. Phases 11–12
+change the detector only (`terraform apply -var …` + `aws ecs update-service --task-definition
+prompt-patrol-detector --force-new-deployment`, as in Entry 5), with each arm on the same CPU
+model where possible (Entry 7: Fargate can't pin it, so record it and run a control if it moves).
+
+**Prediction (Phase 10).** S = 2.0–2.5 s, so C ≈ 24–30/min. Single-check onset ~0.5 C and break
+~0.8 C idle; under batch both lower, since every batch row takes a slot. 504s start once ~4
+checks queue (4 × 2.2 s + overhead > 10 s), far earlier than PP-533's 15. AC4 fails at 40/min.
+Phase 11: S within 10% (rejected). Phase 12: S drops 1.5–1.8x at 4 threads (two physical
+cores' bandwidth), not 2x.
+
+**What would prove the hypothesis wrong:** S rising clearly with answer length, or Phase 11
+cutting S by more than 10%.
+
 ## Runs
 
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
@@ -341,3 +383,4 @@ The control vs Phase 7 arm A (same config, 6975P-C, 0.591 s) puts the CPU effect
 - 2026-10-25T05:53Z `20261025-054208_desklib_ramp-batch` ramp-batch desklib async **ok** p50=9916.3 p95=10019.4 err=50.0% 504=95 drain=-,-,-,-,-,- (safety abort (error rate > 50%))
 - 2026-10-25T06:58Z `20261025-060128_desklib_headline-loaded` headline-loaded desklib async **ok** p50=6727.1 p95=8539.2 err=0.0% 504=0 drain=3200s
 - 2026-10-25T07:15Z `20261025-071021_desklib_calibrate` calibrate desklib async **ok** p50=778.7 p95=888.5 err=0.0% 504=0 drain=-
+- 2026-11-12T16:58Z `20261112-165521_stub_smoke` smoke stub sync **ok** p50=69.4 p95=145.2 err=0.0% 504=0 drain=6s

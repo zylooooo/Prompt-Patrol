@@ -33,8 +33,8 @@ echo "curl $*" >>"$FAKE_ARGV_LOG"
 case "${*: -1}" in
   */latest/api/token) printf tok ;;
   */meta-data/instance-type) printf c7i.xlarge ;;
-  */api/auth/me) printf '{"user_id":"u"}\n%s' "${FAKE_ME:-200}" ;;
-  */api/detector/status) printf '{"status":"ready","model_version":"desklib-test"}\n200' ;;
+  */api/auth/me) printf '{"user_id":"u","absolute_expires_at":"%s"}\n%s' "${FAKE_EXPIRES-2099-01-01T00:00:00.000000Z}" "${FAKE_ME:-200}" ;;
+  */api/detector/status) printf '{"status":"ready","model_version":"%s"}\n200' "${FAKE_MODEL:-desklib-meld-ensemble-v1}" ;;
   *) exit 7 ;;
 esac
 EOF
@@ -112,13 +112,30 @@ has '"status_reason": "session invalid, log in again"' "$meta" && has '"status":
   ok "preflight: session invalid" || bad "preflight: session invalid (rc=$rc: $out)"
 grep -qs make_batch_csv "$T/argv.log" && bad "preflight failure still ran the harness" || ok "preflight failure stops before k6"
 
+run_case FAKE_EXPIRES="$(date -u -d '+10 min' +%FT%TZ)" -- ramp-idle --service-time 1 --target aws
+{ has '"status": "aborted"' "$meta" && has 'phase needs ~' "$meta" && [[ $rc -eq 1 ]]; } &&
+  ok "preflight: session expires mid-phase" || bad "preflight: session expires mid-phase (rc=$rc: $out | $meta)"
+
+run_case FAKE_EXPIRES=garbage -- ramp-idle --service-time 1 --target aws
+has '"status_reason": "session expiry unreadable"' "$meta" && ok "preflight: expiry unreadable" || bad "preflight: expiry unreadable (rc=$rc: $out)"
+
+run_case FAKE_EXPIRES= -- ramp-idle --service-time 1 --target aws
+has '"status_reason": "session expiry unreadable"' "$meta" && ok "preflight: expiry missing" || bad "preflight: expiry missing (rc=$rc: $out)"
+
+run_case FAKE_MODEL=desklib-academic-lora-v1 -- ramp-idle --service-time 1 --target aws
+has '"status_reason": "detector serves desklib-academic-lora-v1, not desklib-meld-ensemble-v1"' "$meta" &&
+  ok "preflight: wrong model served" || bad "preflight: wrong model served (rc=$rc: $out)"
+
+run_case -- ramp-idle --service-time 1 --target aws --model desklib
+[[ $rc -eq 1 ]] && has "only desklib-meld" "$out" && ok "aws rejects the retired desklib" || bad "aws rejects the retired desklib (rc=$rc: $out)"
+
 run_case FAKE_DEPTH=3 -- ramp-idle --service-time 1 --target aws
 has '"status_reason": "batches queue not empty"' "$meta" && ok "preflight: queue not empty" || bad "preflight: queue not empty (rc=$rc: $out)"
 
 printf 'abc123\ndirty\n' >"$LT/GIT_SHA"  # what pack puts in the tarball; the copy has no .git
 run_case -- ramp-idle --service-time 1 --target aws
 { [[ $rc -eq 0 ]] && has '"status": "ok"' "$meta" && has '"target": "aws"' "$meta" &&
-  has '"model_version": "desklib-test"' "$meta" && has '"worker_row_failures": 2' "$meta" &&
+  has '"model_version": "desklib-meld-ensemble-v1"' "$meta" && has '"worker_row_failures": 2' "$meta" &&
   has '"git_sha": "abc123"' "$meta" && has '"git_dirty": true' "$meta" &&
   has '"instance_type": "c7i.xlarge"' "$meta" && has '"region": "ap-southeast-1"' "$meta" &&
   has '"limits": {"detector": {"cpu": 2048, "memory": 8192}}' "$meta" &&

@@ -1,0 +1,2 @@
+batch_id,submit_epoch_ms,submit_ms,drain_end_epoch_ms,completed,failed,pending_at_end
+5c90f2af-d987-4eef-bd3f-7ee0e01e70cb,1794502613996,616.4,1794502619596,20,0,0
