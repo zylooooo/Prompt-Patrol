@@ -41,7 +41,7 @@ export default function ConfirmDeleteDialog({
         </p>
         <p>
           Their past records stay intact, and their email address is released,
-          so they can be provisioned again later as a new account if they ever
+          so they can be set up again later as a new account if they ever
           return.
         </p>
         <p>

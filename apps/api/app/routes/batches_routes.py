@@ -9,12 +9,12 @@ from db import get_db
 from models import User, UserRoleEnum
 from schemas import BatchProgressResponse, BatchResponse
 from services import (
-    THRESHOLDS,
     cancel_batch,
     create_batch,
     detector_capabilities,
     generate_upload_url,
     get_batch_progress,
+    strictness_levels,
 )
 
 router = APIRouter(prefix="/api", tags=["batches"])
@@ -62,10 +62,10 @@ async def create_batch_route(
     user: User = Depends(require_screening),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.strictness not in THRESHOLDS:
+    if body.strictness not in strictness_levels():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"strictness must be one of {sorted(THRESHOLDS)}.",
+            detail=f"strictness must be one of {strictness_levels()}.",
         )
     if not body.upload_key.startswith(f"batches/{user.id}/"):
         raise HTTPException(

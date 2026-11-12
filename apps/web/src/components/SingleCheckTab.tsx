@@ -7,16 +7,38 @@ import StrictnessField from "./StrictnessField";
 import { SECTION_LABEL } from "./ui/section-label";
 import { useCheckAnswer } from "../hooks/useChecks";
 import { ANSWER_MIN_CHARS, type Strictness } from "../types";
+import { useAuth } from "../hooks/useAuth";
+import {
+  clearCheckDraft,
+  readCheckDraft,
+  writeCheckDraft,
+  type CheckDraft,
+} from "../lib/checkDraft";
 
 const FIELD_CLASS =
   "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
 export default function SingleCheckTab() {
-  const [answer, setAnswer] = useState("");
-  const [context, setContext] = useState("");
-  const [strictness, setStrictness] = useState<Strictness>("standard");
+  const userId = useAuth().user?.id ?? null;
+  const [initial] = useState(() => (userId ? readCheckDraft(userId) : null));
+  const [answer, setAnswer] = useState(initial?.answer ?? "");
+  const [context, setContext] = useState(initial?.question ?? "");
+  const [strictness, setStrictness] = useState<Strictness>(
+    initial?.strictness ?? "standard",
+  );
   const check = useCheckAnswer();
   const { showToast } = useToast();
+
+  // Keeps the unsent text when the user leaves the page via the sidebar.
+  function saveDraft(next: Partial<CheckDraft>) {
+    if (userId)
+      writeCheckDraft(userId, {
+        answer,
+        question: context,
+        strictness,
+        ...next,
+      });
+  }
 
   const words = wordCount(answer);
   const tooShort = answer.trim().length < ANSWER_MIN_CHARS;
@@ -29,13 +51,20 @@ export default function SingleCheckTab() {
         questionText: context.trim() || undefined,
         strictness,
       },
-      { onSuccess: () => showToast("Saved to history") },
+      {
+        onSuccess: () => {
+          // It's in history now, so the next visit starts with an empty form.
+          clearCheckDraft();
+          showToast("Saved to history.");
+        },
+      },
     );
   }
 
   function onClear() {
     setAnswer("");
     setContext("");
+    clearCheckDraft();
     check.reset();
   }
 
@@ -59,7 +88,10 @@ export default function SingleCheckTab() {
         <textarea
           id="answer"
           value={answer}
-          onChange={(e) => setAnswer(e.target.value)}
+          onChange={(e) => {
+            setAnswer(e.target.value);
+            saveDraft({ answer: e.target.value });
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
               e.preventDefault();
@@ -67,7 +99,7 @@ export default function SingleCheckTab() {
             }
           }}
           rows={10}
-          placeholder="Paste the student answer to screen."
+          placeholder="Paste the student answer to check."
           className={`mt-3 resize-none px-4 py-3 leading-relaxed ${FIELD_CLASS}`}
         />
 
@@ -78,14 +110,23 @@ export default function SingleCheckTab() {
           <input
             id="context"
             value={context}
-            onChange={(e) => setContext(e.target.value)}
+            onChange={(e) => {
+              setContext(e.target.value);
+              saveDraft({ question: e.target.value });
+            }}
             placeholder="Paste the question (optional)"
             className={`mt-3 h-11 px-3.5 ${FIELD_CLASS}`}
           />
         </div>
 
         <div className="mt-6">
-          <StrictnessField value={strictness} onChange={setStrictness} />
+          <StrictnessField
+            value={strictness}
+            onChange={(value) => {
+              setStrictness(value);
+              saveDraft({ strictness: value });
+            }}
+          />
         </div>
 
         <div className="mt-7 flex items-center gap-3">

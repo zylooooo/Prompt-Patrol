@@ -154,7 +154,7 @@ describe("ProtectedRoute", () => {
     expect(screen.queryByTestId("login")).toBeNull();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Can't reach Prompt Patrol");
-    expect(alert.textContent).toContain("have not been signed out");
+    expect(alert.textContent).toContain("haven't been signed out");
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(refetch).toHaveBeenCalledTimes(1);
@@ -183,7 +183,7 @@ describe("ProtectedRoute", () => {
 
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Prompt Patrol is having a problem");
-    expect(alert.textContent).toContain("have not been signed out");
+    expect(alert.textContent).toContain("haven't been signed out");
   });
 });
 

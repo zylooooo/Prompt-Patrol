@@ -13,15 +13,15 @@ const LABEL_CLASS = `mb-2.5 block ${SECTION_LABEL}`;
 
 const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   not_provisioned:
-    "This account isn't set up for Prompt Patrol yet. Ask an admin to provision your account, then try again.",
+    "This account isn't set up for Prompt Patrol yet. Ask your Prompt Patrol administrator to set it up, then try again.",
   sign_in_cancelled:
     "Sign-in was cancelled, so you aren't signed in. Use the button below when you're ready to try again.",
   sign_in_failed:
     "We couldn't complete sign-in. This usually means the sign-in page was left open too long. Start again below.",
   deactivated:
-    "Your access to Prompt Patrol has been turned off. If you think this is a mistake, contact your course administrator.",
+    "Your access to Prompt Patrol has been turned off. If you think this is a mistake, contact your Prompt Patrol administrator.",
   deleted:
-    "This account has been removed from Prompt Patrol. If you need access again, ask an admin to set you up.",
+    "This account has been removed from Prompt Patrol. If you need access again, ask your Prompt Patrol administrator to set you up.",
   session_expired:
     "You were signed out after 30 minutes without activity. Sign in again to pick up where you left off.",
   session_ended:
@@ -31,9 +31,21 @@ const REDIRECT_ERROR_MESSAGES: Record<string, string> = {
   session_unknown:
     "We couldn't recognise your session, so we signed you out to be safe. Signing in again will fix it.",
   account_deactivated:
-    "Your access to Prompt Patrol was turned off while you were signed in, so we signed you out. Contact your course administrator if you think this is a mistake.",
+    "Your access to Prompt Patrol was turned off while you were signed in, so we signed you out. Contact your Prompt Patrol administrator if you think this is a mistake.",
   signed_out: "You're signed out. Sign in again to continue.",
 };
+
+// Routine session ends, not failures: shown as a calm notice, not an error.
+const NOTICE_CODES = new Set([
+  "session_expired",
+  "session_ended",
+  "session_revoked",
+  "session_unknown",
+  "signed_out",
+]);
+
+const NOTICE_CLASS =
+  "mb-5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm leading-5 text-muted-foreground";
 
 function LoginHero() {
   return (
@@ -60,7 +72,7 @@ export default function LoginPage() {
   const redirectError = searchParams.get("error");
   const redirectErrorMessage = redirectError
     ? (REDIRECT_ERROR_MESSAGES[redirectError] ??
-      "We couldn't sign you in, and we don't have a more specific reason to give you. Try again, and tell your administrator if it keeps happening.")
+      "We couldn't sign you in, and we don't have a more specific reason to give you. Try again, and tell your Prompt Patrol administrator if it keeps happening.")
     : null;
 
   const [signedOut] = useState(() =>
@@ -76,27 +88,29 @@ export default function LoginPage() {
           <header className="mb-8">
             <Wordmark className="mb-6 h-14 w-auto text-foreground lg:hidden" />
             <p className="mb-3 text-xs font-bold tracking-wider text-accent uppercase">
-              AI-Answer Triage for Instructors
+              AI-answer triage for instructors
             </p>
             <h2 className="text-3xl leading-tight font-bold tracking-tight text-foreground">
               Sign in to Prompt Patrol
             </h2>
           </header>
 
-          {redirectErrorMessage && (
-            <div
-              role="alert"
-              className="mb-5 rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
-            >
-              {redirectErrorMessage}
-            </div>
-          )}
+          {redirectErrorMessage &&
+            (NOTICE_CODES.has(redirectError ?? "") ? (
+              <div role="status" className={NOTICE_CLASS}>
+                {redirectErrorMessage}
+              </div>
+            ) : (
+              <div
+                role="alert"
+                className="mb-5 rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm leading-5 text-danger"
+              >
+                {redirectErrorMessage}
+              </div>
+            ))}
 
           {signedOut && (
-            <div
-              role="status"
-              className="mb-5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm leading-5 text-muted-foreground"
-            >
+            <div role="status" className={NOTICE_CLASS}>
               You've been signed out. Sign in again whenever you're ready.
             </div>
           )}

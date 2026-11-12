@@ -286,3 +286,7 @@ infra/AWS-ACCOUNTS.md
 # base model staged for the base image (~3.8GB, gated upstream)
 apps/detector/model/desklib-meld/
 apps/detector/model/meld-base/
+
+# desklib + MELD bundle: downloaded from DagsHub by apps/detector/fetch_model.py, never committed
+# (docs/desklib-meld-release.md; golden.json holds corpus text). The pin is model/desklib-meld.lock.json.
+apps/detector/model/desklib-meld/

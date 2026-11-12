@@ -9,7 +9,7 @@ import ResultPanel from "./ResultPanel";
 import Pagination from "./ui/Pagination";
 import { SECTION_LABEL } from "./ui/section-label";
 import { truncate } from "../lib/format";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BatchRow, BatchRun } from "../types";
 import { downloadCsv, serializeResultsCsv } from "../lib/csv";
 import { isUncalibrated, UNCALIBRATED_NOTICE } from "../lib/detectorNotice";
@@ -58,8 +58,12 @@ export default function BatchResultsTable({
   // live in-progress view or a historical entry opened cold from
   // /history/{id}, which has no live progress query of its own.
   const progress = useBatchProgress(run.id);
-  const failures = progress.data?.failures ?? run.failures ?? [];
-  const runWithFailures = useMemo(() => ({ ...run, failures }), [run, failures]);
+  const failuresData = progress.data?.failures ?? run.failures;
+  const failures = useMemo(() => failuresData ?? [], [failuresData]);
+  const runWithFailures = useMemo(
+    () => ({ ...run, failures }),
+    [run, failures],
+  );
 
   // A new batch (or a switch between live/final ordering) starts back on
   // page 1 - staying on page 4 of the previous run's rows would show stale
@@ -93,8 +97,48 @@ export default function BatchResultsTable({
     downloadCsv(`${base}-results.csv`, serializeResultsCsv(runWithFailures));
   }
 
-  const toggle = (checkId: string) =>
+  // The detail renders below the table, out of view on a long page, so
+  // opening a row moves focus (and the viewport) to it, and closing returns
+  // focus to that row's View button. Refs, not state: they only steer the
+  // effect below and must not trigger renders of their own.
+  const tableRef = useRef<HTMLDivElement>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  // "detail", or the checkId whose View button gets focus back.
+  const focusTarget = useRef<string | null>(null);
+
+  const toggle = (checkId: string) => {
+    focusTarget.current = expanded === checkId ? null : "detail";
     setExpanded((current) => (current === checkId ? null : checkId));
+  };
+
+  function backToResults() {
+    if (!expanded) return;
+    const index = rows.findIndex((row) => row.checkId === expanded);
+    if (index >= 0) setPage(Math.floor(index / PAGE_SIZE));
+    focusTarget.current = expanded;
+    setExpanded(null);
+  }
+
+  useEffect(() => {
+    const target = focusTarget.current;
+    focusTarget.current = null;
+    if (target === "detail") {
+      const heading = detailHeadingRef.current;
+      if (!heading) return;
+      heading.focus({ preventScroll: true });
+      const reduce = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      heading.scrollIntoView({
+        behavior: reduce ? "auto" : "smooth",
+        block: "start",
+      });
+    } else if (target) {
+      tableRef.current
+        ?.querySelector<HTMLElement>(`[data-check-id="${target}"] button`)
+        ?.focus();
+    }
+  }, [expanded, currentPage]);
 
   const columns: DataTableColumn<BatchRow>[] = [
     {
@@ -130,7 +174,7 @@ export default function BatchResultsTable({
     },
     {
       id: "verdict",
-      header: "Verdict",
+      header: "Result",
       width: "minmax(0,0.8fr)",
       cell: (row) => <VerdictChip verdict={row.verdict} />,
     },
@@ -140,7 +184,7 @@ export default function BatchResultsTable({
       width: TABLE_ACTION_COLUMN_WIDTH,
       align: "right",
       cell: (row) => (
-        <span onClick={(e) => e.stopPropagation()}>
+        <span data-check-id={row.checkId} onClick={(e) => e.stopPropagation()}>
           <RowAction onClick={() => toggle(row.checkId)}>
             {expanded === row.checkId ? "Hide" : "View"}
           </RowAction>
@@ -202,7 +246,7 @@ export default function BatchResultsTable({
         </p>
       )}
 
-      <div className="mt-5">
+      <div ref={tableRef} className="mt-5">
         <DataTable<BatchRow>
           columns={columns}
           rows={visibleRows}
@@ -228,28 +272,51 @@ export default function BatchResultsTable({
       </div>
 
       {expandedRow && (
-        <div className="mt-4 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <section className="rounded-xl bg-surface p-7 shadow-md">
-            <p className={SECTION_LABEL}>Student answer</p>
-            <p className="mt-3 text-sm leading-relaxed text-foreground">
-              {expandedRow.answerText ??
-                "The answer was not retained for this check."}
-            </p>
-            {expandedRow.questionText && (
-              <>
-                <p className={`mt-6 ${SECTION_LABEL}`}>Question context</p>
-                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  {expandedRow.questionText}
-                </p>
-              </>
-            )}
-          </section>
-          <ResultPanel
-            status="success"
-            result={expandedRow}
-            showSavedLink={false}
-          />
-        </div>
+        <section
+          aria-labelledby="batch-row-detail-heading"
+          className="mt-6 scroll-mt-6"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") backToResults();
+          }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2
+              id="batch-row-detail-heading"
+              ref={detailHeadingRef}
+              tabIndex={-1}
+              className="text-base font-medium text-foreground outline-hidden"
+            >
+              {expandedRow.externalRef
+                ? `Details for ${expandedRow.externalRef}`
+                : "Answer details"}
+            </h2>
+            <Button variant="secondary" onClick={backToResults}>
+              Back to results
+            </Button>
+          </div>
+          <div className="mt-4 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <section className="rounded-xl bg-surface p-7 shadow-md">
+              <p className={SECTION_LABEL}>Student answer</p>
+              <p className="mt-3 text-sm leading-relaxed text-foreground">
+                {expandedRow.answerText ??
+                  "The answer was not retained for this check."}
+              </p>
+              {expandedRow.questionText && (
+                <>
+                  <p className={`mt-6 ${SECTION_LABEL}`}>Question context</p>
+                  <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                    {expandedRow.questionText}
+                  </p>
+                </>
+              )}
+            </section>
+            <ResultPanel
+              status="success"
+              result={expandedRow}
+              showSavedLink={false}
+            />
+          </div>
+        </section>
       )}
 
       <div className="mt-5 flex items-center justify-end">

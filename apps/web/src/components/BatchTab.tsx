@@ -1,3 +1,4 @@
+import { describeError } from "../lib/errorText";
 import { FileText, Trash2 } from "lucide-react";
 import Button from "./ui/Button";
 import TextButton from "./ui/TextButton";
@@ -12,11 +13,21 @@ import {
   useBatchProgress,
 } from "../hooks/useBatches";
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "../hooks/useAuth";
+import {
+  clearBatchDraft,
+  readBatchDraft,
+  writeBatchDraft,
+} from "../lib/checkDraft";
 import BatchResultsTable from "./BatchResultsTable";
 import { MAX_ROWS, parseAnswersCsv, parseHeaderAndPreview } from "../lib/csv";
 import type { BatchRun, ColumnMapping, Strictness } from "../types";
 
-const CANONICAL_FIELDS = ["external_ref", "answer_text", "question_text"] as const;
+const CANONICAL_FIELDS = [
+  "external_ref",
+  "answer_text",
+  "question_text",
+] as const;
 type CanonicalField = (typeof CANONICAL_FIELDS)[number];
 const CANONICAL_SET: Set<string> = new Set(CANONICAL_FIELDS);
 
@@ -30,20 +41,34 @@ const ALERT_CLASS =
   "rounded-md bg-danger-soft px-4 py-3 text-[13px] text-danger";
 
 export default function BatchTab() {
-  const [rawText, setRawText] = useState<string | null>(null);
-  const [originalFile, setOriginalFile] = useState<File | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [needsMapping, setNeedsMapping] = useState(false);
-  const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<string[]>([]);
-  const [parsedCount, setParsedCount] = useState<number | null>(null);
+  const userId = useAuth().user?.id ?? null;
+  const [draft] = useState(() => (userId ? readBatchDraft(userId) : null));
+  const [rawText, setRawText] = useState<string | null>(draft?.rawText ?? null);
+  const [originalFile, setOriginalFile] = useState<File | null>(
+    draft?.file ?? null,
+  );
+  const [fileName, setFileName] = useState<string | null>(
+    draft?.fileName ?? null,
+  );
+  const [headers, setHeaders] = useState<string[]>(draft?.headers ?? []);
+  const [needsMapping, setNeedsMapping] = useState(
+    draft?.needsMapping ?? false,
+  );
+  const [mapping, setMapping] = useState<Record<string, string>>(
+    draft?.mapping ?? {},
+  );
+  const [errors, setErrors] = useState<string[]>(draft?.errors ?? []);
+  const [parsedCount, setParsedCount] = useState<number | null>(
+    draft?.parsedCount ?? null,
+  );
   const activeBatch = useActiveBatch();
   const [batchId, setBatchId] = useState<string | null>(
     () => activeBatch.active?.batchId ?? null,
   );
   const [dragging, setDragging] = useState(false);
-  const [strictness, setStrictness] = useState<Strictness>("standard");
+  const [strictness, setStrictness] = useState<Strictness>(
+    draft?.strictness ?? "standard",
+  );
   const [errorsExpanded, setErrorsExpanded] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -87,6 +112,39 @@ export default function BatchTab() {
   useEffect(() => {
     if (batchId && (done || progress.isError)) activeBatch.clear();
   }, [batchId, done, progress.isError, activeBatch]);
+
+  // Keeps a picked-but-not-started CSV when the user leaves the page via the
+  // sidebar. Once the batch starts it's tracked by useActiveBatch instead.
+  useEffect(() => {
+    if (!userId) return;
+    if (!batchId && rawText !== null && originalFile && fileName) {
+      writeBatchDraft(userId, {
+        rawText,
+        file: originalFile,
+        fileName,
+        headers,
+        needsMapping,
+        mapping,
+        errors,
+        parsedCount,
+        strictness,
+      });
+    } else {
+      clearBatchDraft();
+    }
+  }, [
+    userId,
+    batchId,
+    rawText,
+    originalFile,
+    fileName,
+    headers,
+    needsMapping,
+    mapping,
+    errors,
+    parsedCount,
+    strictness,
+  ]);
 
   function resetFileState() {
     setRawText(null);
@@ -137,7 +195,7 @@ export default function BatchTab() {
       }
     } catch {
       setErrors([
-        "That file could not be read. Try exporting it again as UTF-8 CSV.",
+        "We couldn't read that file. Export it again as a UTF-8 CSV and upload it.",
       ]);
       resetFileState();
     }
@@ -180,7 +238,7 @@ export default function BatchTab() {
             fileName: info.fileName,
             rowTotal: info.rowTotal,
           });
-          showToast("Batch submitted. Watching progress…");
+          showToast("Batch started. Progress is shown below.");
         },
       },
     );
@@ -279,6 +337,12 @@ export default function BatchTab() {
 
         {shownErrors.length > 0 && (
           <div className={`mt-4 ${ALERT_CLASS}`} role="alert">
+            {rawText && !!parsedCount && (
+              <p className="mb-1 font-medium">
+                These rows can't be checked and will be skipped. Fix them in
+                your file and upload it again to include them.
+              </p>
+            )}
             {shownErrors.map((err) => (
               <p key={err} className="leading-relaxed">
                 {err}
@@ -385,7 +449,7 @@ export default function BatchTab() {
                 <>
                   <div className="flex items-center justify-between gap-4 text-[13px] text-muted-foreground">
                     <span>
-                      Screening in progress…{" "}
+                      Checking answers…{" "}
                       {label && (
                         <span className="text-foreground">{label}</span>
                       )}
@@ -433,7 +497,7 @@ export default function BatchTab() {
           {batchId && !done && progress.data
             ? `Checked ${Math.floor(((progress.data.completed + progress.data.failed) / progress.data.rowTotal) * 10) * 10} percent`
             : resultEntry
-              ? `Batch complete. ${resultEntry.counts.ai_generated} flagged, ${resultEntry.counts.uncertain} uncertain, ${resultEntry.counts.human_written} likely human.` +
+              ? `Batch complete. ${resultEntry.counts.ai_generated} flagged, ${resultEntry.counts.uncertain} uncertain, ${resultEntry.counts.human_written} likely human-written.` +
                 (resultEntry.failures?.length
                   ? ` ${resultEntry.failures.length} rows could not be checked.`
                   : "")
@@ -442,7 +506,10 @@ export default function BatchTab() {
 
         {createBatch.isError && (
           <p className={`mt-4 ${ALERT_CLASS}`} role="alert">
-            The batch could not be submitted. Nothing was saved. Try again.
+            {describeError(
+              createBatch.error,
+              "We couldn't start the batch. Nothing was saved. Try again.",
+            )}
           </p>
         )}
       </section>

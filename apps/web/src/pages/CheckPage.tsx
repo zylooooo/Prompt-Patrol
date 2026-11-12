@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useAuth } from "../hooks/useAuth";
 import BatchTab from "../components/BatchTab";
 import { useSearchParams } from "react-router-dom";
@@ -14,25 +14,49 @@ import ModelStatusBadge from "../components/ModelStatusBadge";
 type TabId = "single" | "batch";
 
 const CHECK_TABS: TabOption<TabId>[] = [
-  { value: "single", label: "Single Answer" },
-  { value: "batch", label: "Batch Upload (CSV)" },
+  { value: "single", label: "Single answer" },
+  { value: "batch", label: "Batch (CSV)" },
 ];
 
 export default function CheckPage() {
-  usePageTitle("Screen New Answers");
+  usePageTitle("Check answers");
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<TabId>(
     searchParams.get("tab") === "batch" ? "batch" : "single",
   );
+  // Panels stay mounted once opened and are only hidden, so switching tabs
+  // keeps a half-typed answer, a picked CSV and any result on screen. Nothing
+  // is written to storage: it lives exactly as long as this page does.
+  const [opened, setOpened] = useState<ReadonlySet<TabId>>(
+    () => new Set([tab]),
+  );
+
+  function selectTab(next: TabId) {
+    setTab(next);
+    setOpened((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
+  }
+
+  const panel = (id: TabId, content: ReactNode) =>
+    opened.has(id) && (
+      <PageScroll
+        className="mt-6"
+        role="tabpanel"
+        id={`panel-${id}`}
+        aria-labelledby={`tab-${id}`}
+        hidden={tab !== id}
+      >
+        {content}
+      </PageScroll>
+    );
 
   const unassigned = !user || !hasScreeningAccess(user);
 
   return (
     <Page>
       <PageHeader
-        title="Screen New Answers"
-        subtitle="Screen short answers for signs of AI generation."
+        title="Check answers"
+        subtitle="Check short answers and flag the ones worth a closer look."
         actions={unassigned ? undefined : <ModelStatusBadge />}
       />
 
@@ -44,18 +68,12 @@ export default function CheckPage() {
             <Tabs
               tabs={CHECK_TABS}
               value={tab}
-              onChange={setTab}
+              onChange={selectTab}
               ariaLabel="Check mode"
             />
           </div>
-          <PageScroll
-            className="mt-6"
-            role="tabpanel"
-            id={`panel-${tab}`}
-            aria-labelledby={`tab-${tab}`}
-          >
-            {tab === "single" ? <SingleCheckTab /> : <BatchTab />}
-          </PageScroll>
+          {panel("single", <SingleCheckTab />)}
+          {panel("batch", <BatchTab />)}
         </>
       )}
     </Page>

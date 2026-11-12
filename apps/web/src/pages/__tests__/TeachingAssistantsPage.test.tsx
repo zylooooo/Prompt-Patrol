@@ -260,7 +260,7 @@ describe("TeachingAssistantsPage - adding and removing", () => {
 
   it("shows the server's refusal under the email field", async () => {
     const refusal =
-      "This email can't be added. Contact the root administrator.";
+      "This email can't be added to your team. Contact your Prompt Patrol administrator.";
     const { ApiError } = await import("../../api/client");
     const mutateAsync = vi.fn().mockRejectedValue(new ApiError(409, refusal));
     addMock.mockReturnValue({ mutateAsync, isPending: false });

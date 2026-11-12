@@ -110,7 +110,7 @@ describe("parseAnswersCsv — whole-file rejections", () => {
   it("reports an empty file", () => {
     expect(parseAnswersCsv("")).toEqual({
       rows: [],
-      errors: ["The file is empty."],
+      errors: ["The file is empty. Add a header row and some answers, then upload it again."],
     });
   });
 
@@ -119,12 +119,12 @@ describe("parseAnswersCsv — whole-file rejections", () => {
     // batch tab rendered as nothing whatsoever — no chip, no alert.
     const { rows, errors } = parseAnswersCsv("external_ref,answer_text");
     expect(rows).toEqual([]);
-    expect(errors).toEqual(["The file has a header row but no answers."]);
+    expect(errors).toEqual(["The file has a header row but no answers. Add some answers, then upload it again."]);
   });
 
   it("treats a file of only blank lines after the header the same way", () => {
     const { errors } = parseAnswersCsv("external_ref,answer_text\n\n\n");
-    expect(errors).toEqual(["The file has a header row but no answers."]);
+    expect(errors).toEqual(["The file has a header row but no answers. Add some answers, then upload it again."]);
   });
 
   it("reports an unterminated quote with the line it opened on", () => {
@@ -138,8 +138,8 @@ describe("parseAnswersCsv — whole-file rejections", () => {
     const { rows, errors } = parseAnswersCsv("question_text\nQ");
     expect(rows).toEqual([]);
     expect(errors).toEqual([
-      "Missing required column: external_ref",
-      "Missing required column: answer_text",
+      "The file needs an external_ref column (student reference). Add one, or map one of your columns to it.",
+      "The file needs an answer_text column (answer). Add one, or map one of your columns to it.",
     ]);
   });
 
@@ -181,7 +181,7 @@ describe("parseAnswersCsv — per-row validation", () => {
       ].join("\n"),
     );
     expect(rows.map((r) => r.externalRef)).toEqual(["A1", "A3"]);
-    expect(errors).toEqual(["Line 3: external_ref is empty."]);
+    expect(errors).toEqual(["Line 3: the student reference is empty."]);
   });
 
   it("keeps line numbers accurate across a multi-line quoted field", () => {
@@ -195,7 +195,7 @@ describe("parseAnswersCsv — per-row validation", () => {
         `,${answer()}`,
       ].join("\n"),
     );
-    expect(errors).toEqual(["Line 5: external_ref is empty."]);
+    expect(errors).toEqual(["Line 5: the student reference is empty."]);
   });
 
   it("keeps line numbers accurate across CRLF and blank lines", () => {
@@ -203,19 +203,19 @@ describe("parseAnswersCsv — per-row validation", () => {
       parseAnswersCsv(
         `external_ref,answer_text\r\nA1,${answer()}\r\n,${answer()}`,
       ).errors,
-    ).toEqual(["Line 3: external_ref is empty."]);
+    ).toEqual(["Line 3: the student reference is empty."]);
 
     expect(
       parseAnswersCsv(
         `external_ref,answer_text\nA1,${answer()}\n\n,${answer()}`,
       ).errors,
-    ).toEqual(["Line 4: external_ref is empty."]);
+    ).toEqual(["Line 4: the student reference is empty."]);
   });
 
   it("rejects a row with fewer fields than the header", () => {
     const { rows, errors } = parseAnswersCsv("external_ref,answer_text\nA1");
     expect(rows).toEqual([]);
-    expect(errors).toEqual(["Line 2: answer_text is empty."]);
+    expect(errors).toEqual(["Line 2: the answer is empty."]);
   });
 
   it("treats a whitespace-only field as empty", () => {
@@ -223,7 +223,7 @@ describe("parseAnswersCsv — per-row validation", () => {
       `external_ref,answer_text\nA1,"   "`,
     );
     expect(rows).toEqual([]);
-    expect(errors[0]).toContain("answer_text is empty");
+    expect(errors[0]).toContain("the answer is empty");
   });
 
   it("trims before validating, so padding cannot smuggle a value past a limit", () => {

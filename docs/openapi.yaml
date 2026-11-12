@@ -18,6 +18,19 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.36.0 Strictness is behind a server flag, `STRICTNESS_ENABLED`, off by
+#          default. Off, GET /api/detector lists only `standard` in
+#          `strictness_levels`, and POST /api/checks / POST /api/batches
+#          return `400` for any other level. The SPA hides the strictness
+#          picker and the result's strictness row when one level is offered.
+#          No schema change: the `Strictness` enum keeps all three values, and
+#          stored checks keep their `strictness_applied`. See DECISION LOG
+#          [0.36.0].
+#   0.35.0 The Auth0 Post-Login Action that clears
+#          `app_metadata.pending_activation` (planned in [0.10.0], never
+#          built) now exists, so password-reset emails use reset copy
+#          instead of invite copy. Auth0 dashboard only. No code, request or
+#          response shape changes. See DECISION LOG [0.35.0].
 #   0.34.0 Check history retention: a daily job hard-deletes checks older
 #          than 90 days, and each batch older than 90 days together with all
 #          of its checks and row failures. Afterwards GET /api/checks/{check_id}
@@ -371,7 +384,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.31.0
+  version: 0.36.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -581,6 +594,11 @@ info:
 
     Target FPRs are provisional pending E2/E3 calibration results — the enum
     is stable, the numbers behind it are not.
+
+    Only `standard` (1% FPR) has a fitted threshold today, so the server
+    offers only `standard` until the `STRICTNESS_ENABLED` flag is turned on:
+    read the levels from `GET /api/detector` `strictness_levels`, never a
+    hardcoded list. See DECISION LOG [0.36.0].
 
     A raw threshold from the client would defeat this entirely: score scales
     are model-specific, so a stored `0.5` means something different after every
@@ -3284,6 +3302,51 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.36.0] Strictness is behind a feature flag until it is calibrated.
+#
+#   PROBLEM. Only the served detector's 1% FPR threshold has been fitted.
+#   With DETECTOR_THRESHOLD set, all three levels map to that one value, so
+#   the picker offered a choice that changed nothing.
+#   DECISION. A server env flag, `STRICTNESS_ENABLED` (default off), drives
+#   both sides through the existing capability flag: off, `strictness_levels`
+#   lists only `standard` and the SPA hides any choice with fewer than two
+#   options. Turning it on needs no frontend release. A client that still
+#   sends `lenient`/`strict` gets `400`, same as any level not on offer,
+#   instead of being silently remapped to `standard`, so a stored
+#   `strictness_applied` always matches what was asked for.
+#   UNCHANGED. The `Strictness` enum, the threshold table, and the Worker:
+#   batch rows queued with another level before the flag went off still
+#   score at their own level.
+#   REJECTED. A separate `VITE_` build flag in the SPA: two switches that can
+#   disagree, and turning it on would need a frontend rebuild.
+#
+# [0.35.0] Reset emails said "Set up your account": the [0.10.0] flag was
+#          never cleared.
+#
+#   PROBLEM. [0.10.0] has `invite_user` set `app_metadata.pending_activation`
+#   and the Change Password email template branch on it, with a Post-Login
+#   Action clearing it on first sign-in. That Action was left "NOT DONE YET"
+#   and never built, so the flag stayed `true` for every user and every
+#   password reset was sent the invite copy.
+#   DECISION. Built it as [0.10.0] describes: a custom Action
+#   `clear-pending-activation` (Login / Post Login, Node 22), bound in the
+#   Post Login flow, running
+#   `api.user.setAppMetadata('pending_activation', null)` when the flag is
+#   set (`null` deletes the key; dashboard/Management API metadata updates
+#   merge, so `{}` would not). Dashboard configuration only, not in this
+#   repo, same as the template itself. The 6 existing users who had already
+#   signed in were backfilled by hand; users who have never signed in keep
+#   the flag on purpose.
+#   KNOWN EDGE. Someone who sets their password but never signs in still
+#   gets invite copy on a later reset. Accepted: they have not finished
+#   activating.
+#   REJECTED. A Post Change Password Action would clear the flag at the
+#   exact moment of activation, but that trigger cannot write
+#   `app_metadata` without calling the Management API, which means storing
+#   the M2M secret in the Action. Post Login needs no secret. Branching the
+#   template on login count instead of a flag doesn't work either: it isn't
+#   an Auth0 email template variable.
 #
 # [0.34.0] Check history is hard-deleted after 90 days.
 #

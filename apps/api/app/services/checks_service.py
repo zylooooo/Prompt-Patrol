@@ -49,6 +49,16 @@ ABSTENTION_BAND = float(_ENV_BAND) if _ENV_BAND else UNCALIBRATED_ABSTENTION_BAN
 MIN_ANSWER_WORDS = 10
 
 
+# Feature flag: off until per-level thresholds are fitted (see above). Off, only "standard" is offered
+# (GET /api/detector) and accepted (POST checks/batches); the SPA hides the picker when one level is
+# left. STRICTNESS_ENABLED=true brings all three back with no frontend release.
+STRICTNESS_ENABLED = os.getenv("STRICTNESS_ENABLED", "false").lower() == "true"
+
+
+def strictness_levels() -> list[str]:
+    return list(TARGET_FPR) if STRICTNESS_ENABLED else ["standard"]
+
+
 def detector_capabilities() -> dict:
     """What GET /api/detector returns. The model and calibration are the ones the detector last reported (see
     detector_client._remember), so they name what is actually running."""
@@ -58,13 +68,12 @@ def detector_capabilities() -> dict:
         "min_answer_chars": 10,
         "max_answer_chars": 10000,
         "max_tokens_scored": 512,
-        "strictness_levels": [{"level": level, "target_fpr": fpr} for level, fpr in TARGET_FPR.items()],
+        "strictness_levels": [{"level": level, "target_fpr": TARGET_FPR[level]} for level in strictness_levels()],
         "calibration_version": reported_calibration_version(),
         "supports_confidence": False,
         "supports_explanation": False,
         "supports_spans": False,
     }
-
 
 @dataclass(frozen=True)
 class AppliedSettings:

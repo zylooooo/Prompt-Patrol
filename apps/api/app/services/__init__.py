@@ -9,6 +9,7 @@ from .checks_service import (
     get_check_by_id,
     list_checks,
     purge_expired_checks,
+    strictness_levels,
 )
 from .detector_client import MODEL_VERSION, Status, reported_model_version
 from .detector_client import health as detector_health
@@ -70,6 +71,7 @@ __all__ = [
     "add_teaching_assistant",
     "update_display_name",
     "detector_capabilities",
+    "strictness_levels",
     "THRESHOLDS",
     "DetectorTimeoutError",
     "DetectorUnavailableError",

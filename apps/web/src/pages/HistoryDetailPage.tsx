@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { useEntry } from "../hooks/useChecks";
 import ResultPanel from "../components/ResultPanel";
 import { TextLink } from "../components/ui/TextButton";
+import ErrorState from "../components/ui/ErrorState";
 import LoadingState from "../components/ui/LoadingState";
 import Page, { PageScroll } from "../components/ui/Page";
 import BatchResultsTable from "../components/BatchResultsTable";
@@ -11,9 +12,9 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { SECTION_LABEL } from "../components/ui/section-label";
 
 export default function HistoryDetailPage() {
-  usePageTitle("Screening Details");
+  usePageTitle("Check details");
   const { id } = useParams<{ id: string }>();
-  const { data: entry, isPending } = useEntry(id);
+  const { data: entry, isPending, isError, refetch } = useEntry(id);
 
   return (
     <Page>
@@ -26,13 +27,22 @@ export default function HistoryDetailPage() {
       <PageScroll>
         {isPending && <LoadingState size="card" label="Loading entry…" />}
 
-        {!isPending && !entry && (
+        {isError && (
+          <ErrorState
+            className="mt-6"
+            title="We couldn't load this check"
+            description="It's still saved. Try again in a moment."
+            onRetry={() => void refetch()}
+          />
+        )}
+
+        {!isPending && !isError && !entry && (
           <section className="mt-6 rounded-xl bg-surface p-12 text-center shadow-md">
             <p className="text-lg font-medium text-foreground">
-              Entry not found
+              We couldn't find that check
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
-              This check may have been removed from the stored history.
+              It may have been removed, or the link may be wrong.
             </p>
           </section>
         )}

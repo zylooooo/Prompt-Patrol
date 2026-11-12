@@ -71,7 +71,7 @@ async def test_process_message_skips_scoring_for_a_cancelled_batch(db_session):
     ).scalar_one()
     assert failure.external_ref == "stu-1"
     assert failure.row_number == 4
-    assert "cancelled" in failure.reason.lower()
+    assert "stopped" in failure.reason.lower()
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,7 @@ async def test_poll_once_removes_a_cancelled_batchs_message_from_the_queue(db_se
     failure = (
         await db_session.execute(select(BatchRowFailure).where(BatchRowFailure.batch_id == batch.id))
     ).scalar_one()
-    assert "cancelled" in failure.reason.lower()
+    assert "stopped" in failure.reason.lower()
     # Body has no row_number, like a message queued before 0.32.0.
     assert failure.row_number == 0
 
@@ -231,7 +231,7 @@ async def test_drain_dlq_once_writes_batch_row_failure(db_session):
     ).scalar_one()
     assert failure.external_ref == "stu-1"
     assert failure.row_number == 5
-    assert "retries" in failure.reason
+    assert "several tries" in failure.reason
     fake_sqs.delete_message.assert_called_once()
 
 

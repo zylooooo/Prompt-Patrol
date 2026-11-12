@@ -3,13 +3,13 @@ import { expectNoA11yViolations, tabTo } from "./a11y.ts";
 
 // The detector stub always scores 0.99, which every strictness threshold in
 // checks_service.THRESHOLDS flags as ai_generated, shown as VERDICT_TEXT's
-// "Likely AI-generated". The backend abstains under 10 words, so the answer
+// "Flagged for review". The backend abstains under 10 words, so the answer
 // must clear that as well as ANSWER_MIN_CHARS.
 const ANSWER =
   "Dependency injection passes a component its collaborators from outside, so tests can swap in fakes.";
 
 const verdict = (page: Page) =>
-  page.getByRole("tabpanel").getByText("Likely AI-generated", { exact: true });
+  page.getByRole("tabpanel").getByText("Flagged for review", { exact: true });
 
 test("a single check shows the flagged verdict", async ({ page }) => {
   await page.goto("/check");

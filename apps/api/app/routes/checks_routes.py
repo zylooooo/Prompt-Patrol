@@ -12,7 +12,6 @@ from db import get_db
 from models import User, UserRoleEnum, VerdictEnum
 from schemas import CheckListResponse, CheckResponse, CheckSummary
 from services import (
-    THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
     Status,
@@ -22,6 +21,7 @@ from services import (
     get_check_by_id,
     list_checks,
     reported_model_version,
+    strictness_levels,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,8 +79,8 @@ async def create_check_route(
     user: User = Depends(require_screening),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.strictness not in THRESHOLDS:
-        raise _error(400, "invalid_request", f"strictness must be one of {sorted(THRESHOLDS)}.")
+    if body.strictness not in strictness_levels():
+        raise _error(400, "invalid_request", f"strictness must be one of {strictness_levels()}.")
 
     answer_text = body.answer_text
     if len(answer_text) > 10000:

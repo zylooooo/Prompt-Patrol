@@ -79,7 +79,7 @@ describe("SupervisorsDialog", () => {
 
     expect(
       screen.getByText(
-        "Nobody supervises this account, so they can't screen answers.",
+        "Nobody supervises this account, so they can't check answers.",
       ),
     ).toBeTruthy();
   });
