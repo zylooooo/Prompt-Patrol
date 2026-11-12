@@ -13,9 +13,10 @@ MODEL_VERSION = "roberta-base-openai-detector-v0"
 MODEL_NAME = "openai-community/roberta-base-openai-detector"
 MAX_TOKENS = 512
 
-# "roberta" (default, the original baseline), "desklib" (the fine-tuned desklib detector, see desklib.py)
-# or "ensemble" (desklib + RADAR, see ensemble.py). Set by docker-compose.desklib.yml or
-# docker-compose.ensemble.yml; the default image is unchanged.
+# "roberta" (default, the original baseline), "desklib" (the fine-tuned desklib detector, see desklib.py),
+# "ensemble" (desklib + RADAR, see ensemble.py) or "desklib-meld" (desklib + MELD, see desklib_meld.py). Set by
+# docker-compose.desklib.yml, docker-compose.ensemble.yml or docker-compose.desklib-meld.yml; the default image is
+# unchanged.
 BACKEND = os.getenv("DETECTOR_BACKEND", "roberta")
 if BACKEND == "desklib":
     MODEL_VERSION = desklib.MODEL_VERSION
@@ -23,6 +24,13 @@ elif BACKEND == "ensemble":
     import ensemble
 
     MODEL_VERSION = ensemble.MODEL_VERSION
+elif BACKEND == "desklib-meld":
+    import desklib_meld
+
+    MODEL_VERSION = desklib_meld.MODEL_VERSION
+elif BACKEND != "roberta":
+    # an unknown name used to fall through to roberta silently, which then fails offline with a confusing error
+    raise ValueError(f"unknown DETECTOR_BACKEND {BACKEND!r}: use roberta, desklib, ensemble or desklib-meld")
 
 _AI_LABEL = "fake"
 
@@ -82,6 +90,8 @@ def warm_up() -> None:
                 desklib.score("warm up")
             elif BACKEND == "ensemble":
                 ensemble.score("warm up")
+            elif BACKEND == "desklib-meld":
+                desklib_meld.score("warm up")
             else:
                 _pipeline()(["warm up"], truncation=True, max_length=MAX_TOKENS)
     except Exception:
@@ -102,6 +112,11 @@ def score_text(text: str) -> Score:
     if BACKEND == "ensemble":
         with _lock:
             probability, truncated = ensemble.score(text)
+        return Score(raw_score=probability, truncated=truncated)
+
+    if BACKEND == "desklib-meld":
+        with _lock:
+            probability, truncated = desklib_meld.score(text)
         return Score(raw_score=probability, truncated=truncated)
 
     # Loading is inside the lock too: lru_cache does not make the miss atomic,
