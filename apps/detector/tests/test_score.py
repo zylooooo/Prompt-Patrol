@@ -10,6 +10,20 @@ from main import app
 
 client = TestClient(app)
 
+# the roberta baseline, which the tests run as: no fitted threshold, so the API applies its own defaults
+UNCALIBRATED = {
+    "model_version": baseline.MODEL_VERSION,
+    "calibration_version": None,
+    "threshold": None,
+    "abstention_band": None,
+}
+CALIBRATED = {
+    "model_version": "desklib-meld-ensemble-v1",
+    "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
+    "threshold": 0.945775,
+    "abstention_band": 0.005,
+}
+
 
 @pytest.fixture(autouse=True)
 def _unloaded():
@@ -34,7 +48,23 @@ def test_health_is_200_once_the_model_is_ready():
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "model_version": baseline.MODEL_VERSION}
+    assert response.json() == {"status": "ready", **UNCALIBRATED}
+
+
+def test_health_reports_the_calibration_of_the_running_model_once_ready():
+    baseline._set_status("ready")
+    with patch("main.calibration", return_value=CALIBRATED):
+        response = client.get("/health")
+
+    assert response.json() == {"status": "ready", **CALIBRATED}
+
+
+def test_health_does_not_read_the_calibration_while_loading():
+    """A bundle that fails its checks must still leave /health answering, so it reports only the name until ready."""
+    with patch("main.calibration", side_effect=AssertionError("read while loading")):
+        response = client.get("/health")
+
+    assert response.json() == {"status": "loading", "model_version": baseline.MODEL_VERSION}
 
 
 def test_a_failed_load_is_reported_as_failed_not_as_still_loading():
@@ -73,7 +103,17 @@ def test_score_happy_path():
         response = client.post("/score", json={"text": "some answer text"})
 
     assert response.status_code == 200
-    assert response.json() == {"raw_score": 0.87, "truncated": False}
+    assert response.json() == {"raw_score": 0.87, "truncated": False, **UNCALIBRATED}
+
+
+def test_score_reports_the_threshold_and_band_fitted_for_the_running_model():
+    with (
+        patch("routes.score_text", return_value=Score(raw_score=0.97, truncated=True)),
+        patch("routes.calibration", return_value=CALIBRATED),
+    ):
+        response = client.post("/score", json={"text": "some answer text"})
+
+    assert response.json() == {"raw_score": 0.97, "truncated": True, **CALIBRATED}
 
 
 def test_score_rejects_missing_text():

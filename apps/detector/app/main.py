@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Response
 
-from baseline import MODEL_VERSION, status, warm_up
+from baseline import MODEL_VERSION, calibration, status, warm_up
 from routes import router
 
 logging.basicConfig(level=logging.INFO)
@@ -31,17 +31,21 @@ app.include_router(router)
 
 
 @app.get("/health")
-async def health_check(response: Response) -> dict[str, str]:
+async def health_check(response: Response) -> dict:
     """503 until the model is loaded, so compose's health gate means something.
 
     It previously answered 200 the moment uvicorn bound the port, which let the
     API start against a detector that had not loaded anything - and the first
     real check then paid the whole load cost inside its 10s budget and timed out.
+
+    Once ready it also reports the calibration (as /score does), so the API's
+    status badge and capabilities name the model that is actually running.
     """
     current = status()
     if current != "ready":
         response.status_code = 503
-    return {"status": current, "model_version": MODEL_VERSION}
+        return {"status": current, "model_version": MODEL_VERSION}
+    return {"status": current, **calibration()}
 
 
 if __name__ == "__main__":

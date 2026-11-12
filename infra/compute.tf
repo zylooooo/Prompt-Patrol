@@ -428,10 +428,11 @@ resource "aws_ecs_task_definition" "worker" {
   }])
 }
 
-# No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib is
-# baked into Dockerfile.desklib. 4 GB, down from 8: the PP-533 load test
-# peaked at ~3 GB (one model copy), so this leaves no room for a second
-# uvicorn worker. 2 vCPU stays: PP-533 Phase 9 measured 1 vCPU 58% slower on
+# No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib-meld
+# is baked into Dockerfile.desklib-meld. 8 GB: desklib + MELD peaks at ~5.7 GB
+# locally (two models), over the 4 GB that desklib alone fitted in (PP-533:
+# ~3 GB). Apply before the deploy that ships it: CD copies the latest
+# revision. 2 vCPU stays: PP-533 Phase 9 measured 1 vCPU 58% slower on
 # the same CPU. var.detector_torch_threads pins torch to one thread, as a second
 # added nothing (Phase 7); CD copies the latest revision, so it sticks across
 # deploys. startPeriod 300 (the ECS maximum) covers the model load,
@@ -442,7 +443,7 @@ resource "aws_ecs_task_definition" "detector" {
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = "2048"
-  memory                   = "4096"
+  memory                   = "8192"
   execution_role_arn       = aws_iam_role.execution.arn
 
   runtime_platform {

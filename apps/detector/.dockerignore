@@ -4,3 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 tests/
+# desklib + MELD files: only Dockerfile.desklib-meld-base copies them (it has its own .dockerignore); keep the
+# other detector images' build context small
+model/meld-base/
+model/desklib-meld/

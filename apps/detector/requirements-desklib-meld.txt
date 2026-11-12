@@ -1,0 +1,11 @@
+# The desklib + MELD detector (Dockerfile.desklib-meld-base). Standalone, not -r requirements.txt: MELD's ModernBERT
+# backbone and the release were scored with ml-training's stack (ml-training/requirements.txt,
+# cluster/env-record/pip-freeze.txt), and golden.json is matched under these versions. The other detector images keep
+# transformers 4.55.4 / torch 2.8.0. torch itself is installed first from the CPU index (see the Dockerfile).
+fastapi==0.162.0
+uvicorn==0.54.0
+transformers==5.16.1
+tokenizers==0.23.2
+huggingface_hub==1.30.0
+safetensors==0.8.0
+peft==0.20.0

@@ -1,0 +1,4 @@
+# Build context for Dockerfile.desklib-meld: only the detector code. The models come from the base image.
+*
+!app
+**/__pycache__

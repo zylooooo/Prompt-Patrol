@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -15,24 +16,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exceptions import DetectorTimeoutError, DetectorUnavailableError
 from models import AbstainReasonEnum, Batch, BatchRowFailure, Check, StrictnessEnum, User, UserRoleEnum, VerdictEnum
 
-from .detector_client import CALIBRATION_VERSION, MODEL_VERSION, score_text
+from .detector_client import (
+    CALIBRATION_VERSION,
+    MODEL_VERSION,
+    Score,
+    reported_calibration_version,
+    reported_model_version,
+    score_text,
+)
 
 logger = logging.getLogger(__name__)
 
 DETECTOR_TIMEOUT_SECONDS = 10
 
-THRESHOLDS: dict[str, float] = {"lenient": 0.4, "standard": 0.5, "strict": 0.65}
+# For an uncalibrated model (the roberta baseline): one threshold per strictness level and a wide band.
+UNCALIBRATED_THRESHOLDS: dict[str, float] = {"lenient": 0.4, "standard": 0.5, "strict": 0.65}
+UNCALIBRATED_ABSTENTION_BAND = 0.08
 TARGET_FPR: dict[str, float] = {"lenient": 0.05, "standard": 0.01, "strict": 0.001}
-ABSTENTION_BAND = 0.08
 
-# The fine-tuned desklib detector (docker-compose.desklib.yml) scores calibrated probabilities, and
-# only its 1% FPR threshold (0.9608, fitted on validation) has been validated. Until the 5% and 0.1%
-# thresholds are fitted, every strictness level uses that one threshold so no level behaves wildly.
-if _desklib_threshold := os.getenv("DETECTOR_THRESHOLD"):
-    THRESHOLDS = dict.fromkeys(THRESHOLDS, float(_desklib_threshold))
-if _band := os.getenv("ABSTENTION_BAND"):
-    ABSTENTION_BAND = float(_band)
+# A calibrated detector reports its own threshold and band with every score (Score.threshold / abstention_band), and
+# those are what _settings_for applies. Only the 1% FPR threshold has been fitted for any model, so until the 5% and
+# 0.1% ones are, every strictness level uses that one threshold so no level behaves wildly.
+#
+# DETECTOR_THRESHOLD and ABSTENTION_BAND are only the fallback for a detector too old to report them (and the e2e
+# stub). Kept under the old names below so a fallback keeps working exactly as before.
+_ENV_THRESHOLD = os.getenv("DETECTOR_THRESHOLD")
+_ENV_BAND = os.getenv("ABSTENTION_BAND")
+THRESHOLDS: dict[str, float] = (
+    dict.fromkeys(UNCALIBRATED_THRESHOLDS, float(_ENV_THRESHOLD)) if _ENV_THRESHOLD else dict(UNCALIBRATED_THRESHOLDS)
+)
+ABSTENTION_BAND = float(_ENV_BAND) if _ENV_BAND else UNCALIBRATED_ABSTENTION_BAND
 MIN_ANSWER_WORDS = 10
+
 
 # Feature flag: off until per-level thresholds are fitted (see above). Off, only "standard" is offered
 # (GET /api/detector) and accepted (POST checks/batches); the SPA hides the picker when one level is
@@ -44,29 +59,97 @@ def strictness_levels() -> list[str]:
     return list(TARGET_FPR) if STRICTNESS_ENABLED else ["standard"]
 
 
-DETECTOR_CAPABILITIES: dict = {
-    "model_version": MODEL_VERSION,
-    "requires_question_text": False,
-    "min_answer_chars": 10,
-    "max_answer_chars": 10000,
-    "max_tokens_scored": 512,
-    "calibration_version": CALIBRATION_VERSION if CALIBRATION_VERSION else None,
-    "supports_confidence": False,
-    "supports_explanation": False,
-    "supports_spans": False,
-}
-
-
 def detector_capabilities() -> dict:
-    levels = [{"level": level, "target_fpr": TARGET_FPR[level]} for level in strictness_levels()]
-    return {**DETECTOR_CAPABILITIES, "strictness_levels": levels}
+    """What GET /api/detector returns. The model and calibration are the ones the detector last reported (see
+    detector_client._remember), so they name what is actually running."""
+    return {
+        "model_version": reported_model_version(),
+        "requires_question_text": False,
+        "min_answer_chars": 10,
+        "max_answer_chars": 10000,
+        "max_tokens_scored": 512,
+        "strictness_levels": [{"level": level, "target_fpr": TARGET_FPR[level]} for level in strictness_levels()],
+        "calibration_version": reported_calibration_version(),
+        "supports_confidence": False,
+        "supports_explanation": False,
+        "supports_spans": False,
+    }
+
+@dataclass(frozen=True)
+class AppliedSettings:
+    """How one score is read: recorded on the check, so every verdict names the model and the numbers behind it."""
+
+    model_version: str
+    calibration_version: str | None
+    threshold: float
+    abstention_band: float
+
+
+# (setting, environment value, reported value) already warned about, so a mismatch is logged once, not per check
+_warned: set[tuple[str, str, str]] = set()
+
+
+def _warn_if_env_disagrees(setting: str, env_value: str | None, reported: object, same: bool) -> None:
+    if env_value is None or same:
+        return
+    key = (setting, env_value, str(reported))
+    if key in _warned:
+        return
+    _warned.add(key)
+    logger.warning(
+        "The detector reports %s=%s but the API's environment sets %s; using the detector's. "
+        "Remove the stale variable (it is only a fallback for detectors that don't report their calibration).",
+        setting,
+        reported,
+        env_value,
+    )
+
+
+def _settings_for(result: Score, strictness: str) -> AppliedSettings:
+    """The detector's own calibration when it reports one, so a threshold fitted for one model is never applied to
+    another model's scores. A detector too old to report falls back to the environment, exactly as before."""
+    if result.model_version is None:
+        return AppliedSettings(
+            model_version=MODEL_VERSION,
+            calibration_version=CALIBRATION_VERSION if CALIBRATION_VERSION else None,
+            threshold=THRESHOLDS[strictness],
+            abstention_band=ABSTENTION_BAND,
+        )
+
+    if result.threshold is not None:
+        threshold = result.threshold
+        _warn_if_env_disagrees(
+            "threshold", _ENV_THRESHOLD, threshold, _ENV_THRESHOLD is not None and float(_ENV_THRESHOLD) == threshold
+        )
+    else:
+        threshold = UNCALIBRATED_THRESHOLDS[strictness]
+    band = result.abstention_band if result.abstention_band is not None else UNCALIBRATED_ABSTENTION_BAND
+    _warn_if_env_disagrees("abstention_band", _ENV_BAND, band, _ENV_BAND is not None and float(_ENV_BAND) == band)
+    env_model = os.getenv("DETECTOR_MODEL_VERSION")
+    _warn_if_env_disagrees("model_version", env_model, result.model_version, env_model == result.model_version)
+    env_calibration = os.getenv("DETECTOR_CALIBRATION_VERSION") or None
+    _warn_if_env_disagrees(
+        "calibration_version",
+        env_calibration,
+        result.calibration_version,
+        env_calibration == result.calibration_version,
+    )
+    return AppliedSettings(
+        model_version=result.model_version,
+        calibration_version=result.calibration_version,
+        threshold=threshold,
+        abstention_band=band,
+    )
 
 
 # TODO: the decision logic for wether each answer will be flagged. This can be tweaked in the future.
-def _decide(raw_score: float, threshold: float, word_count: int) -> tuple[str, str | None]:
+def _decide(
+    raw_score: float, threshold: float, word_count: int, abstention_band: float | None = None
+) -> tuple[str, str | None]:
+    band = ABSTENTION_BAND if abstention_band is None else abstention_band
     if word_count < MIN_ANSWER_WORDS:
         return "uncertain", "answer_too_short"
-    if abs(raw_score - threshold) <= ABSTENTION_BAND:
+    if abs(raw_score - threshold) <= band:
         return "uncertain", "score_in_abstention_band"
     return ("ai_generated" if raw_score > threshold else "human_written"), None
 
@@ -95,9 +178,9 @@ async def create_check(
         raise DetectorUnavailableError from exc
     latency_ms = int((time.perf_counter() - start) * 1000)
 
-    threshold = THRESHOLDS[strictness]
+    applied = _settings_for(result, strictness)
     word_count = len(answer_text.split())
-    verdict, abstain_reason = _decide(result.raw_score, threshold, word_count)
+    verdict, abstain_reason = _decide(result.raw_score, applied.threshold, word_count, applied.abstention_band)
 
     check = Check(
         actor_id=actor_id,
@@ -110,10 +193,10 @@ async def create_check(
         confidence=None,
         abstain_reason=AbstainReasonEnum(abstain_reason) if abstain_reason else None,
         truncated=result.truncated,
-        model_version=MODEL_VERSION,
-        calibration_version=CALIBRATION_VERSION if CALIBRATION_VERSION else None,
+        model_version=applied.model_version,
+        calibration_version=applied.calibration_version,
         strictness_applied=StrictnessEnum(strictness),
-        threshold_applied=threshold,
+        threshold_applied=applied.threshold,
         target_fpr=TARGET_FPR[strictness],
         used_question_text=False,
         # The judgement is recorded either way; only the text is withheld.

@@ -1,0 +1,36 @@
+# Runs the app with desklib + MELD (the two calibrated scores averaged on log-odds) instead of the roberta baseline.
+# Opt-in: the default stack and the other overrides are unchanged. See docs/desklib-meld-release.md.
+#
+#   cd apps && docker compose -f docker-compose.yml -f docker-compose.desklib-meld.yml up -d --build
+#
+# The detector is two images. The base image (detector/Dockerfile.desklib-meld-base) holds both base models and the
+# release bundle. It is on GHCR (public, no login needed), pinned below by digest.
+#
+# This file builds only the thin image on top (the detector code), so code changes rebuild in seconds with no model
+# files. To build on a base image you built yourself (docs/desklib-meld-release.md, step 7), set
+# DETECTOR_BASE_IMAGE=prompt-patrol-detector-base:desklib-meld-v1 in apps/.env.
+#
+# To make it the default for a plain `docker compose up`, add to apps/.env (git-ignored):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.desklib-meld.yml
+#
+# Docker needs roughly 12GB of memory allocated: the detector peaks at ~5.7GB while scoring.
+#
+# Calibrated on the extended corpus's validation answers of >= 10 words, then tested once (release_desklib_meld.py):
+# it catches 70.3% of test AI answers vs live desklib's 51.4%, at a test false-positive rate of 0.52% vs 1.18%.
+#
+# The API needs no settings for this model: the detector reports its model and calibration versions, threshold
+# (0.945775, the 1% FPR threshold fitted on validation) and abstention band (0.005, chosen on validation) with every
+# score, and the API applies those. Don't set DETECTOR_THRESHOLD or ABSTENTION_BAND for it: they are only the fallback
+# for older detectors, and the API's default band of 0.08 would mark every AI answer uncertain with this model.
+
+services:
+  detector:
+    image: prompt-patrol-detector:desklib-meld
+    build:
+      context: ./detector
+      dockerfile: Dockerfile.desklib-meld
+      args:
+        BASE_IMAGE: ${DETECTOR_BASE_IMAGE:-ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112@sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec}
+    healthcheck:
+      # two large models (~0.4B + ~1B parameters) to load before the first answer
+      start_period: 420s

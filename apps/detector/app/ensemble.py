@@ -6,8 +6,8 @@ ml-training/calibrate_ensemble.py:
   2. desklib (desklib.py, adapter merged) and RADAR (adapter merged) each score the cleaned text, cut at 256 tokens;
   3. each logit is divided by its own temperature, the two are averaged with the weight in ensemble.json, and the
      result goes through a sigmoid, so raw_score is a calibrated probability that the answer is AI-written.
-The decision threshold (fitted on validation at 1% FPR) is in ensemble.json and set in the API as DETECTOR_THRESHOLD:
-this service only scores.
+The decision threshold (fitted on validation at 1% FPR) is in ensemble.json; it and the abstention band are reported
+with every score (calibration()), so the API applies the ones fitted for this model.
 
 RADAR (TrustSafeAI/RADAR-Vicuna-7B) is licensed for non-commercial use only.
 """
@@ -27,6 +27,9 @@ SETTINGS_PATH = Path(os.getenv("ENSEMBLE_SETTINGS", "/app/model/ensemble.json"))
 RADAR_ADAPTER_DIR = Path(os.getenv("RADAR_ADAPTER_DIR", "/app/model/radar-lora-adapter"))
 MAX_TOKENS = 256
 MODEL_VERSION = "desklib-radar-ensemble-v1"
+# Chosen on validation: at +-0.005 false flags on student answers drop from 1.00% to 0.85%, 68.0% of AI answers are
+# still flagged and 2.4% come back uncertain
+ABSTENTION_BAND = 0.005
 # RADAR has two outputs, [AI, human] (the authors' own example reads index 0 as AI-generated)
 AI, HUMAN = 0, 1
 _REQUIRED = (
@@ -38,6 +41,8 @@ _REQUIRED = (
     "radar_revision",
     "radar_temperature",
     "max_tokens",
+    "calibration_version",
+    "threshold",
 )
 
 
@@ -62,6 +67,17 @@ def settings() -> dict:
     if values["max_tokens"] != MAX_TOKENS:
         raise ValueError(f"calibrated with a {values['max_tokens']}-token cut, this code cuts at {MAX_TOKENS}")
     return values
+
+
+def calibration() -> dict:
+    """The model and the decision settings fitted for it (from ensemble.json), reported with every score."""
+    config = settings()
+    return {
+        "model_version": MODEL_VERSION,
+        "calibration_version": config["calibration_version"],
+        "threshold": config["threshold"],
+        "abstention_band": ABSTENTION_BAND,
+    }
 
 
 @lru_cache(maxsize=1)
