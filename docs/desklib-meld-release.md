@@ -118,7 +118,7 @@ instead of 76.1%. **For now the default, 0.9458, is kept.** The threshold now co
   temperature.
 - [x] MELD loaded with `meld.py` from the pinned revision: soup adapter merged into the backbone, head loaded with
   `strict=False`, MELD's own `flagged` and threshold ignored. MELD comes from a copy inside the base image, not from
-  Hugging Face, because the repo is now gated (see step 7).
+  Hugging Face, because the repo is now gated.
 - [x] desklib's base model pinned to the `base_revision` in `desklib-meld.json`.
 - [x] Refuses to start if `desklib-meld.json` doesn't match the code, or if the staged MELD is a different revision.
 - [x] `golden.json` test (`apps/detector/tests/test_desklib_meld.py`): all 23 probabilities match exactly. It runs
@@ -178,10 +178,6 @@ head, `desklib-meld.json` and `report.json`. It does **not** hold `golden.json` 
 text or student answers into this image: it is public. The adapters were trained on student answers but hold no
 answer text, like `desklib-lora-adapter/`, which is in git and in the desklib images.
 
-`anon-review-meld-2026/meld` became **gated** (manual approval) around 27 Oct 2026, so the revision this model was
-trained on (`8990324a`) can no longer be downloaded without an approved account. Its gate terms were checked and
-allow this copy. The cluster's Hugging Face cache also holds the Oct release (`ddfc9c78`), used in E3. Copy it off
-the cluster if we might ever need it.
 
 #### Building and pushing a new base image
 

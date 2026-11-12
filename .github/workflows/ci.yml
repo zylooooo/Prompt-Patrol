@@ -438,20 +438,21 @@ jobs:
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
 
-      # The served detector is desklib (2026-10-18). When the ML team settles on
-      # one model, point `file` at its Dockerfile. Own cache scope: the torch
-      # install and baked base-model download dominate build time.
+      # The served detector is desklib + MELD (2026-11-12): the detector code on
+      # top of a base image with both models, built by hand because MELD's repo
+      # is gated. The Dockerfile pins that base by digest, and it is public, so
+      # pull-request builds need no login. See docs/desklib-meld-release.md.
       - name: Build detector image
         id: detector
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./apps/detector
-          file: ./apps/detector/Dockerfile.desklib
+          file: ./apps/detector/Dockerfile.desklib-meld
           tags: ${{ env.IMAGE_PREFIX }}-detector:${{ github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           push: ${{ env.PUBLISH == 'true' }}
-          cache-from: type=gha,scope=detector-desklib
-          cache-to: type=gha,mode=max,scope=detector-desklib
+          cache-from: type=gha,scope=detector-desklib-meld
+          cache-to: type=gha,mode=max,scope=detector-desklib-meld
 
       - name: Read Node version from .nvmrc
         id: node

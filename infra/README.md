@@ -112,7 +112,8 @@ push to main ─► CI builds api / worker / detector ─► GHCR (tag = commit 
 - GHCR packages are **public** (private storage on the free plan is 500 MB;
   the detector alone is several GB).
 - ECR keeps the newest 10 images per repo; GHCR keeps every build.
-- The detector image is `apps/detector/Dockerfile.desklib`.
+- The detector image is `apps/detector/Dockerfile.desklib-meld`, built on a
+  hand-pushed base image (see `docs/desklib-meld-release.md`).
 
 ## Compute and edge (step 5)
 
