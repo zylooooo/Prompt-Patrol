@@ -41,7 +41,7 @@ failing on the first request.
 | `ENVIRONMENT`                                                                                     | `dev` (default), `staging` or `prod`                                                 |
 | `DETECTOR_URL`                                                                                    | Defaults to `http://detector:8001`                                                   |
 | `AWS_REGION`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_PUBLIC`, `S3_BATCHES_BUCKET`, `SQS_*`         | Batch uploads. Endpoint URLs name LocalStack locally; leave unset in AWS             |
-| `DETECTOR_MODEL_VERSION`, `DETECTOR_CALIBRATION_VERSION`, `DETECTOR_THRESHOLD`, `ABSTENTION_BAND` | Leave unset for the default RoBERTa detector; `docker-compose.desklib.yml` sets them |
+| `DETECTOR_MODEL_VERSION`, `DETECTOR_CALIBRATION_VERSION`, `DETECTOR_THRESHOLD`, `ABSTENTION_BAND` | Leave unset: the detector reports its model, calibration, threshold and band with every score, and the API applies those. Only a fallback for detectors too old to report them; if one is set and disagrees, the detector wins and a warning is logged |
 
 Outside `dev`, two more checks refuse to start the app, because both failures
 are otherwise silent — sign-in appears to work and then every request is `401`:

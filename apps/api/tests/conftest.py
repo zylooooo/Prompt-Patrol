@@ -1,5 +1,6 @@
 import os
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db import get_db
 from main import app
 from models import Base
+from services import checks_service, detector_client
 
 # Deliberately independent of the app's own DB_URL (which in local dev points
 # at the "postgres" compose hostname, unreachable from a host-run pytest).
@@ -63,3 +65,14 @@ async def client(db_session):
         ac.app = app
         yield ac
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _forget_what_the_detector_reported():
+    """detector_client remembers the detector's last reported calibration (for the status badge), and checks_service
+    remembers which mismatches it already warned about: module state that must not leak from one test to the next."""
+    detector_client._reported.clear()
+    checks_service._warned.clear()
+    yield
+    detector_client._reported.clear()
+    checks_service._warned.clear()

@@ -11,7 +11,8 @@ release was scored in ml-training/release_desklib_meld.py (docs/desklib-meld-rel
      sigmoid, so raw_score is a calibrated probability that the answer is AI-written. Averaging the log-odds, not the
      probabilities, is what the threshold was fitted on.
 Every number comes from desklib-meld.json in the bundle. The decision threshold (0.945775, fitted on validation at 1%
-FPR) is set in the API as DETECTOR_THRESHOLD: this service only scores.
+FPR) and the abstention band are reported with every score (calibration()), so the API applies the ones fitted for
+this model.
 """
 
 import importlib.util
@@ -32,6 +33,10 @@ SETTINGS_PATH = BUNDLE_DIR / "desklib-meld.json"
 MELD_BASE_DIR = Path(os.getenv("MELD_BASE_DIR", "/app/model/meld-base"))
 MODEL_VERSION = "desklib-meld-ensemble-v1"
 DESKLIB_MAX_TOKENS = 256
+# Chosen on validation (report.json's abstention-band table): at +-0.005 false flags on student answers drop from 1.0%
+# to 0.57%, 72.8% of AI answers are still flagged and 5.7% come back uncertain. Not the API's old default of 0.08: the
+# combined probability rarely exceeds ~0.995, so a wide band would mark every AI answer uncertain.
+ABSTENTION_BAND = 0.005
 _REQUIRED = ("model_version", "calibration_version", "threshold", "weight_meld", "cleaning_version", "desklib", "meld")
 _REQUIRED_DESKLIB = ("base_model", "base_revision", "adapter", "temperature", "max_tokens")
 _REQUIRED_MELD = ("base_revision", "adapter", "head", "temperature")
@@ -64,6 +69,17 @@ def settings() -> dict:
             f"{DESKLIB_MAX_TOKENS}"
         )
     return values
+
+
+def calibration() -> dict:
+    """The model and the decision settings fitted for it (from desklib-meld.json), reported with every score."""
+    config = settings()
+    return {
+        "model_version": MODEL_VERSION,
+        "calibration_version": config["calibration_version"],
+        "threshold": config["threshold"],
+        "abstention_band": ABSTENTION_BAND,
+    }
 
 
 def _check_meld_revision(config: dict) -> None:

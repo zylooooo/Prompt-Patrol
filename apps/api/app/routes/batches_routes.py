@@ -9,10 +9,10 @@ from db import get_db
 from models import User, UserRoleEnum
 from schemas import BatchProgressResponse, BatchResponse
 from services import (
-    DETECTOR_CAPABILITIES,
     THRESHOLDS,
     cancel_batch,
     create_batch,
+    detector_capabilities,
     generate_upload_url,
     get_batch_progress,
 )
@@ -82,7 +82,7 @@ async def create_batch_route(
             strictness=body.strictness,
             retain_answer=body.retain_answer,
             column_mapping=body.column_mapping,
-            requires_question_text=DETECTOR_CAPABILITIES["requires_question_text"],
+            requires_question_text=detector_capabilities()["requires_question_text"],
         )
     except FileNotFoundError:
         raise HTTPException(

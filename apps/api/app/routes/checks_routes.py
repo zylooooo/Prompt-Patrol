@@ -12,16 +12,16 @@ from db import get_db
 from models import User, UserRoleEnum, VerdictEnum
 from schemas import CheckListResponse, CheckResponse, CheckSummary
 from services import (
-    DETECTOR_CAPABILITIES,
-    MODEL_VERSION,
     THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
     Status,
     create_check,
+    detector_capabilities,
     detector_health,
     get_check_by_id,
     list_checks,
+    reported_model_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class DetectorStatusResponse(BaseModel):
 
 @router.get("/detector")
 async def get_detector_capabilities(user: User = Depends(require_any_user)):
-    return DETECTOR_CAPABILITIES
+    return detector_capabilities()
 
 
 @router.get("/detector/status", response_model=DetectorStatusResponse)
@@ -67,7 +67,9 @@ async def get_detector_status(user: User = Depends(require_any_user)):
     """Always 200. A detector that is down is a state to render, not a failed
     request - the caller is a status badge, and an error would leave it with
     nothing to show at the exact moment it has something worth saying."""
-    return DetectorStatusResponse(status=await detector_health(), model_version=MODEL_VERSION)
+    # health() records what the detector reports about itself, so the badge names the model actually running
+    current = await detector_health()
+    return DetectorStatusResponse(status=current, model_version=reported_model_version())
 
 
 @router.post("/checks", status_code=201, response_model=CheckResponse)

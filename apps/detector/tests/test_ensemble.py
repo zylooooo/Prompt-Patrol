@@ -24,6 +24,8 @@ def config(**overrides):
         "radar_revision": "4ff1f23a69a36aa1df47b0933be6279f1b896c9b",
         "radar_temperature": 1.5,
         "max_tokens": ensemble.MAX_TOKENS,
+        "calibration_version": "desklib1.944-radar1.756-thr0.9028-v1",
+        "threshold": 0.902799,
     }
     return values | overrides
 
@@ -166,3 +168,24 @@ def test_warm_up_runs_one_ensemble_score_when_selected(monkeypatch):
         baseline.warm_up()
     fake.assert_called_once()
     assert baseline.status() == "ready"
+
+
+def test_calibration_reports_the_shipped_threshold_and_the_band(monkeypatch):
+    with patch("ensemble.settings", return_value=config()):
+        assert ensemble.calibration() == {
+            "model_version": "desklib-radar-ensemble-v1",
+            "calibration_version": "desklib1.944-radar1.756-thr0.9028-v1",
+            "threshold": 0.902799,
+            "abstention_band": 0.005,
+        }
+
+
+def test_the_shipped_calibration_matches_docker_compose_ensemble(monkeypatch):
+    """The values the API used to be given by hand in docker-compose.ensemble.yml."""
+    monkeypatch.setattr(ensemble, "SETTINGS_PATH", SHIPPED_SETTINGS)
+    ensemble.settings.cache_clear()
+    try:
+        cal = ensemble.calibration()
+    finally:
+        ensemble.settings.cache_clear()
+    assert (cal["threshold"], cal["calibration_version"]) == (0.902799, "desklib1.944-radar1.756-thr0.9028-v1")

@@ -94,3 +94,28 @@ def test_warm_up_runs_one_desklib_score_when_selected(monkeypatch):
     scored.assert_called_once_with("warm up")
     assert baseline.status() == "ready"
     baseline._set_status("loading")
+
+
+def test_calibration_reports_the_threshold_and_band_fitted_for_desklib():
+    assert desklib.calibration() == {
+        "model_version": "desklib-academic-lora-v1",
+        "calibration_version": "desklib-temp1.944-v1",
+        "threshold": 0.9608,
+        "abstention_band": 0.01,
+    }
+
+
+def test_calibration_reports_none_when_the_temperature_is_overridden(monkeypatch):
+    """The threshold was fitted at T=1.944; at any other temperature it no longer means 1% FPR."""
+    monkeypatch.setattr(desklib, "TEMPERATURE", 2.5)
+    assert desklib.calibration() == {
+        "model_version": desklib.MODEL_VERSION,
+        "calibration_version": None,
+        "threshold": None,
+        "abstention_band": None,
+    }
+
+
+def test_the_desklib_backend_reports_its_own_calibration(monkeypatch):
+    monkeypatch.setattr(baseline, "BACKEND", "desklib")
+    assert baseline.calibration() == desklib.calibration()

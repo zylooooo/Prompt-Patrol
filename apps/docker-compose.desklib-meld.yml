@@ -12,20 +12,18 @@
 # This file builds only the thin image on top (the detector code), so code changes rebuild in seconds with no tokens
 # or model files. To use a shared base image, set DETECTOR_BASE_IMAGE=ghcr.io/<org>/prompt-patrol-detector-base:...
 #
+# To make it the default for a plain `docker compose up`, add to apps/.env (git-ignored):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.desklib-meld.yml
+#
 # Docker needs roughly 12GB of memory allocated: the detector peaks at ~5.7GB while scoring.
 #
 # Calibrated on the extended corpus's validation answers of >= 10 words, then tested once (release_desklib_meld.py):
 # it catches 70.3% of test AI answers vs live desklib's 51.4%, at a test false-positive rate of 0.52% vs 1.18%.
-x-desklib-meld-api-env: &desklib-meld-api-env
-  DETECTOR_MODEL_VERSION: desklib-meld-ensemble-v1
-  # from detector/model/desklib-meld/desklib-meld.json: the 1% FPR threshold fitted on validation.
-  # 0.9539 instead if the stricter Mohler threshold is adopted (docs/desklib-meld-release.md, step 3).
-  DETECTOR_THRESHOLD: "0.945775"
-  # Chosen on validation: at +-0.005 false flags on student answers drop from 1.0% to 0.57%, 72.8% of AI answers are
-  # still flagged and 5.7% come back uncertain. Do not use the default 0.08: the combined probability rarely exceeds
-  # ~0.995, so a wide band marks every AI answer uncertain.
-  ABSTENTION_BAND: "0.005"
-  DETECTOR_CALIBRATION_VERSION: desklib3.332-meld2.233-thr0.9458-v1
+#
+# The API needs no settings for this model: the detector reports its model and calibration versions, threshold
+# (0.945775, the 1% FPR threshold fitted on validation) and abstention band (0.005, chosen on validation) with every
+# score, and the API applies those. Don't set DETECTOR_THRESHOLD or ABSTENTION_BAND for it: they are only the fallback
+# for older detectors, and the API's default band of 0.08 would mark every AI answer uncertain with this model.
 
 services:
   detector:
@@ -38,9 +36,3 @@ services:
     healthcheck:
       # two large models (~0.4B + ~1B parameters) to load before the first answer
       start_period: 420s
-
-  api:
-    environment: *desklib-meld-api-env
-
-  worker:
-    environment: *desklib-meld-api-env

@@ -209,6 +209,16 @@ def test_load_desklib_fails_loudly_when_the_adapter_is_missing(tmp_path, monkeyp
     desklib_meld.load_desklib.cache_clear()
 
 
+def test_calibration_reports_the_bundles_threshold_and_the_band_chosen_on_validation():
+    with patch("desklib_meld.settings", return_value=config()):
+        assert desklib_meld.calibration() == {
+            "model_version": "desklib-meld-ensemble-v1",
+            "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
+            "threshold": 0.945775,
+            "abstention_band": 0.005,
+        }
+
+
 # --------------------------------------------------------------------------- wiring
 
 
@@ -219,6 +229,13 @@ def test_the_desklib_meld_backend_is_used_when_selected(monkeypatch):
         result = baseline.score_text("an answer")
     fake.assert_called_once_with("an answer")
     assert result == baseline.Score(raw_score=0.97, truncated=True)
+
+
+def test_the_desklib_meld_backend_reports_its_own_calibration(monkeypatch):
+    monkeypatch.setattr(baseline, "BACKEND", "desklib-meld")
+    monkeypatch.setattr(baseline, "desklib_meld", desklib_meld, raising=False)
+    with patch("desklib_meld.settings", return_value=config()):
+        assert baseline.calibration() == desklib_meld.calibration()
 
 
 def test_warm_up_runs_one_desklib_meld_score_when_selected(monkeypatch):

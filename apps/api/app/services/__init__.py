@@ -1,16 +1,16 @@
 from .aws_clients import download_object, enqueue_row, generate_upload_url
 from .batches_service import cancel_batch, create_batch, get_batch_progress, parse_and_validate
 from .checks_service import (
-    DETECTOR_CAPABILITIES,
     THRESHOLDS,
     DetectorTimeoutError,
     DetectorUnavailableError,
     create_check,
+    detector_capabilities,
     get_check_by_id,
     list_checks,
     purge_expired_checks,
 )
-from .detector_client import MODEL_VERSION, Status
+from .detector_client import MODEL_VERSION, Status, reported_model_version
 from .detector_client import health as detector_health
 from .sessions import (
     SESSION_IDLE_TTL,
@@ -69,7 +69,7 @@ __all__ = [
     "LoginRejection",
     "add_teaching_assistant",
     "update_display_name",
-    "DETECTOR_CAPABILITIES",
+    "detector_capabilities",
     "THRESHOLDS",
     "DetectorTimeoutError",
     "DetectorUnavailableError",
@@ -78,6 +78,7 @@ __all__ = [
     "list_checks",
     "purge_expired_checks",
     "MODEL_VERSION",
+    "reported_model_version",
     "Status",
     "detector_health",
 ]

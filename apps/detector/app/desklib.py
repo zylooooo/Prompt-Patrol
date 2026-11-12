@@ -9,8 +9,8 @@ and evaluated in ml-training/finetune_desklib_lora.py:
   3. the logit is divided by the temperature fitted on validation and passed through a sigmoid,
      so raw_score is a calibrated probability that the answer is AI-written.
 
-The decision threshold for the 1% false-positive budget (0.9608) lives with the other
-thresholds in the API, not here: this service only scores.
+The decision threshold for the 1% false-positive budget (0.9608) and the abstention band are reported
+with every score (calibration()), so the API applies the ones fitted for this model.
 """
 
 import logging
@@ -29,6 +29,14 @@ ADAPTER_DIR = Path(os.getenv("DESKLIB_ADAPTER_DIR", "/app/model/desklib-lora-ada
 TEMPERATURE = float(os.getenv("DESKLIB_TEMPERATURE", "1.944"))
 MAX_TOKENS = 256
 MODEL_VERSION = "desklib-academic-lora-v1"
+# What the API applies to these scores. The threshold only means "1% of students wrongly flagged" at the
+# temperature it was fitted with, so an overridden DESKLIB_TEMPERATURE reports no calibration at all.
+FITTED_TEMPERATURE = 1.944
+CALIBRATION_VERSION = "desklib-temp1.944-v1"
+# the 1% FPR threshold, fitted on validation
+THRESHOLD = 0.9608
+# chosen from the saved test scores: at +-0.01 false flags on student answers drop from 0.95% to 0.53%
+ABSTENTION_BAND = 0.01
 # torch picks its own default from the CPU topology (often physical cores only), and the PP-533
 # load test saw the detector use half its 2 vCPU. One thread per CPU this process may run on is
 # safe because baseline._lock lets only one forward pass run at a time.
@@ -106,6 +114,18 @@ def load():
     model = PeftModel.from_pretrained(model, str(ADAPTER_DIR)).merge_and_unload()
     model.eval()
     return tokenizer, model
+
+
+def calibration() -> dict:
+    """The model and the decision settings fitted for it, reported with every score."""
+    if TEMPERATURE != FITTED_TEMPERATURE:
+        return {"model_version": MODEL_VERSION, "calibration_version": None, "threshold": None, "abstention_band": None}
+    return {
+        "model_version": MODEL_VERSION,
+        "calibration_version": CALIBRATION_VERSION,
+        "threshold": THRESHOLD,
+        "abstention_band": ABSTENTION_BAND,
+    }
 
 
 def calibrated_probability(logit: float, temperature: float = TEMPERATURE) -> float:

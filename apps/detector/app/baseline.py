@@ -67,6 +67,19 @@ def _pipeline():
     return pipeline("text-classification", model=MODEL_NAME, top_k=None)
 
 
+def calibration() -> dict:
+    """The running model and the decision settings fitted for it: model_version, calibration_version, threshold and
+    abstention_band. Sent with every score so the API applies what was fitted for this model, not a hand-copied value
+    that can go stale. The roberta baseline is uncalibrated (None), which the API answers with its own defaults."""
+    if BACKEND == "desklib":
+        return desklib.calibration()
+    if BACKEND == "ensemble":
+        return ensemble.calibration()
+    if BACKEND == "desklib-meld":
+        return desklib_meld.calibration()
+    return {"model_version": MODEL_VERSION, "calibration_version": None, "threshold": None, "abstention_band": None}
+
+
 def status() -> Status:
     """Whether the model is loaded yet, for /health to report."""
     with _status_lock:

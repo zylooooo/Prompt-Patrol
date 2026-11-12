@@ -560,3 +560,26 @@ async def test_an_unsupervised_assistant_may_still_read_their_own_history(client
 
     assert response.status_code == 200
     assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_check_records_the_calibration_the_detector_reported(client, db_session):
+    """The verdict and the stored record use the detector's own threshold and band, not the API's environment."""
+    await _signed_in(client, db_session)
+    reported = Score(
+        raw_score=0.96,
+        truncated=False,
+        model_version="desklib-meld-ensemble-v1",
+        calibration_version="desklib3.332-meld2.233-thr0.9458-v1",
+        threshold=0.945775,
+        abstention_band=0.005,
+    )
+    with patch("services.checks_service.score_text", new=AsyncMock(return_value=reported)):
+        response = await client.post("/api/checks", json={"answer_text": AI_LIKE, "strictness": "lenient"})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["verdict"] == "ai_generated"
+    assert body["detector"]["model_version"] == "desklib-meld-ensemble-v1"
+    assert body["detector"]["calibration_version"] == "desklib3.332-meld2.233-thr0.9458-v1"
+    assert body["detector"]["threshold_applied"] == 0.945775
