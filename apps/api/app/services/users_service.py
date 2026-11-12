@@ -50,7 +50,7 @@ ALLOWED_EMAIL_DOMAIN = "smu.edu.sg"
 
 def assert_allowed_email_domain(email: str) -> None:
     """Helper function to check if the email addresses are within the allowed domains and subdomains.
-    
+
     New accounts must be SMU addresses, subdomains included.
     Expects a normalised email. Callers run it before any lookup so the
     refusal never depends on whether the address already has an account.

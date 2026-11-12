@@ -139,7 +139,8 @@ async def test_create_check_rejects_too_short_below_floor(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_get_detector_capabilities(client, db_session):
+async def test_get_detector_capabilities(client, db_session, monkeypatch):
+    monkeypatch.setattr("services.checks_service.STRICTNESS_ENABLED", True)
     await _signed_in(client, db_session, email="ta5@smu.edu.sg")
 
     response = await client.get("/api/detector")
@@ -151,6 +152,19 @@ async def test_get_detector_capabilities(client, db_session):
         "standard",
         "strict",
     }
+
+
+@pytest.mark.asyncio
+async def test_strictness_flag_off_offers_and_accepts_only_standard(client, db_session):
+    """STRICTNESS_ENABLED defaults off: the picker's levels collapse to one and
+    a client still sending another level gets a 400, not a silent remap."""
+    await _signed_in(client, db_session, email="ta6@smu.edu.sg")
+
+    body = (await client.get("/api/detector")).json()
+    assert [level["level"] for level in body["strictness_levels"]] == ["standard"]
+
+    assert (await _make_check(client, strictness="strict")).status_code == 400
+    assert (await _make_check(client, strictness="standard")).status_code == 201
 
 
 @pytest.mark.asyncio
@@ -328,7 +342,8 @@ async def test_actor_id_filter_is_honoured_for_a_root_admin(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_listing_includes_summary_fields_the_history_table_needs(client, db_session):
+async def test_listing_includes_summary_fields_the_history_table_needs(client, db_session, monkeypatch):
+    monkeypatch.setattr("services.checks_service.STRICTNESS_ENABLED", True)
     """raw_score, strictness_applied, and batch_file_name are flattened onto
     CheckSummary (not just CheckResult) so the history table's Score column,
     per-batch strictness tag, and batch file name survive a reload - see
@@ -404,8 +419,9 @@ async def test_retain_answer_false_stores_the_judgement_without_the_text(client,
 
 
 @pytest.mark.asyncio
-async def test_the_detector_settings_are_stored_not_re_derived(client, db_session):
+async def test_the_detector_settings_are_stored_not_re_derived(client, db_session, monkeypatch):
     """A recalibrated detector must not rewrite what a past verdict was based on."""
+    monkeypatch.setattr("services.checks_service.STRICTNESS_ENABLED", True)
     await _signed_in(client, db_session)
     created = (await _make_check(client, strictness="strict")).json()
 

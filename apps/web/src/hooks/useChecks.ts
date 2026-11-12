@@ -37,6 +37,14 @@ export function useDetectorCapabilities() {
   return useQuery(capabilitiesQueryOptions());
 }
 
+// The server's STRICTNESS_ENABLED flag: off, it offers one level and there is
+// nothing to choose, so the picker and the result's strictness row are hidden.
+// Also hidden while capabilities load, so the control never flashes in.
+export function useStrictnessLevels() {
+  const levels = useDetectorCapabilities().data?.strictnessLevels ?? [];
+  return levels.length > 1 ? levels : [];
+}
+
 const STATUS_POLL_SETTLED_MS = 60_000;
 const STATUS_POLL_STARTING_MS = 5_000;
 

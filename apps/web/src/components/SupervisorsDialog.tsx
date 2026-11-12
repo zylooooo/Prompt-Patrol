@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { describeError } from "../lib/errorText";
 import Modal from "./ui/Modal";
 import Button from "./ui/Button";
 import Dropdown from "./ui/Dropdown";
@@ -57,9 +58,7 @@ export default function SupervisorsDialog({
       setSupervisorIds((await change()).supervisorIds);
       showToast(message);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not save the change.",
-      );
+      setError(describeError(err, "We couldn't save the change. Try again."));
     } finally {
       setBusy(false);
     }
@@ -101,7 +100,7 @@ export default function SupervisorsDialog({
       <div className="mt-2.5 rounded-lg border border-border bg-modal-muted">
         {supervisorIds.length === 0 ? (
           <p className="px-4 py-3.5 text-sm text-disabled-foreground">
-            Nobody supervises this account, so they can't screen answers.
+            Nobody supervises this account, so they can't check answers.
           </p>
         ) : (
           <ul

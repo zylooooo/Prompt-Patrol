@@ -1,9 +1,9 @@
 export type Verdict = "ai_generated" | "human_written" | "uncertain";
 
 export const VERDICT_TEXT: Record<Verdict, string> = {
-  ai_generated: "Likely AI-generated",
+  ai_generated: "Flagged for review",
   uncertain: "Uncertain",
-  human_written: "Likely human",
+  human_written: "Likely human-written",
 };
 
 export type Strictness = "lenient" | "standard" | "strict";
@@ -15,9 +15,9 @@ export const STRICTNESS_TEXT: Record<Strictness, string> = {
 };
 
 export const STRICTNESS_HINT: Record<Strictness, string> = {
-  lenient: "Flags more answers, about 5 in 100 flagged in error",
-  standard: "Flags about 1 in 100 in error",
-  strict: "Flags only high-confidence cases, about 1 in 1000 in error",
+  lenient: "Flags more answers, so more are flagged by mistake.",
+  standard: "A balance between catching more answers and flagging fewer by mistake.",
+  strict: "Flags only the strongest cases, so fewer are flagged by mistake.",
 };
 
 export type AbstainReason =
@@ -157,9 +157,9 @@ export function entryId(entry: HistoryEntry): string {
 export type UserRole = "root_admin" | "instructor" | "teaching_assistant";
 
 export const ROLE_TEXT: Record<UserRole, string> = {
-  root_admin: "Admin",
+  root_admin: "Administrator",
   instructor: "Instructor",
-  teaching_assistant: "Teaching Assistant",
+  teaching_assistant: "Teaching assistant",
 };
 
 const ROLE_ORDER: Record<UserRole, number> = {

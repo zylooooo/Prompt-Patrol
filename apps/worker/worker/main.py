@@ -33,8 +33,7 @@ async def _commit_once(db) -> None:
     written (delete failed, or the visibility timeout ran out mid-call). The
     unique indexes on (batch_id, row_number) turn that into an IntegrityError
     here, and the caller then deletes the message as usual. Batches and users
-    are never hard-deleted, so the foreign keys cannot be what fired.
-    DECISION LOG [0.33.0]."""
+    are never hard-deleted, so the foreign keys cannot be what fired."""
     try:
         await db.commit()
     except IntegrityError:
@@ -65,7 +64,7 @@ async def process_message(db, payload: dict) -> None:
                 batch_id=batch_id,
                 row_number=payload.get("row_number", 0),
                 external_ref=payload.get("external_ref"),
-                reason="Batch cancelled by instructor.",
+                reason="Skipped because the batch was stopped.",
             )
         )
         await _commit_once(db)
@@ -118,7 +117,7 @@ async def drain_dlq_once(db) -> int:
                     batch_id=uuid.UUID(payload["batch_id"]),
                     row_number=payload.get("row_number", 0),
                     external_ref=payload.get("external_ref"),
-                    reason="Detector processing failed after repeated retries.",
+                    reason="The detector couldn't check this row after several tries. Check it again in a new batch.",
                 )
             )
             await _commit_once(db)

@@ -110,7 +110,7 @@ describe("ChooseNameGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain(
-      "Couldn't save your name",
+      "We couldn't save your name",
     );
   });
 });

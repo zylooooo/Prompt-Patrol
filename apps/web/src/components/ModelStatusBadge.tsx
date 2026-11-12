@@ -11,8 +11,13 @@ const DOT: Record<DetectorStatus, string> = {
 
 const STATUS_TEXT: Record<DetectorStatus, string> = {
   ready: "Detector ready",
-  loading: "Detector starting up, checks will fail until it finishes",
-  unavailable: "Detector unavailable, checks will fail",
+  loading: "Detector is starting up. Checks will work once it's ready.",
+  unavailable: "Detector is unavailable. Checks won't go through until it's back.",
+};
+
+const SHORT_TEXT: Record<Exclude<DetectorStatus, "ready">, string> = {
+  loading: "detector starting up",
+  unavailable: "detector unavailable",
 };
 
 export default function ModelStatusBadge() {
@@ -22,9 +27,14 @@ export default function ModelStatusBadge() {
   const status: DetectorStatus = isError
     ? "unavailable"
     : (reported ?? "loading");
-  const label = data
-    ? `${data.modelVersion} · ${data.calibrationVersion ?? "uncalibrated"}`
-    : UNKNOWN_LABEL;
+  // Anything but ready is spelled out, not left to the dot's colour alone.
+  const known = isError || reported !== undefined;
+  const label =
+    known && status !== "ready"
+      ? SHORT_TEXT[status]
+      : data
+        ? `${data.modelVersion} · ${data.calibrationVersion ?? "uncalibrated"}`
+        : UNKNOWN_LABEL;
 
   return (
     <span

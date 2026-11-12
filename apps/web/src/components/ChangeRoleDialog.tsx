@@ -1,4 +1,5 @@
 import Modal from "./ui/Modal";
+import { describeError } from "../lib/errorText";
 import Button from "./ui/Button";
 import { useState } from "react";
 import Dropdown, { type DropdownOption } from "./ui/Dropdown";
@@ -9,7 +10,7 @@ import { displayName, roleLabel, type AppUser, type UserRole } from "../types";
 
 const ROLE_OPTIONS: DropdownOption<Exclude<UserRole, "root_admin">>[] = [
   { value: "instructor", label: "Instructor" },
-  { value: "teaching_assistant", label: "Teaching Assistant" },
+  { value: "teaching_assistant", label: "Teaching assistant" },
 ];
 
 interface ChangeRoleDialogProps {
@@ -35,12 +36,10 @@ export default function ChangeRoleDialog({
     setError(null);
     try {
       await changeRole.mutateAsync({ id: user.id, role: selected });
-      showToast(`${displayName(user)} is now ${roleLabel({ ...user, role: selected })}`);
+      showToast(`${displayName(user)} is now ${roleLabel({ ...user, role: selected })}.`);
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not save the change.",
-      );
+      setError(describeError(err, "We couldn't save the change. Try again."));
     }
   }
 

@@ -39,8 +39,8 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
         }
         description={
           unreachable
-            ? "We couldn't check your sign-in because the server didn't answer. You have not been signed out - check your connection, then try again."
-            : "The server answered with an error, so we couldn't check your sign-in. This is on our side, not yours, and you have not been signed out. Try again in a moment, and tell your administrator if it keeps happening."
+            ? "We couldn't check your sign-in because the server didn't answer. You haven't been signed out. Check your connection, then try again."
+            : "The server answered with an error, so we couldn't check your sign-in. This is on our side, not yours, and you haven't been signed out. Try again in a moment, and tell your Prompt Patrol administrator if it keeps happening."
         }
         onRetry={() => void refetch()}
       />

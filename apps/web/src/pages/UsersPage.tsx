@@ -1,4 +1,5 @@
 import SearchInput from "../components/ui/SearchInput";
+import { describeError } from "../lib/errorText";
 import SegmentedToggle, {
   type SegmentedToggleOption,
 } from "../components/ui/SegmentedToggle";
@@ -93,7 +94,7 @@ const FIELD =
 
 const ROLE_OPTIONS: DropdownOption<UserRole>[] = [
   { value: "instructor", label: "Instructor" },
-  { value: "teaching_assistant", label: "Teaching Assistant" },
+  { value: "teaching_assistant", label: "Teaching assistant" },
 ];
 
 export default function UsersPage() {
@@ -192,15 +193,12 @@ export default function UsersPage() {
         );
         return;
       }
-      setError(
-        err instanceof Error ? err.message : "Could not add the account.",
-      );
+      setError(describeError(err, "We couldn't add the account. Try again."));
     }
   }
 
   function rowFailed(verb: string, target: AppUser, err: unknown) {
-    const reason = err instanceof Error ? err.message : "Try again.";
-    showToast(`Couldn't ${verb} ${displayName(target)}. ${reason}`, {
+    showToast(`We couldn't ${verb} ${displayName(target)}. ${describeError(err, "Try again.")}`, {
       tone: "error",
     });
   }
@@ -216,12 +214,12 @@ export default function UsersPage() {
       await setActive.mutateAsync({ id: target.id, active, reason });
       const name = displayName(target);
       if (active) {
-        showToast(`${name} reactivated`);
+        showToast(`${name} reactivated.`);
       } else {
         // Deactivating is reversible, so it fires at once and offers Undo
         // rather than asking first. Instructors are the exception: their
         // assistants need a decision, which is the dialog.
-        showToast(`${name} deactivated`, {
+        showToast(`${name} deactivated.`, {
           action: {
             label: "Undo",
             onClick: () => void applyActive(target, true),
@@ -240,7 +238,7 @@ export default function UsersPage() {
       await resendInvite.mutateAsync(target.id);
       showToast(`Invite resent to ${target.email}.`);
     } catch {
-      showToast(`Couldn't resend the invite to ${target.email}. Try again.`, {
+      showToast(`We couldn't resend the invite to ${target.email}. Try again.`, {
         tone: "error",
       });
     }
@@ -405,8 +403,8 @@ export default function UsersPage() {
   return (
     <Page>
       <PageHeader
-        title="Manage All Accounts"
-        subtitle="Provision accounts for instructors and teaching assistants."
+        title="All accounts"
+        subtitle="Set up accounts for instructors and teaching assistants."
       />
 
       <section className="mt-8 shrink-0 rounded-xl bg-surface p-7 shadow-md">
@@ -514,8 +512,8 @@ export default function UsersPage() {
       {loadFailed ? (
         <ErrorState
           className="mt-6"
-          title="Could not load accounts"
-          description="Something went wrong reaching the server. Nothing has changed."
+          title="We couldn't load accounts"
+          description="Nothing has changed. Try again in a moment."
           onRetry={() => void refetch()}
         />
       ) : (

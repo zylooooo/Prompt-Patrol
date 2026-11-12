@@ -27,7 +27,7 @@ export default function CancelBatchDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Keep screening
+            Keep checking
           </Button>
           <Button variant="destructive" onClick={onConfirm} disabled={busy}>
             {busy ? "Stopping…" : "Stop batch"}

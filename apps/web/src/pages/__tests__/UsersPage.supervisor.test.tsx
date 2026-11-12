@@ -133,7 +133,7 @@ describe("UsersPage — when the roster fails to load", () => {
 
     renderPage();
 
-    await waitFor(() => screen.getByText("Could not load accounts"));
+    await waitFor(() => screen.getByText("We couldn't load accounts"));
     expect(screen.queryByText("No accounts match this filter.")).toBeNull();
   });
 
@@ -148,7 +148,7 @@ describe("UsersPage — when the roster fails to load", () => {
     renderPage();
 
     await rowFor("Teach One");
-    expect(screen.queryByText("Could not load accounts")).toBeNull();
+    expect(screen.queryByText("We couldn't load accounts")).toBeNull();
   });
 });
 
@@ -248,7 +248,7 @@ describe("UsersPage - add account form", () => {
     });
     fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
     fireEvent.click(
-      await screen.findByRole("option", { name: "Teaching Assistant" }),
+      await screen.findByRole("option", { name: "Teaching assistant" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Add account" }));
 
@@ -415,7 +415,7 @@ describe("UsersPage - pending invites", () => {
 
     await waitFor(() =>
       expect(showToastMock).toHaveBeenCalledWith(
-        "Couldn't resend the invite to ta-new@smu.edu.sg. Try again.",
+        "We couldn't resend the invite to ta-new@smu.edu.sg. Try again.",
         { tone: "error" },
       ),
     );
@@ -429,7 +429,7 @@ describe("UsersPage - SMU-only email check", () => {
     });
     fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
     fireEvent.click(
-      await screen.findByRole("option", { name: "Teaching Assistant" }),
+      await screen.findByRole("option", { name: "Teaching assistant" }),
     );
   }
 

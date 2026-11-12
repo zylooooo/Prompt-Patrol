@@ -69,6 +69,7 @@ Production runs at <https://app.prompt-patrol.com>, with every regional resource
 - **Compute.** The api, worker and detector run as separate ECS Fargate services in private subnets. The api reaches the detector over Cloud Map DNS, and the worker long-polls SQS (with a DLQ) for batch rows.
 - **Egress.** Only the api task can reach the internet, through a NAT gateway, and only for the Auth0 token exchange, JWKS and Management API. Everything else uses VPC endpoints, so the worker and detector have no internet route.
 - **Data.** Checks and batches are stored in RDS PostgreSQL over TLS `verify-full`, uploaded CSVs in S3, and secrets in Secrets Manager.
+- **Email.** Auth0 sends invite and password emails through Resend (a third-party service, Tokyo region) from `no-reply@mail.prompt-patrol.com`. Only its DKIM/SPF and DMARC records live in AWS, in Route 53.
 - **Delivery.** GitHub Actions assumes a deploy role via OIDC (no stored keys), pushes images to ECR, rolls the ECS services and syncs the SPA.
 
 The diagram source is [`docs/assets/prompt-patrol-aws-architecture.drawio`](docs/assets/prompt-patrol-aws-architecture.drawio). Edit it in draw.io and re-export the PNG when the infrastructure changes. [`infra/README.md`](infra/README.md) covers how each piece is provisioned.

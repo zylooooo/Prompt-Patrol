@@ -1,30 +1,31 @@
-# Auth0 sends the invite / password emails through SES so they come from our
-# domain. Same Region as everything else, so mail stays in Singapore.
+# Auth0 sends the invite / password emails through Resend from the subdomain
+# mail.prompt-patrol.com (Tokyo region, the closest to Singapore). The
+# subdomain keeps Resend's records off the root. The Resend API key lives only
+# in Auth0 > Branding > Email Provider, never in Terraform state or Secrets
+# Manager. Values below are copied from Resend > Domains; if Resend re-issues
+# them (e.g. the domain is deleted and re-added), update them here.
 #
-# DKIM alone gives DMARC alignment, so no custom MAIL FROM: SPF passes on
-# SES's own amazonses.com return path. DMARC starts at p=none (monitor only);
-# tighten to quarantine once real mail is seen passing.
+# DMARC starts at p=none (monitor only); it covers the subdomain too. Tighten
+# to quarantine once real mail is seen passing.
 
-locals {
-  email_from = "no-reply@prompt-patrol.com"
-}
-
-resource "aws_sesv2_email_identity" "domain" {
-  email_identity = data.aws_route53_zone.main.name
-
-  # SES's default key length; declared so the test mocks can fill in the tokens.
-  dkim_signing_attributes {
-    next_signing_key_length = "RSA_2048_BIT"
-  }
-}
-
-# Easy DKIM always issues exactly three tokens.
-resource "aws_route53_record" "dkim" {
-  count   = 3
+resource "aws_route53_record" "resend_dkim" {
   zone_id = data.aws_route53_zone.main.zone_id
-  name    = "${aws_sesv2_email_identity.domain.dkim_signing_attributes[0].tokens[count.index]}._domainkey"
+  name    = "resend._domainkey.mail"
+  type    = "TXT"
+  records = ["p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1b6uCgQtxlOEoJmXwYzxEvge/WhTpsq3m5Q2ixn8A7guMu6ea5fTk0JS8DmUXVeawXULTEpJrVA95z/qHofJh/IO6P8ebcHMgJK1Ozq0j8IqytkFNqgRHsK344AI1uCE3WT/coNHd/1Hm+7/4vNTmoYeDYTGM7cWoctmQWzyRWQIDAQAB"]
+  ttl     = 1800
+}
+
+# Resend's SPF / return-path records. Two CNAMEs, not the older MX + TXT pair.
+resource "aws_route53_record" "resend_spf" {
+  for_each = {
+    "rsend.mail" = "rsend-apne1.forge.rmta.net"
+    "send.mail"  = "send.forge.rmta.net"
+  }
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = each.key
   type    = "CNAME"
-  records = ["${aws_sesv2_email_identity.domain.dkim_signing_attributes[0].tokens[count.index]}.dkim.amazonses.com"]
+  records = [each.value]
   ttl     = 1800
 }
 
@@ -34,28 +35,4 @@ resource "aws_route53_record" "dmarc" {
   type    = "TXT"
   records = ["v=DMARC1; p=none;"]
   ttl     = 1800
-}
-
-# Auth0's SES integration only takes a static access key, so this is the one
-# IAM user in the account: a machine principal, not a human. It can send only
-# as local.email_from through this identity. The access key is created by hand
-# (`aws iam create-access-key`) and pasted straight into Auth0, so it never
-# lands in Terraform state.
-resource "aws_iam_user" "auth0_ses" {
-  name = "prompt-patrol-auth0-ses"
-}
-
-resource "aws_iam_user_policy" "auth0_ses_send" {
-  name = "send-as-no-reply"
-  user = aws_iam_user.auth0_ses.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = ["ses:SendEmail", "ses:SendRawEmail"]
-      Resource  = aws_sesv2_email_identity.domain.arn
-      Condition = { StringEquals = { "ses:FromAddress" = local.email_from } }
-    }]
-  })
 }

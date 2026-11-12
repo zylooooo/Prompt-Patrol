@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { describeError } from "../lib/errorText";
 import Modal from "./ui/Modal";
 import Button from "./ui/Button";
 import { useToast } from "../hooks/useToast";
@@ -37,7 +38,7 @@ export default function RenameDialog({
       showToast("Name updated.");
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the name.");
+      setError(describeError(err, "We couldn't save the name. Try again."));
     }
   }
 

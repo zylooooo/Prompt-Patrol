@@ -32,19 +32,19 @@ def _validate_row(fields: dict[str, str], requires_question_text: bool) -> str |
     question_text = fields.get("question_text", "").strip()
 
     if not external_ref:
-        return "external_ref is empty."
+        return "The student reference is empty."
     if len(external_ref) > EXTERNAL_REF_MAX_CHARS:
-        return f"external_ref is over {EXTERNAL_REF_MAX_CHARS} characters."
+        return f"The student reference is over {EXTERNAL_REF_MAX_CHARS} characters."
     if not answer_text:
-        return "answer_text is empty."
+        return "The answer is empty."
     if len(answer_text) < ANSWER_MIN_CHARS:
-        return f"answer_text is under {ANSWER_MIN_CHARS} characters."
+        return f"The answer is under {ANSWER_MIN_CHARS} characters, too short to check."
     if len(answer_text) > ANSWER_MAX_CHARS:
-        return f"answer_text is over {ANSWER_MAX_CHARS} characters."
+        return f"The answer is over {ANSWER_MAX_CHARS} characters."
     if question_text and len(question_text) > QUESTION_MAX_CHARS:
-        return f"question_text is over {QUESTION_MAX_CHARS} characters."
+        return f"The question is over {QUESTION_MAX_CHARS} characters."
     if requires_question_text and not question_text:
-        return "question_text is required for this detector but was missing."
+        return "The question is missing, and the detector needs it as well as the answer."
     return None
 
 
@@ -59,13 +59,21 @@ def parse_and_validate(
     upload stays the source of truth in S3."""
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
-        return [], [{"row_number": 0, "external_ref": None, "reason": "The file is empty."}]
+        return [], [
+            {
+                "row_number": 0,
+                "external_ref": None,
+                "reason": "The file is empty. Add a header row and some answers, then upload it again.",
+            }
+        ]
 
     mapping = column_mapping or {}
     header_to_field = {h: mapping.get(h, h) for h in reader.fieldnames}
     missing = set(REQUIRED_FIELDS) - set(header_to_field.values())
     if missing:
-        reason = f"Missing required column(s): {', '.join(sorted(missing))}."
+        reason = (
+            f"The file is missing a column: {', '.join(sorted(missing))}. Add it, or map one of your columns to it."
+        )
         return [], [{"row_number": 0, "external_ref": None, "reason": reason}]
 
     rows: list[dict] = []
@@ -77,7 +85,7 @@ def parse_and_validate(
                 {
                     "row_number": row_number,
                     "external_ref": None,
-                    "reason": f"File exceeds the {MAX_ROWS}-row limit; row not processed.",
+                    "reason": f"Skipped: a batch can hold up to {MAX_ROWS} rows. Check this row in a new batch.",
                 }
             )
             continue
@@ -106,7 +114,9 @@ def parse_and_validate(
     return rows, failures
 
 
-def _enqueue_rows(rows: list[dict], *, batch_id: str, actor_id: str, strictness: str, retain_answer: bool) -> list[dict]:
+def _enqueue_rows(
+    rows: list[dict], *, batch_id: str, actor_id: str, strictness: str, retain_answer: bool
+) -> list[dict]:
     """Sync, run in a thread by create_batch. Returns the rows that failed to
     enqueue; the caller records them, since the DB session belongs to the loop."""
     failed: list[dict] = []
@@ -197,7 +207,7 @@ async def create_batch(
                 batch_id=batch.id,
                 row_number=row["row_number"],
                 external_ref=row["external_ref"],
-                reason="Failed to queue row for processing.",
+                reason="We couldn't queue this row for checking. Check it again in a new batch.",
             )
         )
     if failed_rows:

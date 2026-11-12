@@ -109,7 +109,7 @@ describe("HistoryPage — teaching assistant with no instructor", () => {
     renderPage();
 
     await waitFor(() =>
-      expect(screen.getByText("Could not load your history")).toBeDefined(),
+      expect(screen.getByText("We couldn't load your history")).toBeDefined(),
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeDefined();
     expect(screen.queryByText("No checks yet")).toBeNull();

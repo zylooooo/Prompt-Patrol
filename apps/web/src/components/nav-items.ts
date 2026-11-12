@@ -7,12 +7,12 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { to: "/check", label: "Screen New Answers" },
-  { to: "/history", label: "Screening History" },
+  { to: "/check", label: "Check answers" },
+  { to: "/history", label: "Check history" },
   {
     to: "/teaching-assistants",
-    label: "Manage My Assistants",
+    label: "My teaching assistants",
     roles: ["instructor"],
   },
-  { to: "/users", label: "Manage All Accounts", roles: ["root_admin"] },
+  { to: "/users", label: "All accounts", roles: ["root_admin"] },
 ];

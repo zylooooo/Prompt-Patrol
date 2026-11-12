@@ -41,14 +41,14 @@ def test_parse_and_validate_skips_bad_rows_and_flags_them():
     assert len(failures) == 1
     assert failures[0]["row_number"] == 2
     assert failures[0]["external_ref"] == "stu-1"
-    assert "answer_text" in failures[0]["reason"]
+    assert "answer" in failures[0]["reason"]
 
 
 def test_parse_and_validate_requires_question_text_when_flagged():
     rows, failures = parse_and_validate(GOOD_CSV, column_mapping=None, requires_question_text=True)
     assert rows == []
     assert len(failures) == 2
-    assert all("question_text" in f["reason"] for f in failures)
+    assert all("question" in f["reason"] for f in failures)
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_create_batch_writes_batch_row_and_failures_and_enqueues(db_sessio
     assert progress["failed"] == 1
     assert len(progress["failures"]) == 1
     assert progress["failures"][0].external_ref == "stu-1"
-    assert "answer_text" in progress["failures"][0].reason
+    assert "answer" in progress["failures"][0].reason
 
 
 @pytest.mark.asyncio

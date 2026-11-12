@@ -145,7 +145,7 @@ describe("Sidebar — account block", () => {
   it("shows the signed-in email and role", () => {
     renderAt(asUser("root_admin"));
     expect(screen.getByText("ada@smu.edu.sg")).toBeDefined();
-    expect(screen.getByText("Admin")).toBeDefined();
+    expect(screen.getByText("Administrator")).toBeDefined();
   });
 
   it("renders without an email or role when there is no user", () => {

@@ -111,13 +111,17 @@ describe("ModelStatusBadge", () => {
     expect(screen.getByText(FALLBACK)).toBeDefined();
   });
 
-  it("keeps the old wording when the detector cannot be reached", async () => {
-    // A dead detector is not a reason to blank the badge or claim a version.
+  it("says the detector is unavailable when it cannot be reached", async () => {
+    // A dead detector is not a reason to blank the badge or claim a version,
+    // and the red dot is spelled out rather than left to colour alone.
     stubApi({ capabilitiesFail: true, statusFails: true });
 
     renderWithProviders(<ModelStatusBadge />);
 
-    await waitFor(() => expect(screen.getByText(FALLBACK)).toBeDefined());
+    await waitFor(() =>
+      expect(screen.getByText("detector unavailable")).toBeDefined(),
+    );
+    expect(screen.queryByText(/roberta/)).toBeNull();
   });
 
   it("goes green once the detector can score", async () => {
@@ -140,7 +144,9 @@ describe("ModelStatusBadge", () => {
     await waitFor(() =>
       expect(dotClass(container)).toContain("bg-status-warming"),
     );
-    expect(screen.getByText(/starting up/)).toBeDefined();
+    // Spelled out visibly, not left to the amber dot alone.
+    // (amber is also the pre-fetch default, so wait for the text itself).
+    expect(await screen.findByText("detector starting up")).toBeDefined();
   });
 
   it("goes red when the detector is down", async () => {
@@ -151,7 +157,7 @@ describe("ModelStatusBadge", () => {
     await waitFor(() =>
       expect(dotClass(container)).toContain("bg-status-down"),
     );
-    expect(screen.getByText(/unavailable/)).toBeDefined();
+    expect(screen.getByText("detector unavailable")).toBeDefined();
   });
 
   it("goes red rather than amber when the status call itself fails", async () => {

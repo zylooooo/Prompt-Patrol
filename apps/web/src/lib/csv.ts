@@ -112,12 +112,12 @@ export function parseAnswersCsv(
     return {
       rows: [],
       errors: [
-        `Unterminated quoted field starting on line ${unterminatedAtLine}. Check for a stray double quote.`,
+        `We couldn't read the file from line ${unterminatedAtLine}: a quote is opened but never closed. Check that line for a stray double quote.`,
       ],
     };
   }
   if (records.length === 0) {
-    return { rows: [], errors: ["The file is empty."] };
+    return { rows: [], errors: ["The file is empty. Add a header row and some answers, then upload it again."] };
   }
 
   const header = records[0].fields.map((heading) =>
@@ -141,10 +141,14 @@ export function parseAnswersCsv(
     }
   }
   for (const field of REQUIRED_FIELDS) {
-    if (fieldToIndex[field] === undefined) errors.push(`Missing required column: ${field}`);
+    if (fieldToIndex[field] === undefined) errors.push(
+        `The file needs an ${field} column (${FIELD_TEXT[field]}). Add one, or map one of your columns to it.`,
+      );
   }
   if (requiresQuestionText && fieldToIndex.question_text === undefined) {
-    errors.push("Missing required column: question_text");
+    errors.push(
+      `The file needs a question_text column (${FIELD_TEXT.question_text}). The detector needs the question as well as the answer.`,
+    );
   }
   const indices = fieldToIndex;
   if (errors.length > 0) {
@@ -154,12 +158,14 @@ export function parseAnswersCsv(
   const body = records.slice(1);
 
   if (body.length === 0) {
-    return { rows: [], errors: ["The file has a header row but no answers."] };
+    return { rows: [], errors: ["The file has a header row but no answers. Add some answers, then upload it again."] };
   }
   if (body.length > MAX_ROWS) {
     return {
       rows: [],
-      errors: [`The file has ${body.length} rows; the limit is ${MAX_ROWS}.`],
+      errors: [
+        `The file has ${body.length} rows, and a batch can hold up to ${MAX_ROWS}. Split it into smaller files.`,
+      ],
     };
   }
 
@@ -174,31 +180,31 @@ export function parseAnswersCsv(
 
     if (!externalRef || !answerText) {
       errors.push(
-        `Line ${rec.line}: ${!externalRef ? "external_ref" : "answer_text"} is empty.`,
+        `Line ${rec.line}: the ${FIELD_TEXT[!externalRef ? "external_ref" : "answer_text"]} is empty.`,
       );
       continue;
     }
     if (externalRef.length > EXTERNAL_REF_MAX_CHARS) {
       errors.push(
-        `Line ${rec.line}: external_ref is over ${EXTERNAL_REF_MAX_CHARS} characters.`,
+        `Line ${rec.line}: the ${FIELD_TEXT.external_ref} is over ${EXTERNAL_REF_MAX_CHARS} characters.`,
       );
       continue;
     }
     if (answerText.length < ANSWER_MIN_CHARS) {
       errors.push(
-        `Line ${rec.line}: answer_text is under ${ANSWER_MIN_CHARS} characters.`,
+        `Line ${rec.line}: the ${FIELD_TEXT.answer_text} is under ${ANSWER_MIN_CHARS} characters, too short to check.`,
       );
       continue;
     }
     if (answerText.length > ANSWER_MAX_CHARS) {
       errors.push(
-        `Line ${rec.line}: answer_text is over ${ANSWER_MAX_CHARS} characters.`,
+        `Line ${rec.line}: the ${FIELD_TEXT.answer_text} is over ${ANSWER_MAX_CHARS} characters.`,
       );
       continue;
     }
     if (questionText.length > QUESTION_MAX_CHARS) {
       errors.push(
-        `Line ${rec.line}: question_text is over ${QUESTION_MAX_CHARS} characters.`,
+        `Line ${rec.line}: the ${FIELD_TEXT.question_text} is over ${QUESTION_MAX_CHARS} characters.`,
       );
       continue;
     }
@@ -211,6 +217,14 @@ export function parseAnswersCsv(
 
   return { rows, errors };
 }
+
+// Lower-case field names for messages; BatchTab's mapping labels are the
+// title-cased version of the same words.
+const FIELD_TEXT: Record<CanonicalField, string> = {
+  external_ref: "student reference",
+  answer_text: "answer",
+  question_text: "question",
+};
 
 const FORMULA_LEAD = /^[=+\-@\t\r]/;
 
