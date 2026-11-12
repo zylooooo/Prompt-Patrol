@@ -4,13 +4,11 @@
 #   cd apps && docker compose -f docker-compose.yml -f docker-compose.desklib-meld.yml up -d --build
 #
 # The detector is two images. The base image (detector/Dockerfile.desklib-meld-base) holds both base models and the
-# release bundle; it needs MELD from a local cache (MELD's repo is gated) and is built once:
+# release bundle. It is on GHCR (public, no login needed), pinned below by digest.
 #
-#   cd apps/detector && ./scripts/prepare_desklib_meld_base.sh \
-#     && docker build -f Dockerfile.desklib-meld-base -t prompt-patrol-detector-base:desklib-meld-v1 .
-#
-# This file builds only the thin image on top (the detector code), so code changes rebuild in seconds with no tokens
-# or model files. To use a shared base image, set DETECTOR_BASE_IMAGE=ghcr.io/<org>/prompt-patrol-detector-base:...
+# This file builds only the thin image on top (the detector code), so code changes rebuild in seconds with no model
+# files. To build on a base image you built yourself (docs/desklib-meld-release.md, step 7), set
+# DETECTOR_BASE_IMAGE=prompt-patrol-detector-base:desklib-meld-v1 in apps/.env.
 #
 # To make it the default for a plain `docker compose up`, add to apps/.env (git-ignored):
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.desklib-meld.yml
@@ -32,7 +30,7 @@ services:
       context: ./detector
       dockerfile: Dockerfile.desklib-meld
       args:
-        BASE_IMAGE: ${DETECTOR_BASE_IMAGE:-prompt-patrol-detector-base:desklib-meld-v1}
+        BASE_IMAGE: ${DETECTOR_BASE_IMAGE:-ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112@sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec}
     healthcheck:
       # two large models (~0.4B + ~1B parameters) to load before the first answer
       start_period: 420s

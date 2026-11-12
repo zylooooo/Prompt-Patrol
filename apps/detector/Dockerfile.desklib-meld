@@ -2,13 +2,16 @@
 #
 # The desklib + MELD detector: the detector code on top of the base image (Dockerfile.desklib-meld-base), which
 # already holds Python, the libraries, both base models and the release bundle. Rebuilding this needs no Hugging Face
-# token, no DagsHub access and no model files, only the base image, so anyone can rebuild after a code change:
+# token, no DagsHub access and no model files, only the base image, so anyone can rebuild after a code change.
+#
+# The default base is the shared one on GHCR (public, no login needed), pinned by digest. To build on a base image
+# you built locally, pass it as BASE_IMAGE:
 #
 #   docker build -f Dockerfile.desklib-meld -t prompt-patrol-detector:desklib-meld .
-#   docker build -f Dockerfile.desklib-meld --build-arg BASE_IMAGE=ghcr.io/<org>/prompt-patrol-detector-base:desklib-meld-v1 .
+#   docker build -f Dockerfile.desklib-meld --build-arg BASE_IMAGE=prompt-patrol-detector-base:desklib-meld-v1 .
 #
 # Uses Dockerfile.desklib-meld.dockerignore, so the build context is only app/.
-ARG BASE_IMAGE=prompt-patrol-detector-base:desklib-meld-v1
+ARG BASE_IMAGE=ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112@sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec
 FROM ${BASE_IMAGE}
 
 COPY --chown=detectoruser:detectoruser app/ /app/

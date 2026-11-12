@@ -11,8 +11,9 @@
 #   ./scripts/prepare_desklib_meld_base.sh
 #   docker build -f Dockerfile.desklib-meld-base -t prompt-patrol-detector-base:desklib-meld-v1 .
 #
-# Holds golden.json (corpus text) and a copy of MELD: share it only through a private registry, and only as far as
-# MELD's gate terms allow. Uses Dockerfile.desklib-meld-base.dockerignore, not .dockerignore.
+# Holds a copy of MELD and the bundle's adapters, but not golden.json (corpus text, excluded by the dockerignore).
+# It is pushed to GHCR, where the detector package is public: never let corpus text or student answers into it.
+# Uses Dockerfile.desklib-meld-base.dockerignore, not .dockerignore.
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -36,7 +37,8 @@ RUN pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorc
 # A plain folder, not the HF cache: meld.py loads Scorer(model_dir) from a path.
 COPY --chown=detectoruser:detectoruser model/meld-base/ /app/model/meld-base/
 
-# The release bundle from DagsHub (release_desklib_meld.py --fetch): adapters, MELD head, desklib-meld.json, golden.json
+# The release bundle from DagsHub (release_desklib_meld.py --fetch): adapters, MELD head, desklib-meld.json,
+# report.json. Not golden.json: the dockerignore excludes it
 COPY --chown=detectoruser:detectoruser model/desklib-meld/ /app/model/desklib-meld/
 
 # desklib's base model (~1.7GB, public) at the revision desklib-meld.json pins, plus checks that the staged MELD is

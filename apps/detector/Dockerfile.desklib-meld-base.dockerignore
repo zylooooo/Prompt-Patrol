@@ -4,3 +4,6 @@
 !model/meld-base
 !model/desklib-meld
 **/__pycache__
+# Corpus text (23 answers), read only by the golden test, never at runtime: kept out so the image holds no answer
+# text. Mount it to run that test against the image.
+model/desklib-meld/golden.json

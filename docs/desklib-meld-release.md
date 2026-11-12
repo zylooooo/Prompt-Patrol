@@ -1,8 +1,12 @@
 # desklib + MELD detector: handoff
 
 The new detector combines two models, desklib and MELD, into one score. The model files and calibration are
-ready on DagsHub, and step 1 of the [next steps](#next-steps) downloads them into
-`apps/detector/model/desklib-meld/`. **What is left is building it into the detector and API.**
+ready on DagsHub, and step 1 of the [steps](#steps) downloads them into `apps/detector/model/desklib-meld/`.
+
+**Status (12 Nov 2026):** the detector backend, its Docker images and the local compose setup are done (branch
+`package-model`), and the detector now reports its own threshold to the API. Running locally works, and the base
+image is on GHCR. **What is left is switching production over:** see
+[what is left](#what-is-left).
 
 Compared with the desklib model live today, on the test set it **catches 70% of AI answers instead of 51%, while
 wrongly flagging half as many students** (0.5% vs 1.2%).
@@ -41,11 +45,12 @@ scores as training did, so nothing was lost in packaging.
    returns a score.
 4. Combine them: `z = 0.5 · desklib_logit / 3.332 + 0.5 · meld_score / 2.233`, then `probability = sigmoid(z)`.
 5. The API compares the probability with the threshold, **0.9458**: above means `ai_generated`, below means
-   `human_written`, and within the abstention band means `uncertain`.
+   `human_written`, and within the abstention band (**±0.005**) means `uncertain`. The detector sends the
+   threshold and band with every score, so the API needs no settings for this model.
 
 Average the two **log-odds** as in step 4, not the two probabilities. Otherwise the threshold no longer means
-"1% of students wrongly flagged". All the numbers are in `desklib-meld.json`, so code should read them from
-there and not copy them.
+"1% of students wrongly flagged". All the numbers are in `desklib-meld.json`, and the code reads them from there
+(`apps/detector/app/desklib_meld.py`).
 
 ## What's in `apps/detector/model/desklib-meld/`
 
@@ -54,12 +59,15 @@ there and not copy them.
 | `desklib-meld.json` | The config: threshold, both temperatures, the formula, base models with pinned revisions, token limits, and versions for the API |
 | `desklib-lora-adapter/` | desklib's fine-tuned weights (54 MB). Loads the same way as today's `desklib-lora-adapter/` |
 | `meld-soup-adapter/` + `meld-soup-head.safetensors` | MELD's fine-tuned weights (42 MB): three training runs averaged into one model |
-| `golden.json` | 23 answers with the probability each should get. Use it to test the new backend |
+| `golden.json` | 23 answers with the probability each should get. Use it to test the new backend. Not in the base image |
 | `report.json` | Full numbers: validation choices, test results, checks, and the abstention-band table |
 
-## Next steps
+## Steps
 
-### 1. Download the model files
+### 1. Download the model files ✅
+
+Done. Only needed again to build a new base image (step 7); everyone else gets the files inside the base image on
+GHCR.
 
 The files are not in git. Everyone downloads the same copy from DagsHub:
 
@@ -67,14 +75,20 @@ The files are not in git. Everyone downloads the same copy from DagsHub:
 cd ml-training
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once, if you don't have the venv
 cp .env.example .env    # once: your DagsHub username, a DagsHub access token, and the repo owner and name
-.venv/bin/python release_desklib_meld.py --fetch --run-id 04da6e99ed3e41c9ae6742ae5c0fcbf1
+DETECTOR_TORCH_THREADS=4 .venv/bin/python release_desklib_meld.py --fetch --run-id 04da6e99ed3e41c9ae6742ae5c0fcbf1
 ```
 
 This puts the 8 files in `apps/detector/model/desklib-meld/`, about 96 MB. It needs no GPU and no data. Keep
 `--run-id` as it is: without it, you get the newest release run instead of this one. Running it again replaces the
 folder with a fresh copy.
 
-### 2. Pick the abstention band. Do not use the API default of 0.08.
+`DETECTOR_TORCH_THREADS` is a workaround: `apps/detector/app/desklib.py` calls `os.process_cpu_count()`, which needs
+Python 3.13, and this venv is 3.11. Without it the fetch fails with `AttributeError`.
+
+### 2. Pick the abstention band ✅
+
+**Done: ±0.005**, set in `desklib_meld.py` (`ABSTENTION_BAND`) and sent to the API with every score. Do not use the
+API's default of 0.08.
 
 With this model, a band of ±0.08 (or even ±0.05) around 0.9458 marks **every** AI answer `uncertain`, so the
 detector would never flag anything. This is because the combined probability almost never goes above about 0.995.
@@ -91,53 +105,131 @@ On validation:
 **Suggested: ±0.005**, the same band desklib + RADAR uses. It halves the false flags at a cost of 3 pts of AI
 caught. Choose from this table only, never from test numbers.
 
-### 3. Decide on the stricter threshold for Mohler (optional)
+### 3. Decide on the stricter threshold for Mohler (optional, open)
 
 Mohler students are wrongly flagged more than the others: 2.1% on validation and 1.2% on test, against a 1% target.
 A stricter threshold of **0.9539** keeps every dataset within 1% on validation. It catches 70.3% of validation AI
-instead of 76.1%. The default is to keep 0.9458.
+instead of 76.1%. **For now the default, 0.9458, is kept.** The threshold now comes from the detector, so adopting
+0.9539 is a detector change, not an API setting.
 
-### 4. Build the detector backend (detector team)
+### 4. Build the detector backend ✅
 
-Copy the pattern of `apps/detector/app/ensemble.py`, which is desklib + RADAR:
-- [ ] `DETECTOR_BACKEND=desklib-meld`, which loads desklib as `desklib.py` does, but with this bundle's adapter and
+- [x] `DETECTOR_BACKEND=desklib-meld` (`apps/detector/app/desklib_meld.py`): desklib with this bundle's adapter and
   temperature.
-- [ ] Load MELD from `anon-review-meld-2026/meld` at the revision in `desklib-meld.json`, using `meld.py` from that
-  same revision. Build `Scorer(model_dir)`, merge `meld-soup-adapter` into `scorer.model.backbone`, and load
-  `meld-soup-head.safetensors` into `scorer.model` with `strict=False`. Then the score is
-  `scorer.score(clean_text(text))["score"]`. **Ignore** the `flagged` and threshold that MELD returns: they are
-  MELD's own, not ours.
-- [ ] Pin desklib's base model to the `base_revision` in `desklib-meld.json`. Today's `desklib.py` downloads it
-  without one.
-- [ ] Refuse to start if `desklib-meld.json` doesn't match the code, as `ensemble.py` does.
-- [ ] A test that scores every answer in `golden.json` and matches each probability within 0.002.
-- [ ] The Docker build copies `apps/detector/model/`, so run step 1 before building the image. Unlike the
-  desklib and RADAR adapters, these files are not committed, partly because `golden.json` holds corpus text.
-  Add `apps/detector/model/desklib-meld/` to `.gitignore` so nobody commits them by accident.
-- [ ] Measure memory and latency on the target machine (`ml-training/measure_latency.py`). MELD's base model is
-  about 4 GB and desklib's about 1.7 GB, so budget at least 6 GB. Long answers take longer, because MELD reads the
-  whole answer.
+- [x] MELD loaded with `meld.py` from the pinned revision: soup adapter merged into the backbone, head loaded with
+  `strict=False`, MELD's own `flagged` and threshold ignored. MELD comes from a copy inside the base image, not from
+  Hugging Face, because the repo is now gated (see step 7).
+- [x] desklib's base model pinned to the `base_revision` in `desklib-meld.json`.
+- [x] Refuses to start if `desklib-meld.json` doesn't match the code, or if the staged MELD is a different revision.
+- [x] `golden.json` test (`apps/detector/tests/test_desklib_meld.py`): all 23 probabilities match exactly. It runs
+  inside the image with `golden.json` mounted in (the base image leaves it out, see step 7). CI skips it, since CI
+  has no model files.
+- [x] `apps/detector/model/desklib-meld/` and `apps/detector/model/meld-base/` are in `.gitignore`.
+- [x] Docker images, in two layers:
+  - `Dockerfile.desklib-meld-base`: Python, the libraries, both base models and this bundle. Built once by
+    someone with the files, after `scripts/prepare_desklib_meld_base.sh` copies MELD from their Hugging Face cache.
+  - `Dockerfile.desklib-meld`: the base plus `app/`. Anyone can rebuild it in seconds, with no model files, only the
+    base image on GHCR (step 7).
+  - Both pin transformers 5.16.1, torch 2.14 and peft 0.20 (`requirements-desklib-meld.txt`), the versions the
+    release was scored with. The other detector images keep transformers 4.55.4.
+- [ ] Memory and latency on the production machine (`ml-training/measure_latency.py`). Locally the detector peaks at
+  **5.7 GB** and takes about 90 s to load. Long answers take longer, because MELD reads the whole answer.
 
-### 5. Configure the API
+### 5. Configure the API ✅
 
-Add `apps/docker-compose.desklib-meld.yml`, modelled on `docker-compose.ensemble.yml`:
+`apps/docker-compose.desklib-meld.yml` runs the detector. It sets no API settings, because of step 6. To make it
+the default for a plain `docker compose up`, add this to `apps/.env`:
 
-```yaml
-DETECTOR_MODEL_VERSION: desklib-meld-ensemble-v1
-DETECTOR_THRESHOLD: "0.945775"        # or 0.9539 if step 3 chose the stricter one
-ABSTENTION_BAND: "0.005"              # from step 2
-DETECTOR_CALIBRATION_VERSION: desklib3.332-meld2.233-thr0.9458-v1
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.desklib-meld.yml
 ```
 
-### 6. Recommended: one source for the threshold
+Give Docker Desktop about 12 GB of memory.
 
-Today the detector reads its numbers from the JSON, but the threshold that decides a verdict is a separate copy,
-typed into the API's compose file. Nothing checks that the two agree. If someone updates the model but not the
-compose file, the API applies a stale threshold to new scores and gives no error.
+### 6. One source for the threshold ✅
 
-The cleanest fix is for the detector to return `calibration_version` and `threshold` with each score. The API
-would then use those values, or check them against its own. This changes the contract between detector and API,
-so it is the detector team's call. If they adopt it, it should cover desklib + RADAR too.
+Every detector backend (RoBERTa, desklib, desklib + RADAR, desklib + MELD) now sends `model_version`,
+`calibration_version`, `threshold` and `abstention_band` with each score and on `/health`, and the API applies those
+values and records them on each check. The API's `DETECTOR_MODEL_VERSION`, `DETECTOR_CALIBRATION_VERSION`,
+`DETECTOR_THRESHOLD` and `ABSTENTION_BAND` are now only a fallback for older detector images. When one is set and
+disagrees, the detector's value is used and a warning is logged. Switching models is now only a matter of which
+detector runs.
+
+### 7. Share the base image ✅
+
+**Pushed 12 Nov 2026** to the existing `prompt-patrol-detector` package on GHCR, for both x86_64 (ECS) and
+ARM (Macs). Each machine pulls only its own architecture, about 5.9 GB:
+
+```
+ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112
+  @sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec
+```
+
+The tag follows the manual-push convention (`ml-<name>-<yyyymmdd>`), so it can be repointed. Everything that uses it
+(`Dockerfile.desklib-meld`, `apps/docker-compose.desklib-meld.yml`, CI) pins the digest, not only the tag. It is the
+**base layer, not a runnable detector**: it has no `CMD`. The runnable image is `Dockerfile.desklib-meld` on top.
+
+The package is **public**, like every image CI pushes there (`infra/README.md`), so pulling it needs no login, and
+nothing needs to go in `apps/.env`: the compose file and the Dockerfile default to this image.
+
+What it holds: Python and the libraries, desklib's and MELD's base models, and the release bundle's adapters, MELD
+head, `desklib-meld.json` and `report.json`. It does **not** hold `golden.json` (corpus text):
+`Dockerfile.desklib-meld-base.dockerignore` leaves it out, since only the golden test reads it. Never let corpus
+text or student answers into this image: it is public. The adapters were trained on student answers but hold no
+answer text, like `desklib-lora-adapter/`, which is in git and in the desklib images.
+
+`anon-review-meld-2026/meld` became **gated** (manual approval) around 27 Oct 2026, so the revision this model was
+trained on (`8990324a`) can no longer be downloaded without an approved account. Its gate terms were checked and
+allow this copy. The cluster's Hugging Face cache also holds the Oct release (`ddfc9c78`), used in E3. Copy it off
+the cluster if we might ever need it.
+
+#### Building and pushing a new base image
+
+Only needed when the bundle, the base models or the libraries change. It needs the bundle (step 1) and MELD
+`8990324a` in your Hugging Face cache:
+
+```bash
+cd apps/detector
+./scripts/prepare_desklib_meld_base.sh
+docker login ghcr.io                        # GitHub username + a classic token with write:packages
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.desklib-meld-base \
+  --label org.opencontainers.image.source=https://github.com/zylooooo/Prompt-Patrol \
+  -t ghcr.io/zylooooo/prompt-patrol-detector:ml-<yourname>-<yyyymmdd> --push .
+docker buildx imagetools inspect ghcr.io/zylooooo/prompt-patrol-detector:ml-<yourname>-<yyyymmdd>
+docker logout ghcr.io
+```
+
+Never tag it with a commit SHA, which is what CI uses. `imagetools inspect` should list `linux/amd64` and
+`linux/arm64`, plus two `unknown/unknown` entries: those are buildx's provenance attestations (build metadata), not
+images. Copy the top `Digest` into `Dockerfile.desklib-meld`, `apps/docker-compose.desklib-meld.yml`, CI and this
+step.
+
+### 8. Switch production over (open)
+
+The API and the detector can be deployed in either order (step 6).
+
+- [x] The base image is on GHCR (step 7).
+- [x] CD workflow, "Build detector image": `file: ./apps/detector/Dockerfile.desklib-meld` and cache scope
+  `detector-desklib-meld`. No build arg: the Dockerfile's `BASE_IMAGE` default is the pinned GHCR image, which is
+  public, so pull-request builds need no GHCR login either.
+- [x] `infra/compute.tf`, detector task: `memory` from `"4096"` to `"8192"`. The model would run out of memory at
+  4 GB.
+- [ ] **`terraform apply` before the merge.** The deploy copies each service's latest task definition and swaps only
+  the image, so the 8 GB only reaches the deploy if Terraform has registered it first. Services ignore task
+  definition changes, so the apply rolls nothing by itself.
+- [ ] After a deploy has run the new detector for a while: delete `DETECTOR_MODEL_VERSION`,
+  `DETECTOR_CALIBRATION_VERSION`, `DETECTOR_THRESHOLD` and `ABSTENTION_BAND` from the API and worker environment in
+  `infra/compute.tf`. Left in, they don't change any verdict, but they log a mismatch warning. Not in the same
+  change: a rollback re-uses the latest task definition, and an API from before step 6 needs them.
+- [ ] After the deploy: the screening page shows `desklib-meld-ensemble-v1 · desklib3.332-meld2.233-thr0.9458-v1`,
+  there are no mismatch warnings in the API logs, and step 4's latency measurement is done.
+
+## What is left
+
+1. Switch production over ([step 8](#8-switch-production-over-open)).
+2. Optional: decide on the Mohler threshold ([step 3](#3-decide-on-the-stricter-threshold-for-mohler-optional-open)).
+3. Optional: fix `os.process_cpu_count()` in `desklib.py` so the ml-training scripts run on Python 3.11 without the
+   workaround in step 1.
 
 ## Known limits
 
