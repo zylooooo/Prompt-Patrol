@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1
+#
+# Base image for the desklib + MELD detector: Python, the libraries, both base models and the release bundle. The
+# slow, credentialed part, built once and shared; code changes rebuild only Dockerfile.desklib-meld on top of it.
+#
+# MELD's repo (anon-review-meld-2026/meld) is gated, so this image does not download it: it copies the pinned
+# revision from a local Hugging Face cache, staged by prepare_desklib_meld_base.sh. Build it only on a machine that
+# has that revision cached and the bundle fetched:
+#
+#   cd apps/detector
+#   ./scripts/prepare_desklib_meld_base.sh
+#   docker build -f Dockerfile.desklib-meld-base -t prompt-patrol-detector-base:desklib-meld-v1 .
+#
+# Holds golden.json (corpus text) and a copy of MELD: share it only through a private registry, and only as far as
+# MELD's gate terms allow. Uses Dockerfile.desklib-meld-base.dockerignore, not .dockerignore.
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Healthcheck in docker-compose.yml runs curl inside this container
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 detectoruser \
+    && mkdir -p /home/detectoruser/.cache/huggingface \
+    && chown -R detectoruser:detectoruser /app /home/detectoruser
+USER detectoruser
+ENV PATH="/home/detectoruser/.local/bin:${PATH}"
+
+# CPU-only torch first (see the default Dockerfile for why), at the version the release was scored with
+COPY requirements-desklib-meld.txt ./
+RUN pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-desklib-meld.txt
+
+# MELD's base model (~3.8GB) at the bundle's pinned revision, copied in by prepare_desklib_meld_base.sh.
+# A plain folder, not the HF cache: meld.py loads Scorer(model_dir) from a path.
+COPY --chown=detectoruser:detectoruser model/meld-base/ /app/model/meld-base/
+
+# The release bundle from DagsHub (release_desklib_meld.py --fetch): adapters, MELD head, desklib-meld.json, golden.json
+COPY --chown=detectoruser:detectoruser model/desklib-meld/ /app/model/desklib-meld/
+
+# desklib's base model (~1.7GB, public) at the revision desklib-meld.json pins, plus checks that the staged MELD is
+# the revision the bundle was calibrated on. refs/main is pointed at the pinned revision so an offline
+# snapshot_download without a revision (today's desklib.py) also resolves to it.
+ENV HF_HOME=/home/detectoruser/.cache/huggingface
+RUN python - <<'EOF'
+import json, sys
+from pathlib import Path
+from huggingface_hub import snapshot_download
+
+cfg = json.loads(Path("/app/model/desklib-meld/desklib-meld.json").read_text())
+meld_rev = Path("/app/model/meld-base/REVISION").read_text().strip()
+if meld_rev != cfg["meld"]["base_revision"]:
+    sys.exit(f"model/meld-base is MELD@{meld_rev}, but the bundle needs @{cfg['meld']['base_revision']}: "
+             "re-run scripts/prepare_desklib_meld_base.sh")
+for f in ("meld.py", "config.json", "meld_config.json", "model.safetensors", "tokenizer.json"):
+    if not (Path("/app/model/meld-base") / f).is_file():
+        sys.exit(f"model/meld-base/{f} is missing")
+
+repo, rev = cfg["desklib"]["base_model"], cfg["desklib"]["base_revision"]
+path = Path(snapshot_download(repo, revision=rev))
+(path.parent.parent / "refs").mkdir(exist_ok=True)
+(path.parent.parent / "refs" / "main").write_text(rev)
+print(f"desklib {repo}@{rev[:12]} and MELD @{meld_rev[:12]} ready")
+EOF
+ENV HF_HUB_OFFLINE=1
+
+ENV MELD_BASE_DIR=/app/model/meld-base \
+    DESKLIB_MELD_DIR=/app/model/desklib-meld \
+    DESKLIB_ADAPTER_DIR=/app/model/desklib-meld/desklib-lora-adapter
+LABEL org.opencontainers.image.title="prompt-patrol-detector-base" \
+      org.opencontainers.image.version="desklib-meld-v1"

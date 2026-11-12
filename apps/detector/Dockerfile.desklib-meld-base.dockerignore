@@ -1,0 +1,6 @@
+# Build context for Dockerfile.desklib-meld-base: only the requirements and the two model folders it copies.
+*
+!requirements-desklib-meld.txt
+!model/meld-base
+!model/desklib-meld
+**/__pycache__
