@@ -3,16 +3,20 @@ import sys
 
 import pandas as pd
 
-from splitting import SPLITS_PATH
+from splitting import SPLITS_PATH, question_keys
 
 logger = logging.getLogger(__name__)
 
 
 def find_leaking_questions(df: pd.DataFrame) -> dict[str, list[str]]:
-    """Questions that appear in more than one partition, mapped to which ones."""
-    question_partitions = df.groupby("question")["partition"].unique()
+    """Questions that appear in more than one partition, mapped to which ones. Questions are
+    compared after folding case and whitespace, and a row without question text raises
+    ValueError rather than being skipped."""
+    keys = question_keys(df)
+    question_partitions = df.groupby(keys)["partition"].unique()
+    spelling = df["question"].groupby(keys).first()  # reported as written, not folded
     leaking = question_partitions[question_partitions.apply(len) > 1]
-    return {question: sorted(partitions) for question, partitions in leaking.items()}
+    return {spelling[key]: sorted(partitions) for key, partitions in leaking.items()}
 
 
 def main() -> None:
@@ -26,7 +30,7 @@ def main() -> None:
             logger.error("  %r -> %s", question, partitions)
         sys.exit(1)
 
-    logger.info("No leakage: every question stays within a single partition (%d questions checked)", df["question"].nunique())
+    logger.info("No leakage: every question stays within a single partition (%d questions checked)", question_keys(df).nunique())
 
 
 if __name__ == "__main__":

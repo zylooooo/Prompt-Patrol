@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from splitting import build_manifest, compute_split_version, split_by_question
 
@@ -80,3 +81,22 @@ def test_build_manifest_contents():
     assert set(manifest["partitions"]) == {"train", "val", "test"}
     assert manifest["partitions"]["train"]["rows"] == len(splits["train"])
     assert manifest["partitions"]["train"]["questions"] == splits["train"]["question"].nunique()
+
+
+def test_split_by_question_keeps_case_and_whitespace_variants_together():
+    df = _make_corpus()
+    # half the answers to each question spell it differently
+    df.loc[df.index % 2 == 1, "question"] = df["question"].str.upper() + "  "
+    splits = split_by_question(df)
+
+    question_sets = {name: set(split_df["question"].str.lower().str.strip()) for name, split_df in splits.items()}
+    assert question_sets["train"].isdisjoint(question_sets["val"])
+    assert question_sets["train"].isdisjoint(question_sets["test"])
+    assert question_sets["val"].isdisjoint(question_sets["test"])
+
+
+def test_split_by_question_refuses_rows_without_question_text():
+    df = _make_corpus()
+    df.loc[3, "question"] = None
+    with pytest.raises(ValueError, match="no question text"):
+        split_by_question(df)

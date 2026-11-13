@@ -67,3 +67,11 @@ def test_clean_handles_missing_score_columns_gracefully():
 
     assert log["dropped_columns"] == []
     assert "id" in cleaned.columns
+
+
+def test_clean_does_not_log_missing_text_as_an_encoding_fix():
+    df = pd.DataFrame([_row("missing.1", "Q1", "an answer", instructor_answer=None), _row("ok.1", "Q2", "another")])
+
+    _, log = clean(df)
+
+    assert log["encoding_fixed_ids"] == []
