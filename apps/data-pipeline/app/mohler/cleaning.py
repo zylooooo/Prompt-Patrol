@@ -31,7 +31,8 @@ def clean(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     for col in TEXT_COLUMNS:
         before = df[col]
         after = before.apply(_fix_encoding)
-        fixed_ids.update(df.loc[before != after, "id"])
+        # NaN != NaN is True, so a missing text would otherwise be logged as fixed
+        fixed_ids.update(df.loc[before.notna() & (before != after), "id"])
         df[col] = after
 
     # keep="first" keeps the lowest id.

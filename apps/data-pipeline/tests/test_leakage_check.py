@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from leakage_check import find_leaking_questions
 
@@ -32,3 +33,27 @@ def test_find_leaking_questions_clean_split_finds_nothing():
     )
 
     assert find_leaking_questions(df) == {}
+
+
+def test_find_leaking_questions_matches_case_and_whitespace_variants():
+    df = pd.DataFrame(
+        [
+            {"question": "What is a stack?", "partition": "train"},
+            {"question": "what is a  stack? ", "partition": "test"},
+        ]
+    )
+
+    assert find_leaking_questions(df) == {"What is a stack?": ["test", "train"]}
+
+
+def test_find_leaking_questions_refuses_rows_without_question_text():
+    df = pd.DataFrame(
+        [
+            {"question": "Q1", "partition": "train"},
+            {"question": None, "partition": "train"},
+            {"question": None, "partition": "test"},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="no question text"):
+        find_leaking_questions(df)

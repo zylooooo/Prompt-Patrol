@@ -24,21 +24,41 @@ def compute_split_version() -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:8]
 
 
+def normalise_question(text: str) -> str:
+    """Case and whitespace folded, so two spellings of one question count as one (the rule corpus/build.py uses)."""
+    return " ".join(str(text).lower().split())
+
+
+def question_keys(df: pd.DataFrame) -> pd.Series:
+    """The normalised question of every row. A row without question text would fall out of every
+    per-question grouping (and so out of every leakage check), so it stops the run instead."""
+    missing = df["question"].isna() | (df["question"].astype(str).str.strip() == "")
+    if missing.any():
+        ids = df.loc[missing, "id"].tolist()[:3] if "id" in df.columns else list(df.index[missing][:3])
+        raise ValueError(f"{int(missing.sum())} rows have no question text, first {ids}")
+    return df["question"].map(normalise_question)
+
+
 def split_by_question(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Split rows into train/val/test, keeping every answer to a question together.
+    Questions that differ only in case or whitespace are kept together too.
     """
+    keys = question_keys(df)
+    # Label each group by its first-sorting original spelling, not the folded key: GroupShuffleSplit
+    # orders groups by label, so this leaves the split unchanged wherever no spellings merge.
+    groups = df["question"].groupby(keys).transform("min")
     test_size = SPLIT_RATIOS["test"]
     train_size = SPLIT_RATIOS["train"]
     val_size = SPLIT_RATIOS["val"]
 
     test_splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=SPLIT_SEED)
-    train_val_idx, test_idx = next(test_splitter.split(df, groups=df["question"]))
+    train_val_idx, test_idx = next(test_splitter.split(df, groups=groups))
     train_val_df = df.iloc[train_val_idx]
     test_df = df.iloc[test_idx]
 
     relative_val_size = val_size / (train_size + val_size)
     val_splitter = GroupShuffleSplit(n_splits=1, test_size=relative_val_size, random_state=SPLIT_SEED)
-    train_idx, val_idx = next(val_splitter.split(train_val_df, groups=train_val_df["question"]))
+    train_idx, val_idx = next(val_splitter.split(train_val_df, groups=groups.iloc[train_val_idx]))
     train_df = train_val_df.iloc[train_idx]
     val_df = train_val_df.iloc[val_idx]
 
