@@ -343,6 +343,15 @@ cores' bandwidth), not 2x.
 **What would prove the hypothesis wrong:** S rising clearly with answer length, or Phase 11
 cutting S by more than 10%.
 
+**Outcome (2026-11-13/14, all on Xeon 8259CL).** Hypothesis held. Phase 10: S = 2.236 s; idle
+holds 27/min, breaks 30; under batch holds 17, breaks 21 → AC4 fails. 10b: 1,939 ms fixed +
+19 ms/word. Phase 11 (2 threads): S = 2.241 s, rejected. Phase 12: 4 vCPU / 2 threads S = 1.099 s
+(2.0×), 4 threads 1.194 s (worse); under batch holds 44, breaks 49, memory 91% of 8 GB. AC4
+headline at 40/min on 4 vCPU / 10 GB / 2 threads passed twice: p95 5.77 / 5.57 s, 0 errors,
+0 504s, 0 dropped, batch 500/500 in ~35.6 min, memory 66% (third repeat lost to a local runner
+kill). Arms were temporary CLI task definitions. Adopted 2026-11-14: compute.tf 4096 / 10240,
+`detector_torch_threads` default 2 (rev 38). Report: https://claude.ai/artifact/7Zv4r23jS3RGZDyc1a6QbK
+
 ## Runs
 
 - 2026-10-23T16:24Z `20261023-162238_stub_smoke` smoke stub sync **ok** p50=13.8 p95=40.5 err=0.0% 504=0 drain=5s
@@ -384,3 +393,14 @@ cutting S by more than 10%.
 - 2026-10-25T06:58Z `20261025-060128_desklib_headline-loaded` headline-loaded desklib async **ok** p50=6727.1 p95=8539.2 err=0.0% 504=0 drain=3200s
 - 2026-10-25T07:15Z `20261025-071021_desklib_calibrate` calibrate desklib async **ok** p50=778.7 p95=888.5 err=0.0% 504=0 drain=-
 - 2026-11-12T16:58Z `20261112-165521_stub_smoke` smoke stub sync **ok** p50=69.4 p95=145.2 err=0.0% 504=0 drain=6s
+- 2026-11-12T17:43Z `20261112-173457_desklib-meld_calibrate` calibrate desklib-meld sync **ok** p50=2236.1 p95=2656.7 err=0.0% 504=0 drain=-
+- 2026-11-12T17:50Z `20261112-174413_desklib-meld_ramp-idle` ramp-idle desklib-meld sync **ok** p50=2558.8 p95=5907.9 err=0.0% 504=0 drain=-
+- 2026-11-12T18:47Z `20261112-184704_desklib-meld_ramp-idle` ramp-idle desklib-meld sync **aborted** p50=? p95=? err=?% 504=? drain=- (session invalid, log in again)
+- 2026-11-12T19:11Z `20261112-184801_desklib-meld_ramp-idle` ramp-idle desklib-meld sync **ok** p50=2554.8 p95=10022.2 err=28.8% 504=109 drain=-
+- 2026-11-12T19:33Z `20261112-191427_desklib-meld_ramp-batch` ramp-batch desklib-meld sync **ok** p50=10007.7 p95=10023.0 err=50.0% 504=114 drain=-,-,- (safety abort (error rate > 50%))
+- 2026-11-13T06:49Z `20261113-064119_desklib-meld_calibrate` calibrate desklib-meld sync **ok** p50=2240.7 p95=2743.0 err=0.0% 504=0 drain=-
+- 2026-11-13T07:03Z `20261113-065702_desklib-meld_calibrate` calibrate desklib-meld sync **ok** p50=1098.6 p95=1298.0 err=0.0% 504=0 drain=-
+- 2026-11-13T07:15Z `20261113-070945_desklib-meld_calibrate` calibrate desklib-meld sync **ok** p50=1193.8 p95=1448.2 err=0.0% 504=0 drain=-
+- 2026-11-13T07:50Z `20261113-072754_desklib-meld_ramp-batch` ramp-batch desklib-meld sync **ok** p50=10005.8 p95=10024.2 err=50.0% 504=349 drain=-,-,-,- (safety abort (error rate > 50%))
+- 2026-11-13T09:31Z `20261113-085223_desklib-meld_headline-loaded` headline-loaded desklib-meld sync **ok** p50=4477.7 p95=5769.4 err=0.0% 504=0 drain=2140s
+- 2026-11-13T10:12Z `20261113-093235_desklib-meld_headline-loaded` headline-loaded desklib-meld sync **ok** p50=4502.1 p95=5564.9 err=0.0% 504=0 drain=2130s
