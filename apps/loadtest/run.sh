@@ -3,7 +3,7 @@
 # Needs only Docker (Compose v2) and bash; runs in Git Bash on Windows and on Linux.
 # See README.md for the phases and how to read the results.
 #
-#   run.sh <phase> [--target local|aws] [--model baseline|desklib] [--rate PER_MIN]
+#   run.sh <phase> [--target local|aws] [--model baseline|desklib|desklib-meld] [--rate PER_MIN]
 #                  [--runs N] [--variant sync|async] [--service-time S]
 #
 # The local stack runs only `smoke` (stub detector, harness check), `render` and
@@ -27,7 +27,7 @@ die() { echo "run.sh: $*" >&2; exit 1; }
 phase="${1:-}"
 [[ " $PHASES " == *" $phase "* ]] || die "usage: run.sh <$(echo "$PHASES" | tr ' ' '|')> [options], see README.md"
 shift
-model=desklib rate="" runs=1 variant=sync service_time="" target=local
+model=desklib-meld rate="" runs=1 variant=sync service_time="" target=local
 detector=stub  # the local stack only ever runs the e2e stub
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,7 +40,8 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown option $1" ;;
   esac
 done
-[[ "$model" == baseline || "$model" == desklib ]] || die "--model must be baseline or desklib"
+[[ "$model" == baseline || "$model" == desklib || "$model" == desklib-meld ]] ||
+  die "--model must be baseline, desklib or desklib-meld"
 [[ "$variant" == sync || "$variant" == async ]] || die "--variant must be sync or async"
 # These go into meta.json unquoted, so they must be plain numbers.
 [[ -z "$rate" || "$rate" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--rate must be a number (req/min)"
@@ -96,7 +97,9 @@ if [[ "$target" == aws ]]; then
   # shellcheck source=/dev/null
   source "$env_file"
   set +a
-  [[ "$model" == desklib ]] || die "only desklib is deployed on AWS (spec D4)"
+  # desklib + MELD replaced desklib on 2026-11-12 (PP-312); the desklib runs are PP-533's.
+  [[ "$model" == desklib-meld ]] || die "only desklib-meld is deployed on AWS"
+  expected_version=desklib-meld-ensemble-v1  # what the detector reports; preflight checks it
   detector="$model"
   # Read once here and exported, so --runs N children don't prompt again.
   if [[ -z "${SESSION_TOKEN:-}" ]]; then
@@ -306,6 +309,18 @@ else
   echo "Preflight against $LOADTEST_BASE_URL ($label, $phase)..."
   r="$(api_get /api/auth/me)"
   [[ "${r##*$'\n'}" == 200 ]] || preflight_abort "session invalid, log in again"
+  # The 4 h absolute cap never slides. A cookie expiring mid-phase 401s every request,
+  # which reads as a breaking point, so the phase must fit. Estimate = warm-up + the
+  # phase's load + 10 min (batch setup, the ~3 min CloudWatch wait, slack).
+  est_s="$(awk -v p="$phase" -v s="${service_time:-5}" -v q="$scale" -v d="${duration_s:-0}" 'BEGIN {
+    run = (p == "calibrate") ? 100 * s : (p ~ /^ramp-/) ? 9 * 130 / q : (p == "headline-idle") ? 600 / q : (p == "headline-loaded") ? d : 240 / q
+    print int(60 + run + 600) }')"
+  expires="$(sed -n 's/.*"absolute_expires_at": *"\([^"]*\)".*/\1/p' <<<"$r")"
+  # Guarded: GNU `date -d ""` is today's midnight, not an error.
+  expires_s="$([[ -n "$expires" ]] && date -d "$expires" +%s 2>/dev/null || true)"
+  [[ -n "$expires_s" ]] || preflight_abort "session expiry unreadable"
+  left_s=$(( expires_s - $(date +%s) ))
+  (( left_s > est_s )) || preflight_abort "session expires in ${left_s}s, phase needs ~${est_s}s: log in again"
   depth="$(aws sqs get-queue-attributes --queue-url "$LOADTEST_QUEUE_URL" \
     --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
     --query 'Attributes.[ApproximateNumberOfMessages,ApproximateNumberOfMessagesNotVisible]' --output text |
@@ -317,6 +332,8 @@ else
   r="$(api_get /api/detector/status)"
   model_version="$(sed -n 's/.*"model_version": *"\([^"]*\)".*/\1/p' <<<"$r")"
   [[ "$(sed -n 's/.*"status": *"\([^"]*\)".*/\1/p' <<<"$r")" == ready ]] || preflight_abort "detector not ready"
+  # A rollback or a stale task would otherwise label another model's numbers as this one's.
+  [[ "$model_version" == "$expected_version" ]] || preflight_abort "detector serves ${model_version:-unknown}, not $expected_version"
 
   docker run --rm -v "$(cd "$HERE/../.." && pwd):/repo" -w /repo/apps/loadtest python:3.13-slim python make_batch_csv.py \
     --rows "$batch_rows" --seed "$BATCH_SEED" --out-dir "/repo/apps/loadtest/results/$run_id" >/dev/null

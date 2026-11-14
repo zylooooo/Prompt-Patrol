@@ -29,7 +29,7 @@ SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 GRID, AXIS, CRITICAL = "#e1e0d9", "#c3c2b7", "#d03b3b"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
 
-MODEL_NAMES = {"desklib": "desklib", "baseline": "baseline (RoBERTa)", "stub": "stub detector"}
+MODEL_NAMES = {"desklib-meld": "desklib + MELD", "desklib": "desklib", "baseline": "baseline (RoBERTa)", "stub": "stub detector"}
 RAMP = {"ramp-idle": "idle", "ramp-batch": "under batch"}
 HEAD = {"headline-idle": "idle", "headline-loaded": "loaded"}
 KEEP = {"check_ok", "check_ok_duration", "http_reqs", "http_req_duration", "dropped_iterations"}

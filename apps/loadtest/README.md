@@ -33,7 +33,8 @@ Every other phase refuses to run against the local stack.
 
 ## Phases (AWS)
 
-Run each phase for **desklib** (the production model).
+Run each phase for **desklib-meld** (the production model since 2026-11-12, PP-312).
+The desklib results are PP-533's (EXPERIMENT_LOG.md Entries 0–8).
 
 | # | Phase | Answers |
 |---|---|---|
@@ -49,7 +50,9 @@ Run each phase for **desklib** (the production model).
 Every AWS phase runs on the load generator with `--target aws` (see the session
 runbook below). Before k6 starts, `run.sh` checks that the session is valid, the
 batches queue is empty, the detector has one running task and reports `ready`;
-any failure aborts the run (`status: aborted`, with the reason). After k6 it
+any failure aborts the run (`status: aborted`, with the reason). It also aborts if the
+detector reports a model other than `desklib-meld-ensemble-v1`, or if the session's 4 h
+absolute cap would pass before the phase ends (log in again and paste the new value). After k6 it
 waits about 3 minutes and pulls CloudWatch data into `stats.csv` / `alb.csv`. A
 restarted detector task marks the run `aborted`; load-generator CPU above 70%
 marks it `invalid` (`load generator saturated`).
@@ -58,8 +61,8 @@ Choosing R (Phase 4): the suggested default is about 50% of the under-batch
 breaking point from Phase 3b, plus a "realistic classroom" rate. Write the reasoning
 in the `rate-choice` block of `RESULTS.md` and in the log.
 
-Options: `--target local|aws` (default local), `--model baseline|desklib` (default
-desklib; AWS serves desklib only), `--rate PER_MIN`, `--runs N`,
+Options: `--target local|aws` (default local), `--model baseline|desklib|desklib-meld`
+(default desklib-meld; AWS serves desklib-meld only), `--rate PER_MIN`, `--runs N`,
 `--variant sync|async` (default sync), `--service-time S` (otherwise taken from the
 newest ok calibrate run for that model).
 
@@ -152,7 +155,7 @@ No CD deploys during a sitting: a task restart aborts the run in progress.
    vi EXPERIMENT_LOG.md   # write the Phase 2 prediction under ## Notes
    # Dry run of the whole path (WAF, cookie, presigned PUT, CloudWatch), kept apart.
    QUICK=1 bash run.sh ramp-idle --target aws
-   mkdir -p results/_dryrun && mv results/*_desklib_ramp-idle results/_dryrun/
+   mkdir -p results/_dryrun && mv results/*_desklib-meld_ramp-idle results/_dryrun/
    bash run.sh ramp-idle --target aws
    bash run.sh ramp-batch --target aws
    bash run.sh headline-idle --target aws --rate R --runs 3
