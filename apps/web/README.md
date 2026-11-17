@@ -18,6 +18,20 @@ Stop the container first. Both use port 5173, and if it is taken Vite quietly
 moves to the next free port — so you end up testing the image you built rather
 than the edits you just made.
 
+The compose file doesn't publish the API's port (it mirrors AWS, where only the
+ALB reaches the API), so publish it for development in an untracked
+`apps/docker-compose.override.yml`, which compose loads automatically:
+
+```yaml
+services:
+  api:
+    ports: ["127.0.0.1:8000:8000"]
+    networks: [edge] # added to its others; internal networks can't publish ports
+  postgres: # only if you want psql from the host
+    ports: ["127.0.0.1:5432:5432"]
+    networks: [edge]
+```
+
 Vite proxies `/api` to the API on `localhost:8000`, the same way nginx does in
 the container, so the session cookie and every request behave the same in
 both. Sign-in still goes through Auth0, so provision yourself first (see the

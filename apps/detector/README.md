@@ -24,109 +24,80 @@ browser talks to the API, which calls `DETECTOR_URL`.
 longer than the model reads, so only its start was scored.
 
 `/health` answers `503` while the model loads in a background thread, which is
-what makes compose's health gate meaningful: the API and worker wait for a
-detector that can actually score, instead of the first real check paying the
-load time and timing out.
+what makes compose's health gate meaningful: the worker waits for a detector
+that can actually score, instead of the first batch row paying the load time
+and timing out. The API only waits for it to start, as in ECS, so sign-in works
+while the models load.
 
-## Backends
+## The model
 
-`DETECTOR_BACKEND` picks the model. Each has its own Dockerfile, because the
-weights are baked into the image.
+**desklib + MELD** (`app/desklib_meld.py`): the fine-tuned desklib detector
+and MELD, each over its own temperature, their log-odds averaged, so
+`raw_score` is a calibrated probability. It is the only model in this service,
+and production and `apps/docker-compose.yml` both run it. Everything about the
+model, its calibration and the release is in
+[`docs/desklib-meld-release.md`](../../docs/desklib-meld-release.md).
 
-|                     | `roberta` (default)                             | `desklib`                                                                |
-| ------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
-| Image               | `Dockerfile`                                    | `Dockerfile.desklib`                                                     |
-| Model               | `openai-community/roberta-base-openai-detector` | `desklib/ai-text-detector-academic-v1.01` + the LoRA adapter in `model/` |
-| `model_version`     | `roberta-base-openai-detector-v0`               | `desklib-academic-lora-v1`                                               |
-| Tokens read         | 512                                             | 256, as in training                                                      |
-| Score               | The model's "fake" class probability            | Temperature-scaled sigmoid of the logit — a calibrated probability       |
-| Image size / memory | ~500 MB model                                   | ~1.7 GB model; give Docker about 8 GB                                    |
+| File                  | What it is                                                                       |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `app/baseline.py`     | What isn't model-specific: the scoring lock, the load status, the warm-up        |
+| `app/desklib_meld.py` | The model: loads both parts, checks the bundle, scores                           |
+| `app/desklib.py`      | desklib pieces `desklib_meld.py` builds on (model class, sigmoid, torch threads) |
+| `app/clean.py`        | The text cleanup applied before scoring                                          |
+| `Dockerfile`          | The runnable image: `app/` on top of the base image                              |
+| `Dockerfile.base`     | The base image: Python, the libraries, both models and the release bundle        |
 
-The desklib backend also runs the text through `app/clean.py` before scoring,
-the same cleanup the training corpus had. Only the copy sent to the model is
-cleaned; the answer the API stores is untouched. `clean.py` is a hand-kept
-copy of `apps/data-pipeline/app/corpus/clean.py` — change both together, or
-the model scores text that looks different from what it trained on.
+The text goes through `app/clean.py` before scoring, the same cleanup the
+training corpus had. Only the copy sent to the models is cleaned; the answer the
+API stores is untouched. `clean.py` is a hand-kept copy of
+`apps/data-pipeline/app/corpus/clean.py`: change both together, or the model
+scores text that looks different from what it trained on.
 
-To run desklib, use the compose override from `apps/`:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.desklib.yml up -d --build
-```
-
-The override also sets the matching model version, threshold and abstention
-band on the API and worker. Switching the detector image without them leaves
-the API judging desklib scores against the baseline's thresholds.
-
-### desklib + RADAR (`ensemble`, opt-in)
-
-`DETECTOR_BACKEND=ensemble` (`app/ensemble.py`, `Dockerfile.ensemble`) scores
-each answer with the desklib backend above **and** with RADAR
-(`TrustSafeAI/RADAR-Vicuna-7B`, pinned revision) plus the project's LoRA
-adapter in `model/radar-lora-adapter/`. Each logit is divided by its own
-temperature, the two are averaged, and the sigmoid of that is the calibrated
-probability. The text is cleaned once with `app/clean.py` and both models cut
-it at 256 tokens.
-
-The weights, temperatures and threshold come from `model/ensemble.json`,
-written by `ml-training/calibrate_ensemble.py`: it picked the RADAR seed and
-fitted the 1% FPR threshold on validation only, then tested once. Against the
-live desklib on the extended test set (answers of 10+ words), it catches 63.9%
-of AI answers vs 51.4%, and 69% vs 41% of heavily paraphrased ones, at a
-false-positive rate of 1.57% vs 1.18%. `ensemble.json` names the desklib
-version and temperature it was calibrated with, and the service refuses to
-start if they don't match this image's desklib: retrain or swap desklib, and
-the calibration has to be rerun.
-
-The cost: about 1.5x desklib's CPU time per answer, and ~3.7 GB of memory once
-loaded (~4.2 GB peak while desklib loads), so give Docker about 10 GB, and a
-Fargate task 8 GB. RADAR is licensed for non-commercial use only.
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.ensemble.yml up -d --build
-```
+The earlier models (the RoBERTa baseline, desklib on its own, and desklib +
+RADAR) were removed on 2026-11-17. They are in git history.
 
 ## Why the images look the way they do
 
-- **The model is baked in.** The Dockerfile downloads the weights at build
-  time and then sets `HF_HUB_OFFLINE=1`, so startup is a local disk read and a
-  missing model is a loud startup failure rather than a silent download in
-  production. Don't mount a cache volume over the HuggingFace cache path — it
-  would shadow the baked model with whatever an older build left behind.
+- **Two layers.** `Dockerfile.base` holds the models and is built by hand,
+  because MELD's repo is gated. It is public on GHCR and pinned by digest.
+  `Dockerfile` adds only `app/`, so anyone can rebuild it in seconds with no
+  credentials. See the release doc, step 7.
+- **The model is baked in.** The base image sets `HF_HUB_OFFLINE=1`, so startup
+  is a local disk read and a missing model is a loud startup failure rather
+  than a silent download in production. Don't mount a volume over the model
+  paths: it would shadow the baked model.
 - **torch comes from the CPU-only index.** The default PyPI wheel bundles CUDA
   libraries this service never uses and adds several GB to the image.
-- **`app/` is copied last**, so editing code doesn't invalidate the model
-  layer and trigger a re-download.
-- **Requests are serialised.** The tokenizer refuses concurrent use, and a
+- **Requests are serialised.** The tokenizers refuse concurrent use, and a
   forward pass is CPU-bound anyway, so one lock guards scoring. Batch rows are
   therefore scored one at a time, however many arrive together.
 
 ## Running it on its own
 
+It needs the model files, so in practice run the image (`docker compose up
+detector` from `apps/`). Outside Docker, stage the bundle and MELD's base model
+as for the base image (`scripts/prepare_desklib_meld_base.sh`), install as for
+the tests below, then:
+
 ```sh
-pip install -r requirements.txt     # requirements-desklib.txt for desklib
-cd app && python main.py            # serves on :8001; DETECTOR_PORT to change
+cd app && DESKLIB_MELD_DIR=../model/desklib-meld MELD_BASE_DIR=../model/meld-base python main.py   # serves on :8001
 ```
 
-Outside Docker the model downloads to your HuggingFace cache on first start.
-For desklib, also set `DETECTOR_BACKEND=desklib` and
-`DESKLIB_ADAPTER_DIR=../model/desklib-lora-adapter`. For the ensemble, set
-`DETECTOR_BACKEND=ensemble`, the same `DESKLIB_ADAPTER_DIR`,
-`RADAR_ADAPTER_DIR=../model/radar-lora-adapter` and
-`ENSEMBLE_SETTINGS=../model/ensemble.json`.
-
-desklib runs torch with one thread per CPU the process may use, logged at
-startup as `torch threads: ...`. `DETECTOR_TORCH_THREADS` overrides it; set it
-when Docker caps CPU with `--cpus`, which that count does not see.
+torch runs one thread per CPU the process may use, logged at startup as
+`torch threads: ...`. `DETECTOR_TORCH_THREADS` overrides it (production and the
+compose file set 2); set it when Docker caps CPU with `--cpus`, which that count
+does not see.
 
 ## Tests
 
 ```sh
+pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu   # first, as in Dockerfile.base
 pip install -r requirements-dev.txt
 pytest
 ```
 
-The tests don't load a real model. `ruff check .` is the linter.
+The tests don't load a real model, except the golden test, which runs only inside the image with the release's
+`golden.json` mounted (see the release doc) and is skipped elsewhere. `ruff check .` is the linter.
 
 If you change the `/score` request or response shape, update
 `apps/e2e/detector-stub.py` too — the end-to-end suite runs against that stub,

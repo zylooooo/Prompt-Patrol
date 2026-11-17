@@ -30,17 +30,17 @@ Dockerfile copies it to `/app`). Import across packages through the package's
 import time, so a bad configuration stops the container on start rather than
 failing on the first request.
 
-| Variables                                                                                         | Notes                                                                                |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `API_HOST`, `API_PORT`, `DB_URL`                                                                  | Required                                                                             |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`                                               | Read by the Postgres container, which shares this file                               |
-| `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH0_REDIRECT_URI`                    | Required. The authentication provider                                                |
-| `AUTH0_M2M_CLIENT_ID`, `AUTH0_M2M_CLIENT_SECRET`                                                  | Required. A separate M2M application for the Management API, used to provision       |
-| `SESSION_SECRET`                                                                                  | Required. Signs the OAuth state cookie                                               |
-| `FRONTEND_URL`                                                                                    | Defaults to `http://localhost:5173`                                                  |
-| `ENVIRONMENT`                                                                                     | `dev` (default), `staging` or `prod`                                                 |
-| `DETECTOR_URL`                                                                                    | Defaults to `http://detector:8001`                                                   |
-| `AWS_REGION`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_PUBLIC`, `S3_BATCHES_BUCKET`, `SQS_*`         | Batch uploads. Endpoint URLs name LocalStack locally; leave unset in AWS             |
+| Variables                                                                                         | Notes                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `API_HOST`, `API_PORT`, `DB_URL`                                                                  | Required                                                                                                                                                                                                                                               |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`                                               | Read by the Postgres container, which shares this file                                                                                                                                                                                                 |
+| `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH0_REDIRECT_URI`                    | Required. The authentication provider                                                                                                                                                                                                                  |
+| `AUTH0_M2M_CLIENT_ID`, `AUTH0_M2M_CLIENT_SECRET`                                                  | Required. A separate M2M application for the Management API, used to provision                                                                                                                                                                         |
+| `SESSION_SECRET`                                                                                  | Required. Signs the OAuth state cookie                                                                                                                                                                                                                 |
+| `FRONTEND_URL`                                                                                    | Defaults to `http://localhost:5173`                                                                                                                                                                                                                    |
+| `ENVIRONMENT`                                                                                     | `dev` (default), `staging` or `prod`                                                                                                                                                                                                                   |
+| `DETECTOR_URL`                                                                                    | Defaults to `http://detector:8001`                                                                                                                                                                                                                     |
+| `AWS_REGION`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_PUBLIC`, `S3_BATCHES_BUCKET`, `SQS_*`         | Batch uploads. Endpoint URLs name LocalStack locally; leave unset in AWS                                                                                                                                                                               |
 | `DETECTOR_MODEL_VERSION`, `DETECTOR_CALIBRATION_VERSION`, `DETECTOR_THRESHOLD`, `ABSTENTION_BAND` | Leave unset: the detector reports its model, calibration, threshold and band with every score, and the API applies those. Only a fallback for detectors too old to report them; if one is set and disagrees, the detector wins and a warning is logged |
 
 Outside `dev`, two more checks refuse to start the app, because both failures
@@ -52,8 +52,7 @@ are otherwise silent — sign-in appears to work and then every request is `401`
 
 The four detector variables describe whichever model the detector is serving,
 so they change together with the detector image rather than per developer.
-Unset, they match the default RoBERTa baseline; `apps/docker-compose.desklib.yml`
-sets them when it swaps in the desklib detector. Keep them commented out in
+Every current detector reports its own values, so the API needs none of them. Keep them commented out in
 `.env` — the desklib threshold applied to the baseline model would flag almost
 nothing, without an error.
 
@@ -64,7 +63,7 @@ failed migration stops the container. To apply one you have just written
 without restarting:
 
 ```bash
-docker exec prompt-patrol-api alembic upgrade head
+docker compose exec api alembic upgrade head   # from apps/
 ```
 
 Run it inside the container so it uses the container's `DB_URL` — that way
@@ -79,7 +78,7 @@ password. The Auth0 call happens before the local row is committed, so a
 failure there leaves nothing behind.
 
 ```bash
-docker exec prompt-patrol-api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"
+docker compose exec api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"
 ```
 
 Must be run as `-m scripts.provision_user`, not

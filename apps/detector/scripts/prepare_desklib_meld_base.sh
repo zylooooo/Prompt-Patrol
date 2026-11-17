@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stages MELD's base model for Dockerfile.desklib-meld-base: copies the revision the release bundle pins out of the
+# Stages MELD's base model for Dockerfile.base: copies the revision the release bundle pins out of the
 # local Hugging Face cache into model/meld-base/ (real files, not cache symlinks), checks the weights' hash, and
 # records the revision. MELD's repo is gated, so the cache is the source, not a download.
 #
@@ -37,4 +37,4 @@ ACTUAL=$(shasum -a 256 "$DEST/model.safetensors" | cut -d' ' -f1)
 echo "$REV" > "$DEST/REVISION"
 
 echo "staged $(du -sh "$DEST" | cut -f1) in $DEST (weights sha256 OK). Next:
-  docker build -f Dockerfile.desklib-meld-base -t prompt-patrol-detector-base:desklib-meld-v1 ."
+  docker build -f Dockerfile.base -t prompt-patrol-detector-base:desklib-meld-v1 ."

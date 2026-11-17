@@ -328,8 +328,8 @@ locals {
 
   # api and worker import the same settings.py, so both need API_HOST/PORT and
   # an https FRONTEND_URL on the redirect URI's host. No AWS_ENDPOINT_URL*:
-  # boto3 resolves the real endpoints. Calibration values exactly as in
-  # apps/docker-compose.desklib.yml.
+  # boto3 resolves the real endpoints. The calibration values below are the
+  # desklib fallback, only used by a detector too old to report its own.
   app_env = [for k, v in {
     ENVIRONMENT                  = "prod"
     API_HOST                     = "0.0.0.0"
@@ -428,8 +428,8 @@ resource "aws_ecs_task_definition" "worker" {
   }])
 }
 
-# No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib-meld
-# is baked into Dockerfile.desklib-meld. 8 GB: desklib + MELD peaks at ~5.7 GB
+# No secrets, no task role: text in, score out. desklib + MELD is the only
+# model in apps/detector/Dockerfile. 8 GB: desklib + MELD peaks at ~5.7 GB
 # locally (two models), over the 4 GB that desklib alone fitted in (PP-533:
 # ~3 GB). Apply before the deploy that ships it: CD copies the latest
 # revision. 2 vCPU stays: PP-533 Phase 9 measured 1 vCPU 58% slower on

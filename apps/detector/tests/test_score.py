@@ -10,13 +10,7 @@ from main import app
 
 client = TestClient(app)
 
-# the roberta baseline, which the tests run as: no fitted threshold, so the API applies its own defaults
-UNCALIBRATED = {
-    "model_version": baseline.MODEL_VERSION,
-    "calibration_version": None,
-    "threshold": None,
-    "abstention_band": None,
-}
+# What desklib + MELD reports once its bundle is loaded (the bundle isn't in the test environment).
 CALIBRATED = {
     "model_version": "desklib-meld-ensemble-v1",
     "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
@@ -42,20 +36,12 @@ def test_health_is_503_until_the_model_is_loaded():
     assert response.json()["status"] == "loading"
 
 
-def test_health_is_200_once_the_model_is_ready():
-    baseline._set_status("ready")
-
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ready", **UNCALIBRATED}
-
-
-def test_health_reports_the_calibration_of_the_running_model_once_ready():
+def test_health_is_200_with_the_calibration_of_the_running_model_once_ready():
     baseline._set_status("ready")
     with patch("main.calibration", return_value=CALIBRATED):
         response = client.get("/health")
 
+    assert response.status_code == 200
     assert response.json() == {"status": "ready", **CALIBRATED}
 
 
@@ -78,41 +64,32 @@ def test_a_failed_load_is_reported_as_failed_not_as_still_loading():
     assert response.json()["status"] == "failed"
 
 
-def test_warm_up_leaves_the_model_ready():
-    def fake_pipeline(texts, **kwargs):
-        return [[{"label": "Fake", "score": 0.9}]]
-
-    with patch("baseline._pipeline", return_value=fake_pipeline):
+def test_warm_up_runs_one_score_and_leaves_the_model_ready():
+    with patch("desklib_meld.score", return_value=(0.5, False)) as scored:
         baseline.warm_up()
 
+    scored.assert_called_once()
     assert baseline.status() == "ready"
 
 
 def test_warm_up_survives_a_model_that_will_not_load():
     """A crashed warm-up must leave the service answering /health, not dead: the
     status is how anyone finds out what went wrong."""
-    with patch("baseline._pipeline", side_effect=OSError("no model files")):
+    with patch("desklib_meld.score", side_effect=OSError("no model files")):
         baseline.warm_up()
 
     assert baseline.status() == "failed"
     assert client.get("/health").status_code == 503
 
 
-def test_score_happy_path():
-    with patch("routes.score_text", return_value=Score(raw_score=0.87, truncated=False)):
-        response = client.post("/score", json={"text": "some answer text"})
-
-    assert response.status_code == 200
-    assert response.json() == {"raw_score": 0.87, "truncated": False, **UNCALIBRATED}
-
-
-def test_score_reports_the_threshold_and_band_fitted_for_the_running_model():
+def test_score_returns_the_score_with_the_threshold_and_band_fitted_for_the_running_model():
     with (
         patch("routes.score_text", return_value=Score(raw_score=0.97, truncated=True)),
         patch("routes.calibration", return_value=CALIBRATED),
     ):
         response = client.post("/score", json={"text": "some answer text"})
 
+    assert response.status_code == 200
     assert response.json() == {"raw_score": 0.97, "truncated": True, **CALIBRATED}
 
 
@@ -123,8 +100,8 @@ def test_score_rejects_missing_text():
 
 def test_score_text_is_safe_under_concurrent_threads():
     """routes.py hands every request to a worker thread, so two rows of a batch
-    can enter score_text at once. The pipeline's fast tokenizer is a Rust object
-    that raises "RuntimeError: Already borrowed" when that happens - which
+    can enter score_text at once. The models' fast tokenizers are Rust objects
+    that raise "RuntimeError: Already borrowed" when that happens - which
     surfaced as one row in twelve failing with a 503.
 
     The fake below is deliberately hostile in the same way: it refuses re-entry
@@ -135,31 +112,18 @@ def test_score_text_is_safe_under_concurrent_threads():
     from baseline import score_text
 
     class _NotThreadSafe:
-        """Stands in for the HF pipeline: raises if two threads overlap."""
+        """Stands in for desklib_meld.score: raises if two threads overlap."""
 
         def __init__(self):
             self._busy = False
-            self.tokenizer = self
 
-        def _enter(self):
+        def __call__(self, text):
             if self._busy:
                 raise RuntimeError("Already borrowed")
             self._busy = True
-
-        def _leave(self):
+            time.sleep(0.005)
             self._busy = False
-
-        def encode(self, text, add_special_tokens=True):
-            self._enter()
-            time.sleep(0.005)
-            self._leave()
-            return [0] * 5
-
-        def __call__(self, texts, **kwargs):
-            self._enter()
-            time.sleep(0.005)
-            self._leave()
-            return [[{"label": "Fake", "score": 0.9}]]
+            return 0.9, False
 
     fake = _NotThreadSafe()
     errors: list[BaseException] = []
@@ -170,7 +134,7 @@ def test_score_text_is_safe_under_concurrent_threads():
         except BaseException as exc:  # noqa: BLE001 - the assertion is the report
             errors.append(exc)
 
-    with patch("baseline._pipeline", return_value=fake):
+    with patch("desklib_meld.score", side_effect=fake):
         threads = [threading.Thread(target=run) for _ in range(8)]
         for t in threads:
             t.start()

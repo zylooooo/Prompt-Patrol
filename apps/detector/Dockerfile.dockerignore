@@ -1,0 +1,4 @@
+# Build context for Dockerfile: only the detector code. The models come from the base image.
+*
+!app
+**/__pycache__

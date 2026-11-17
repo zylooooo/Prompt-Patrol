@@ -1,36 +1,19 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
+#
+# The desklib + MELD detector: the detector code on top of the base image (Dockerfile.base), which
+# already holds Python, the libraries, both base models and the release bundle. Rebuilding this needs no Hugging Face
+# token, no DagsHub access and no model files, only the base image, so anyone can rebuild after a code change.
+#
+# The default base is the shared one on GHCR (public, no login needed), pinned by digest. To build on a base image
+# you built locally, pass it as BASE_IMAGE:
+#
+#   docker build -t prompt-patrol-detector:desklib-meld .
+#   docker build --build-arg BASE_IMAGE=prompt-patrol-detector-base:desklib-meld-v1 .
+#
+# Uses Dockerfile.dockerignore, so the build context is only app/.
+ARG BASE_IMAGE=ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112@sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec
+FROM ${BASE_IMAGE}
 
-WORKDIR /app
-
-# Healthcheck in docker-compose.yml runs curl inside this container
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user and switch to it.
-RUN useradd -m -u 1000 detectoruser \
-    && mkdir -p /home/detectoruser/.cache/huggingface \
-    && chown -R detectoruser:detectoruser /app /home/detectoruser
-USER detectoruser
-ENV PATH="/home/detectoruser/.local/bin:${PATH}"
-
-# Install dependencies. torch from the CPU-only index first: PyPI's default
-# wheel bundles CUDA/cuDNN libraries this CPU-only service never uses, which on
-# x86_64 balloons the image by several GB
-COPY requirements.txt .
-RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements.txt
-
-# Bake the ~500MB model into the image so startup is a local disk read. Keep the
-# name in step with baseline.MODEL_NAME - it cannot be imported from here
-# without putting app/ above this layer, which would re-download on every code
-# change. HF_HUB_OFFLINE afterwards turns a cache miss into a loud startup
-# failure instead of a silent download in production.
-ENV HF_HOME=/home/detectoruser/.cache/huggingface
-RUN python -c "from transformers import pipeline; \
-    pipeline('text-classification', model='openai-community/roberta-base-openai-detector', top_k=None)"
-ENV HF_HUB_OFFLINE=1
-
-# Last, so editing the app does not invalidate the layers above it.
-COPY app/ /app/
+COPY --chown=detectoruser:detectoruser app/ /app/
 
 CMD ["python", "main.py"]

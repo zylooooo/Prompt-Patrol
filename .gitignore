@@ -290,3 +290,6 @@ apps/detector/model/meld-base/
 # desklib + MELD bundle: downloaded from DagsHub by apps/detector/fetch_model.py, never committed
 # (docs/desklib-meld-release.md; golden.json holds corpus text). The pin is model/desklib-meld.lock.json.
 apps/detector/model/desklib-meld/
+
+# Per-developer compose additions (published dev ports), see apps/web/README.md
+apps/docker-compose.override.yml

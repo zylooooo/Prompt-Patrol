@@ -260,8 +260,11 @@ jobs:
           cache: pip
           cache-dependency-path: apps/detector/requirements*.txt
 
+      # CPU-only torch first, as Dockerfile.base does: otherwise peft pulls the multi-GB CUDA build from PyPI.
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-dev.txt
 
       - name: Run unit tests
         run: pytest
@@ -447,7 +450,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./apps/detector
-          file: ./apps/detector/Dockerfile.desklib-meld
+          file: ./apps/detector/Dockerfile
           tags: ${{ env.IMAGE_PREFIX }}-detector:${{ github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           push: ${{ env.PUBLISH == 'true' }}

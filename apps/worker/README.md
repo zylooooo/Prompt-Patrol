@@ -16,7 +16,10 @@ The image is built from the **repo root**, not `apps/worker`: the Dockerfile
 copies `apps/api/app/` in next to the worker package and installs both
 requirement files. That is why the compose `build.context` is `..`. It also
 reads `apps/api/.env`, so it uses the same database, queue URLs and detector
-settings as the API — including the desklib overrides.
+settings as the API. The threshold and abstention band come from the detector
+itself, as for the API. `Dockerfile.dockerignore` next to the Dockerfile
+allow-lists only what it copies, so a build doesn't send the whole repo to
+Docker.
 
 ## The loop
 
