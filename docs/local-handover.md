@@ -71,6 +71,9 @@ link to set the password:
 docker compose exec api sh -c "cd /app && python -m scripts.provision_user add <your-email> root_admin"
 ```
 
+Running it again is safe. If the email already has a local account it does nothing and sends no email. After
+`docker compose down -v` it reuses the credential Auth0 already has for that address instead of sending a new invite.
+
 After that, add instructors and TAs from the Users page.
 
 ## Stop, restart, reset
@@ -81,6 +84,10 @@ docker compose up -d           # start again
 docker compose down -v         # delete everything, including the database
 docker compose logs api        # first place to look if something doesn't start
 ```
+
+If the worker crash-loops and `docker compose logs localstack` says "No such file or directory", the queues were never
+created: `apps/api/localstack-init.sh` has Windows (CRLF) line endings. It must stay LF. The repository forces this,
+but a zip or copy of a working copy on Windows can undo it.
 
 ## How it is laid out
 
@@ -95,17 +102,44 @@ network rather than per port. Uploaded batch CSVs are not expired after 60 days 
 
 ## Auth0 settings (for the team)
 
-The hand-over uses its own production Auth0 Client
+The hand-over uses the one and only production Auth0 tenant set up by the development team.
+
+> ***Note: ONLY applicable if there are going to be multiple instances of Prompt Patrol running***
+>
+> **Use one Auth0 tenant per install.** The app assumes one tenant maps to one database. Seeding the same root admin on
+> several machines is fine (the seed reuses the existing credential). But adding a user on one machine deletes any
+> Auth0 credential that has no local account on that machine, and deleting a user removes the shared credential, so
+> the other machines' accounts stop working ("not set up yet"). If several people run their own copy, give each its
+> own tenant, or have them share one database.
+
+Tenant setup checklist:
 
 - Regular Web Application. Allowed Callback URLs `http://localhost:5173/api/auth/callback`. Allowed Logout URLs
   `http://localhost:5173` and `http://localhost:5173/login`.
-- Only the Database connection enabled, with Disable Sign Ups on.
-- An M2M application authorized for the Management API with `create:users`, `read:users` and `delete:users`.
+- Only the Database connection (`Username-Password-Authentication`, the name the API expects) enabled, with Disable
+  Sign Ups on. **Delete the default `google-oauth2` social connection** on a new tenant. It uses Auth0's dev keys
+  (the warning on the sign-in page) and bypasses Disable Sign Ups.
+- Attack Protection on (brute-force protection at least).
+- An M2M application authorized for the Management API with `create:users`, `read:users` and `delete:users`. Do not
+  widen it.
+- The Post Login Action that clears `pending_activation`.
+- The three email templates from `docs/assets/`. The Change Password one already links to
+  `http://localhost:5173/login`.
+- Tenant Settings: friendly name "Prompt Patrol", the logo URL, error page left on Generic.
+- Universal Login: the theme, and the custom text (English) for login-id, login-password, the five reset-password
+  screens and logout. The reset-password-success description reads "Your password has been changed. Head back to
+  Prompt Patrol at `http://localhost:5173` to sign in." The `logout-aborted` screen can't be edited on a new tenant;
+  leave it on Auth0's default.
 - Rotate both client secrets after the hand-over.
-- This tenant is separate from the team's dev and production tenant, so provisioning here does not lock anyone out
-  there.
 
-*Some of the features in Auth0 might not work. E.g., the hyperlink to link back to the login page is only applicable for `https` links. Since we are running locally, the redirection will not work after password resets, new account set up etc.*
+Running locally limits what Auth0 can link back to. Auth0 only accepts https, non-localhost addresses for the
+Application Login URI and the custom error page, and "Redirect To" is enterprise-only. So the Login URI is left
+empty on purpose, and the way back to the app is:
+
+- the clickable `http://localhost:5173/login` link in the invite and reset emails, and
+- a plain-text line on the reset-success page (HTML in custom text is shown as text, so it is not clickable).
+
+Errors during sign-in show Auth0's generic error page.
 
 ## The `prompt-patrol.com` domain
 
@@ -121,7 +155,8 @@ domain lapses, or the team's AWS account or Resend account is closed, these stop
   address is the team's S3 bucket behind CloudFront. Without the domain the images break. Keeping them costs a small
   monthly amount: S3 storage and CloudFront requests, plus about USD 0.50/month for the Route 53 hosted zone and a
   yearly domain renewal (auto-renew is off; the domain expires on 2027-10-20).
-- **"Back to Prompt Patrol" link.** The Auth0 Application Login URI points at `https://app.prompt-patrol.com/login`.
+- **Sign-in link.** The Application Login URI is empty (see above), so nothing depends on the domain for the link
+  back to the app.
 
 To keep everything working, either:
 
