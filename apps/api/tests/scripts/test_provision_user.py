@@ -79,3 +79,29 @@ async def test_add_user_reuses_existing_auth0_credential(_provision_user_module,
     async with session_factory() as db:
         user = (await db.execute(select(User).where(User.email == "reseeded@smu.edu.sg"))).scalar_one()
         assert user.auth0_sub == "auth0|existing-id"
+
+
+@pytest.mark.asyncio
+async def test_add_user_noop_does_not_touch_auth0(_provision_user_module, monkeypatch):
+    # Re-running for an email that already has a local row must not call Auth0 at all:
+    # a no-op that created a credential and sent an invite email was the bug.
+    provision_user, _ = _provision_user_module
+    calls = []
+
+    async def fake_find(email):
+        calls.append("find")
+        return None
+
+    async def fake_invite(email):
+        calls.append("invite")
+        return "auth0|first-id"
+
+    monkeypatch.setattr(provision_user, "find_auth0_user_id_by_email", fake_find)
+    monkeypatch.setattr(provision_user, "invite_user", fake_invite)
+
+    await provision_user.add_user("again@smu.edu.sg", "root_admin")
+    assert calls == ["find", "invite"]
+
+    calls.clear()
+    await provision_user.add_user("again@smu.edu.sg", "root_admin")
+    assert calls == []

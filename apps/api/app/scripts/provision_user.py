@@ -22,20 +22,21 @@ async def add_user(email: str, role: str) -> None:
     into."""
     email = normalize_email(email)
 
-    # Check if user already exists in Auth0, ensure idempotency across different developers.
-    auth0_user_id = await find_auth0_user_id_by_email(email)
-    newly_invited = auth0_user_id is None
-    if newly_invited:
-        # If it is new user without Auth0 account, invite them and send invitation email.
-        auth0_user_id = await invite_user(email)
-    else:
-        print(f"Auth0 already has a credential for {email} - reusing it instead of re-inviting.")
-
     async with async_session() as db:
         existing = await db.scalar(select(User).where(User.email == email, User.status != UserStatusEnum.deleted))
         if existing is not None:
+            # Checked before touching Auth0: a no-op must not create a credential or send an email.
             print(f"{email} is already provisioned as {existing.role.value} ({existing.id}) - no-op.")
             return
+
+        # Check if user already exists in Auth0, ensure idempotency across different developers.
+        auth0_user_id = await find_auth0_user_id_by_email(email)
+        newly_invited = auth0_user_id is None
+        if newly_invited:
+            # If it is new user without Auth0 account, invite them and send invitation email.
+            auth0_user_id = await invite_user(email)
+        else:
+            print(f"Auth0 already has a credential for {email} - reusing it instead of re-inviting.")
 
         # If user already exists in Auth0 create a row in Local DB to insert them with the updated Auth0_Sub
         user = User(id=uuid.uuid4(), email=email, role=UserRoleEnum(role), auth0_sub=auth0_user_id)
