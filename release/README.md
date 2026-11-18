@@ -1,8 +1,15 @@
 # Prompt Patrol: run it on your own machine
 
-Prompt Patrol is an instructor-facing tool that flags potentially AI-generated short student answers for human review.
-This package runs the whole application on one machine with Docker. There is nothing to build: Docker downloads the
-ready-made images. **Sign-in uses Auth0, so the machine must be online.**
+Prompt patrol is an instructor-facign tool that flags potentially AI-generated short student answers for human review.
+This guide will walk you through how to runs the whole application locally on your own machine using docker images,
+orchestrated with Docker Compose. All released images are stored in our personal
+[GitHub Container Registry (GHCR)](<https://github.com/zylooooo?tab=packages&repo_name=Prompt-Patrol>). Running the
+[`compose.yml`](compose.yml) will pull the latest released images from GHCR. Finally, the app will be orchestrated with
+`Docker Compose`.
+
+> **NOTE**: There are some parts of the application like the Authentication Provider (Auth0) and the SMTP service (Resend)
+> which requires an internet connection. It will be a sharead tenant across every local instance of Prompt Patrol that
+> might be run.
 
 ## What you need
 
@@ -29,10 +36,20 @@ defaults to half your RAM, which on a 16 GB machine is too little.
   memory=12GB
   ```
 
+**Less than 16 GB of RAM?** It may still work, but expect trouble. Give Docker as much as you can while leaving Windows
+or macOS about 3 GB, add swap to ride out the load peak (`swap=8GB` under `[wsl2]`; on Docker Desktop, Settings →
+Resources → Swap), and close other heavy programs until `docker compose ps` shows the detector healthy. If the detector
+keeps restarting or shows `Exited (137)`, Docker is still short of memory: use a machine with 16 GB or more.
+
 ## 1. Get the package
 
-Download `prompt-patrol-<version>.zip` from the Release page and unzip it. Open a terminal in the unzipped folder. It
-contains `compose.yml`, `.env.example`, `localstack-init.sh` and this file.
+Download the latest `prompt-patrol-<version>.zip` from the [Release page](https://github.com/zylooooo/Prompt-Patrol/releases)
+and unzip it. Open a terminal in the unzipped folder. It should contain the following files:
+
+1. [`compose.yml`](compose.yml)
+2. [`.env.example`](./.env.example)
+3. [`localstack-init.sh`](localstack-init.sh)
+4. `README.md` *(this file)*
 
 ## 2. Configure
 
@@ -52,6 +69,8 @@ Fill in every blank value in `.env`:
 
 Leave everything else as it is. If a required value is blank, the API stops at start and `docker compose logs api`
 names it. (A blank `POSTGRES_*` value shows up in `docker compose logs postgres` instead.)
+
+> *If you are unsure of what values to put in the `.env` file, you can reach out to the development team for assistance.
 
 ## 3. Start
 
@@ -121,4 +140,5 @@ Images are pinned to the version in `compose.yml` and never change underneath yo
 
 Only the web app (port 5173) and the S3 stand-in (port 4566, for batch CSV uploads from the browser) can be reached
 from the machine, and only from `localhost`. The database, detector and worker have no ports and no internet access.
-Only the API can reach the internet, for Auth0.
+Only the API can reach the internet, for Auth0. The architecture design is intentional and we want to follow our
+intended production environment on cloud as closely as possible.
