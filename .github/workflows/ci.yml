@@ -258,10 +258,19 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: apps/detector/requirements*.txt
+          # Only the files this job installs: the key changes with them, and the
+          # desklib/MELD requirements are image-only.
+          cache-dependency-path: |
+            apps/detector/requirements.txt
+            apps/detector/requirements-dev.txt
 
+      # CPU torch first, as the Dockerfiles do: PyPI's torch is the CUDA build
+      # (~3 GB of NVIDIA wheels), which overflowed the repo's 10 GB Actions
+      # cache. --index-url, not --extra-index-url: only torch comes from there.
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install "$(grep '^torch==' requirements.txt)" --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-dev.txt
 
       - name: Run unit tests
         run: pytest
@@ -442,6 +451,9 @@ jobs:
       # top of a base image with both models, built by hand because MELD's repo
       # is gated. The Dockerfile pins that base by digest, and it is public, so
       # pull-request builds need no login. See docs/desklib-meld-release.md.
+      # No build cache: the only step is COPY app/, and caching it exported the
+      # base's ~5.4 GB of model layers (already on GHCR) into the 10 GB Actions
+      # cache, evicting the api/worker/web caches.
       - name: Build detector image
         id: detector
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -451,8 +463,6 @@ jobs:
           tags: ${{ env.IMAGE_PREFIX }}-detector:${{ github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           push: ${{ env.PUBLISH == 'true' }}
-          cache-from: type=gha,scope=detector-desklib-meld
-          cache-to: type=gha,mode=max,scope=detector-desklib-meld
 
       - name: Read Node version from .nvmrc
         id: node
