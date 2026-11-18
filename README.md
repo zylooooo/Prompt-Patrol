@@ -1,6 +1,9 @@
 # Prompt-Patrol
 
 [![CI](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml/badge.svg)](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/zylooooo/Prompt-Patrol?include_prereleases&label=release)](https://github.com/zylooooo/Prompt-Patrol/releases)
+
+**Want to run it on your own machine?** Download the bundle from the [latest release](https://github.com/zylooooo/Prompt-Patrol/releases); the README inside it walks through setup. Pre-built images are in [Packages](https://github.com/zylooooo/Prompt-Patrol/pkgs/container/prompt-patrol-api).
 
 SMU CS480 Capstone Project: a web-based triage tool that flags potentially AI-generated short student answers for an instructor to review. It is a triage aid, not a verdict system. Every flag is a prompt for human judgement, and `uncertain` is a first-class outcome rather than an error.
 
