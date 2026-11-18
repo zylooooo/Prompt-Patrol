@@ -1,0 +1,138 @@
+# Prompt Patrol, the whole stack on one machine, from prebuilt images (no build step, no source code needed).
+# desklib + MELD detector, API, batch worker, SPA, Postgres, and LocalStack standing in for S3 + SQS.
+# See README.md. Configuration lives in .env (copy .env.example).
+#
+# Docker needs about 12 GB of memory: the detector peaks at ~5.7 GB scoring single answers and reached ~7.3 GB under
+# sustained batch load in production.
+#
+# Images come from ${PP_REGISTRY}, at ${PP_VERSION}. The version default below is stamped by the release workflow.
+
+services:
+  frontend:
+    image: ${PP_REGISTRY:-ghcr.io/zylooooo}/prompt-patrol-web:${PP_VERSION:-0.0.0}
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:5173:80
+    networks: [edge, alb]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    image: ${PP_REGISTRY:-ghcr.io/zylooooo}/prompt-patrol-api:${PP_VERSION:-0.0.0}
+    restart: unless-stopped
+    env_file: ./.env
+    networks: [alb, egress, isolated-api, data-api]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      detector:
+        condition: service_started # API can start while models load, checks fail until it is ready
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # SQS poll loop that calls checks_service.create_check() per batch row. No inbound, no internet.
+  worker:
+    image: ${PP_REGISTRY:-ghcr.io/zylooooo}/prompt-patrol-worker:${PP_VERSION:-0.0.0}
+    restart: unless-stopped
+    env_file: ./.env
+    networks: [isolated-worker, data-worker]
+    depends_on:
+      # The API applies migrations on start, so this keeps the worker off an old schema after an upgrade.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      detector:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # desklib + MELD. The models are baked into the image, so it needs no internet at run time.
+  # Don't mount a volume over the model paths.
+  detector:
+    image: ${PP_REGISTRY:-ghcr.io/zylooooo}/prompt-patrol-detector:${PP_VERSION:-0.0.0}
+    restart: unless-stopped
+    environment:
+      # As production (4 vCPU task): one thread per physical core. Unset, torch takes every CPU in the Docker VM,
+      # which the load test measured as slower, and it starves the other containers.
+      - DETECTOR_TORCH_THREADS=2
+    networks: [isolated-api, isolated-worker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # two large models (~0.4B + ~1B parameters) to load before the first answer
+      start_period: 420s
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: ./.env
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks: [data-api, data-worker, data-purge]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:3.8
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3,sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    ports:
+      - 127.0.0.1:4566:4566
+    volumes:
+      - ./localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    # `egress` only so the port can be published (internal networks can't); real S3 is a public endpoint too.
+    networks: [egress, isolated-api, isolated-worker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Once at start, then every 24 h, with a data network of its own so it can reach only Postgres.
+  # purge_checks is the 90-day hard delete.
+  purge:
+    image: ${PP_REGISTRY:-ghcr.io/zylooooo}/prompt-patrol-api:${PP_VERSION:-0.0.0}
+    restart: unless-stopped
+    env_file: ./.env
+    # ponytail: fixed 24 h sleep, so it drifts from 03:00 SGT; use a real cron image if the time of day matters.
+    command: ["sh", "-c", "while true; do python -m scripts.purge_sessions; python -m scripts.purge_checks; sleep 86400; done"]
+    networks: [data-purge]
+    depends_on:
+      # The API applies migrations on start, so the tables exist once it is healthy.
+      api:
+        condition: service_healthy
+
+networks:
+  edge: {}
+  alb:
+    internal: true
+  egress: {}
+  isolated-api:
+    internal: true
+  isolated-worker:
+    internal: true
+  data-api:
+    internal: true
+  data-worker:
+    internal: true
+  data-purge:
+    internal: true
+
+volumes:
+  postgres_data:

@@ -3,91 +3,13 @@
 The whole application on one machine with Docker Compose: the detector (desklib + MELD), the API, the batch worker,
 the web app and the database. No cloud account is needed. **Sign-in uses Auth0, so the machine must be online.**
 
-## What you need
+## Running it
 
-|           | Minimum                                                      | Comfortable |
-| --------- | ------------------------------------------------------------ | ----------- |
-| RAM       | 16 GB, with Docker given 12 GB                               | 32 GB       |
-| Free disk | 20 GB                                                        | 30 GB       |
-| CPU       | 4 cores, x86_64 or Apple Silicon                             | 8 cores     |
-| Network   | Online: sign-in (Auth0) and the first image download (~6 GB) |             |
+Install and run instructions for end users live in [`release/README.md`](../release/README.md), shipped in the
+release zip next to an image-only `compose.yml`. Images are built and published by `.github/workflows/release.yml`.
+For development, `apps/docker-compose.yml` builds from source and reads `apps/api/.env`.
 
-No GPU is needed. The detector uses about 6–7.5 GB of memory and takes 2–5 minutes to load on each start. You can
-sign in while it loads; checks fail until `docker compose ps` shows the detector as healthy.
-
-**Give Docker 12 GB of memory.** Docker Desktop defaults to half your RAM, which on a 16 GB machine is too little,
-and the detector is killed while loading.
-
-- Mac, or Windows with Hyper-V: Docker Desktop → Settings → Resources → Memory limit.
-- Windows with WSL 2: put this in `%UserProfile%\.wslconfig`, then run `wsl --shutdown` and restart Docker Desktop:
-
-  ```ini
-  [wsl2]
-  memory=12GB
-  ```
-
-## 1. Configure
-
-```sh
-cd apps
-cp api/.env.example api/.env
-```
-
-Fill in `api/.env`. The team sends the `AUTH0_*` values separately, never inside this package.
-
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `DB_URL` built from them:
-  `postgresql+asyncpg://<user>:<password>@postgres:5432/<db>`
-- `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH0_M2M_CLIENT_ID`, `AUTH0_M2M_CLIENT_SECRET`
-- `AUTH0_REDIRECT_URI=http://localhost:5173/api/auth/callback` and `FRONTEND_URL=http://localhost:5173`
-- `ENVIRONMENT=prod`, as in production: redacted JSON logs and no auto-reload. (The team develops with `dev`.)
-- `SESSION_SECRET`: at least 32 random characters, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-- AWS settings for the local S3/SQS stand-in:
-
-  ```ini
-  AWS_REGION=us-east-1
-  AWS_ENDPOINT_URL=http://localstack:4566
-  AWS_ENDPOINT_URL_PUBLIC=http://localhost:4566
-  S3_BATCHES_BUCKET=prompt-patrol-batches
-  SQS_BATCHES_QUEUE_URL=http://localstack:4566/000000000000/prompt-patrol-batches
-  SQS_BATCHES_DLQ_URL=http://localstack:4566/000000000000/prompt-patrol-batches-dlq
-  ```
-
-## 2. Start
-
-```sh
-docker compose up -d --build
-docker compose ps          # wait until api shows "healthy"
-```
-
-Open <http://localhost:5173> in **Chrome or Firefox**. Safari won't keep the sign-in cookie over plain `http`, so
-signing in appears to do nothing.
-
-## 3. Create the first administrator
-
-There is no sign-up page. Create the first account from the command line. Auth0 then emails that address a one-time
-link to set the password:
-
-```sh
-docker compose exec api sh -c "cd /app && python -m scripts.provision_user add <your-email> root_admin"
-```
-
-Running it again is safe. If the email already has a local account it does nothing and sends no email. After
-`docker compose down -v` it reuses the credential Auth0 already has for that address instead of sending a new invite.
-
-After that, add instructors and TAs from the Users page.
-
-## Stop, restart, reset
-
-```sh
-docker compose stop            # stop, keep data
-docker compose up -d           # start again
-docker compose down -v         # delete everything, including the database
-docker compose logs api        # first place to look if something doesn't start
-```
-
-If the worker crash-loops and `docker compose logs localstack` says "No such file or directory", the queues were never
-created: `apps/api/localstack-init.sh` has Windows (CRLF) line endings. It must stay LF. The repository forces this,
-but a zip or copy of a working copy on Windows can undo it.
+The notes below are for the team and for whoever takes over the Auth0 tenant and the domain.
 
 ## How it is laid out
 
@@ -97,8 +19,7 @@ worker have no ports and no internet access. Only the API can reach the internet
 hard-deleted after 90 days by the `purge` service, as in AWS.
 
 Differences from AWS: no HTTPS and no WAF (the browser treats `localhost` as secure), and access rules are per
-network rather than per port. Uploaded batch CSVs are not expired after 60 days as they are in AWS: they stay until
-`docker compose down -v`, so remove the stack when you are done with real student data.
+network rather than per port. Uploaded batch CSVs are not expired after 60 days as they are in AWS.
 
 ## Auth0 settings (for the team)
 
