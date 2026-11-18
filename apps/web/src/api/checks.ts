@@ -38,7 +38,7 @@ interface StrictnessLevelResponse {
 }
 
 interface DetectorResponse {
-  model_version: string;
+  model_version: string | null;
   calibration_version: string | null;
   requires_question_text: boolean;
   min_answer_chars: number;
@@ -56,7 +56,7 @@ function toStrictnessLevels(rows: StrictnessLevelResponse[]): Strictness[] {
 
 function toDetectorCapabilities(row: DetectorResponse): DetectorCapabilities {
   return {
-    modelVersion: row.model_version,
+    modelVersion: row.model_version ?? null,
     calibrationVersion: row.calibration_version ?? null,
     requiresQuestionText: row.requires_question_text,
     minAnswerChars: row.min_answer_chars,

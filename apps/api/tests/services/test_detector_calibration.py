@@ -110,6 +110,20 @@ def test_a_detector_that_reports_nothing_falls_back_to_the_environment(monkeypat
     assert applied == checks_service.AppliedSettings("desklib-academic-lora-v1", "desklib-temp1.944-v1", 0.9608, 0.01)
 
 
+def test_nothing_is_reported_before_the_detector_says_which_model_it_runs(monkeypatch):
+    """No guessed default: a loading detector must not be shown as some other model."""
+    monkeypatch.setattr(detector_client, "MODEL_VERSION", None)
+    monkeypatch.setattr(detector_client, "_reported", {})
+    assert detector_client.reported_model_version() is None
+    assert checks_service.detector_capabilities()["model_version"] is None
+
+
+def test_a_check_from_a_detector_that_reports_nothing_still_names_a_model(monkeypatch):
+    monkeypatch.setattr(checks_service, "MODEL_VERSION", None)
+    applied = checks_service._settings_for(Score(0.9, False), "standard")
+    assert applied.model_version == detector_client.UNREPORTED_MODEL_VERSION
+
+
 def test_a_stale_environment_threshold_loses_to_the_detector_and_is_logged_once(monkeypatch, caplog):
     """The failure this whole change exists for: the model was updated, the API's variable wasn't."""
     monkeypatch.setattr(checks_service, "_ENV_THRESHOLD", "0.9608")

@@ -18,7 +18,12 @@ from config import DETECTOR_URL
 # (apps/detector/app/baseline.py calibration()), and that is what the API applies. These variables are only the
 # fallback for a detector too old to report them (and the e2e stub): set them to match such a detector. A current
 # detector needs none of them, and when one is set and disagrees, the detector wins and a warning is logged.
-MODEL_VERSION = os.getenv("DETECTOR_MODEL_VERSION", "roberta-base-openai-detector-v0")
+# No default: until the detector has reported, the honest answer is "not known yet" (None), not a guessed model name.
+MODEL_VERSION = os.getenv("DETECTOR_MODEL_VERSION") or None
+
+# Recorded on a check scored by a detector that reports no model and with DETECTOR_MODEL_VERSION unset, since every
+# check must name a model.
+UNREPORTED_MODEL_VERSION = "unreported"
 
 # None means uncalibrated
 CALIBRATION_VERSION = os.getenv("DETECTOR_CALIBRATION_VERSION") or None
@@ -64,8 +69,9 @@ def _remember(body: dict) -> None:
         _reported.update({field: body.get(field) for field in REPORTED_FIELDS})
 
 
-def reported_model_version() -> str:
-    """The model the detector last said it is running, or DETECTOR_MODEL_VERSION if it hasn't said yet."""
+def reported_model_version() -> str | None:
+    """The model the detector last said it is running, or DETECTOR_MODEL_VERSION if it hasn't said yet (None when
+    that is unset too: still loading, or never reached)."""
     return _reported.get("model_version") or MODEL_VERSION
 
 

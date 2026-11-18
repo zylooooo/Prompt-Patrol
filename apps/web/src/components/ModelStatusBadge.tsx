@@ -1,7 +1,10 @@
 import { useDetectorCapabilities, useDetectorStatus } from "../hooks/useChecks";
 import type { DetectorStatus } from "../types";
 
-const UNKNOWN_LABEL = "demo detector · scores uncalibrated";
+// Before the first status answer: nothing is known yet, so claim nothing.
+const CHECKING_LABEL = "checking detector";
+// Ready, but the model name is still being fetched (or the API has not heard it yet).
+const READY_LABEL = "detector ready";
 
 const DOT: Record<DetectorStatus, string> = {
   ready: "bg-status-ready",
@@ -21,20 +24,22 @@ const SHORT_TEXT: Record<Exclude<DetectorStatus, "ready">, string> = {
 };
 
 export default function ModelStatusBadge() {
-  const { data } = useDetectorCapabilities();
+  const caps = useDetectorCapabilities();
   const { data: reported, isError } = useDetectorStatus();
 
   const status: DetectorStatus = isError
     ? "unavailable"
     : (reported ?? "loading");
-  // Anything but ready is spelled out, not left to the dot's colour alone.
+  // Anything but ready is spelled out, not left to the dot's colour alone. The model is named only once the
+  // detector is ready and capabilities fetched after that name it, so a loading detector never shows a stale model.
   const known = isError || reported !== undefined;
-  const label =
-    known && status !== "ready"
+  const label = !known
+    ? CHECKING_LABEL
+    : status !== "ready"
       ? SHORT_TEXT[status]
-      : data
-        ? `${data.modelVersion} · ${data.calibrationVersion ?? "uncalibrated"}`
-        : UNKNOWN_LABEL;
+      : caps.isFetching || !caps.data?.modelVersion
+        ? READY_LABEL
+        : `${caps.data.modelVersion} · ${caps.data.calibrationVersion ?? "uncalibrated"}`;
 
   return (
     <span

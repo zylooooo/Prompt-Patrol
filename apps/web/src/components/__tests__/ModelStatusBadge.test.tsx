@@ -1,4 +1,5 @@
 import ModelStatusBadge from "../ModelStatusBadge";
+import { checkKeys } from "../../api/checks";
 import { renderWithProviders } from "../../test/render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
@@ -23,7 +24,7 @@ const CAPABILITIES = {
   supports_spans: false,
 };
 
-const FALLBACK = "demo detector · scores uncalibrated";
+const FALLBACK = "checking detector";
 
 const STATUS_PATH = "/api/detector/status";
 
@@ -147,6 +148,46 @@ describe("ModelStatusBadge", () => {
     // Spelled out visibly, not left to the amber dot alone.
     // (amber is also the pre-fetch default, so wait for the text itself).
     expect(await screen.findByText("detector starting up")).toBeDefined();
+  });
+
+  it("names the model once a detector that was loading becomes ready, without a reload", async () => {
+    // The API only learns the model from the detector's /health once it is ready, so capabilities fetched while it
+    // loads name no model. They are cached for an hour; the ready transition must refetch them.
+    let detectorStatus = "loading";
+    vi.stubGlobal("fetch", (path: string) => {
+      if (path === STATUS_PATH) {
+        return ok({ status: detectorStatus, model_version: null });
+      }
+      return ok({
+        ...CAPABILITIES,
+        model_version:
+          detectorStatus === "ready" ? "desklib-meld-ensemble-v1" : null,
+        calibration_version: null,
+      });
+    });
+
+    const { client } = renderWithProviders(<ModelStatusBadge />);
+    expect(await screen.findByText("detector starting up")).toBeDefined();
+
+    detectorStatus = "ready";
+    await client.refetchQueries({ queryKey: checkKeys.detectorStatus() });
+
+    expect(
+      await screen.findByText("desklib-meld-ensemble-v1 · uncalibrated"),
+    ).toBeDefined();
+  });
+
+  it("says ready rather than naming a model before the API has heard one", async () => {
+    vi.stubGlobal("fetch", (path: string) =>
+      path === STATUS_PATH
+        ? ok({ status: "ready", model_version: null })
+        : ok({ ...CAPABILITIES, model_version: null, calibration_version: null }),
+    );
+
+    renderWithProviders(<ModelStatusBadge />);
+
+    expect(await screen.findByText("detector ready")).toBeDefined();
+    expect(screen.queryByText(/null|undefined/)).toBeNull();
   });
 
   it("goes red when the detector is down", async () => {
