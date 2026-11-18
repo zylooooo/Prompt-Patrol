@@ -52,7 +52,7 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
     ignore:
-      # ML-team owned and tied to the calibrated threshold; torch comes from the CPU index in Dockerfile.desklib.
+      # ML-team owned and tied to the calibrated threshold; torch comes from the CPU index (Dockerfile.base, CI).
       - dependency-name: torch
       - dependency-name: transformers
       - dependency-name: peft

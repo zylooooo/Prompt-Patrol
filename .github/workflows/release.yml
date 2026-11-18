@@ -1,0 +1,213 @@
+name: Release
+
+# Builds the four multi-arch images (api, worker, detector, web), publishes them to GHCR at the tag's version, and
+# attaches the end-user bundle (release/) to a GitHub Release. See release/README.md.
+#   tag v1.0.0  -> publish images + create the Release (the tagged commit must be on main)
+#   tag v1.0.0-rc1 -> same, marked pre-release, allowed from any branch
+#   manual run  -> dry run: build everything and check the bundle, publish nothing
+# A published version is never overwritten: a fix is a new version. Each image is pushed as soon as it is built, so
+# if a tag run fails part-way the version is used up: delete nothing, cut the next version (e.g. rc2).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120 # QEMU arm64 builds of api/worker can take 10-20 min each
+    permissions:
+      contents: write # create the Release
+      packages: write # push to GHCR
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+      IMAGE_PREFIX: ghcr.io/zylooooo/prompt-patrol
+      PLATFORMS: linux/amd64,linux/arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # full history, so the main-branch check below can see it
+
+      - name: Work out the version
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dryrun"
+          fi
+          # Also keeps anything odd in a tag name out of the shell below.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR.PATCH[-suffix]"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # Official releases (no -suffix) must come from main. Pre-releases (-rc1, ...) may come from any branch.
+      - name: Official releases must be on main
+        if: env.PUBLISH == 'true' && !contains(env.VERSION, '-')
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::v$VERSION is an official release but $GITHUB_SHA is not on main. Merge it first, or tag a pre-release (v$VERSION-rc1)."
+            exit 1
+          fi
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse to overwrite a published version
+        if: env.PUBLISH == 'true'
+        run: |
+          for svc in api worker detector web; do
+            if out="$(docker buildx imagetools inspect "$IMAGE_PREFIX-$svc:$VERSION" 2>&1)"; then
+              echo "::error::$IMAGE_PREFIX-$svc:$VERSION already exists. Published versions are never overwritten; cut a new version."
+              exit 1
+            fi
+            # Only "not found" means free; any other error (rate limit, network) must not read as "free".
+            if ! printf '%s' "$out" | grep -qi 'not found'; then
+              echo "::error::Could not tell whether $IMAGE_PREFIX-$svc:$VERSION exists: $out"
+              exit 1
+            fi
+          done
+
+      - name: Read Node version from .nvmrc
+        id: node
+        run: |
+          NODE_VERSION="$(tr -d '[:space:]' < .nvmrc)"
+          case "$NODE_VERSION" in
+            '' | *[!0-9.]*)
+              echo "::error file=.nvmrc::Expected a numeric Node version, got '$NODE_VERSION'"
+              exit 1
+              ;;
+          esac
+          echo "version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build API image
+        id: api
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./apps/api
+          platforms: ${{ env.PLATFORMS }}
+          tags: ${{ env.IMAGE_PREFIX }}-api:${{ env.VERSION }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          push: ${{ env.PUBLISH == 'true' }}
+          cache-from: type=gha,scope=release-api
+          cache-to: type=gha,mode=max,scope=release-api
+
+      # Repo-root context: the Dockerfile copies from apps/api and apps/worker.
+      - name: Build worker image
+        id: worker
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./apps/worker/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          tags: ${{ env.IMAGE_PREFIX }}-worker:${{ env.VERSION }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          push: ${{ env.PUBLISH == 'true' }}
+          cache-from: type=gha,scope=release-worker
+          cache-to: type=gha,mode=max,scope=release-worker
+
+      # desklib + MELD on a public base image (pinned by digest in the Dockerfile) that is already amd64 + arm64.
+      - name: Build detector image
+        id: detector
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./apps/detector
+          file: ./apps/detector/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          tags: ${{ env.IMAGE_PREFIX }}-detector:${{ env.VERSION }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          push: ${{ env.PUBLISH == 'true' }}
+          cache-from: type=gha,scope=release-detector
+          cache-to: type=gha,mode=max,scope=release-detector
+
+      - name: Build web image
+        id: web
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./apps/web
+          platforms: ${{ env.PLATFORMS }}
+          tags: ${{ env.IMAGE_PREFIX }}-web:${{ env.VERSION }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            NODE_VERSION=${{ steps.node.outputs.version }}
+          push: ${{ env.PUBLISH == 'true' }}
+          cache-from: type=gha,scope=release-web
+          cache-to: type=gha,mode=max,scope=release-web
+
+      # A single-arch image would give an arm64 user "exec format error".
+      - name: Check both architectures were published
+        if: env.PUBLISH == 'true'
+        run: |
+          for svc in api worker detector web; do
+            out="$(docker buildx imagetools inspect "$IMAGE_PREFIX-$svc:$VERSION")"
+            for arch in linux/amd64 linux/arm64; do
+              if ! printf '%s' "$out" | grep -q "Platform: *$arch\$"; then
+                echo "::error::$IMAGE_PREFIX-$svc:$VERSION has no $arch manifest"
+                exit 1
+              fi
+            done
+          done
+
+      # Zips a temp copy of release/ with this version stamped in as the compose default.
+      - name: Build the bundle
+        run: |
+          dir="prompt-patrol-$VERSION"
+          mkdir "$dir"
+          cp -a release/. "$dir/"
+          # LocalStack runs init scripts directly; a Windows commit can record 644.
+          chmod +x "$dir/localstack-init.sh"
+          sed -i "s/PP_VERSION:-0\.0\.0}/PP_VERSION:-$VERSION}/" "$dir/compose.yml"
+          n="$(grep -c "PP_VERSION:-$VERSION}" "$dir/compose.yml" || true)"
+          if [ "$n" -ne 5 ] || grep -q 'PP_VERSION:-0\.0\.0}' "$dir/compose.yml"; then
+            echo "::error::Expected 5 image lines stamped with $VERSION in compose.yml, found $n"
+            exit 1
+          fi
+          zip -qr "$dir.zip" "$dir"
+          unzip -Z1 "$dir.zip" | sed "s#^$dir/##" | grep -v '^$' | sort > listed.txt
+          printf '%s\n' .env.example README.md compose.yml localstack-init.sh | sort > expected.txt
+          if ! diff expected.txt listed.txt; then
+            echo "::error::Bundle contents differ from the expected 4 files (and must hold no .env)"
+            exit 1
+          fi
+          if grep -l $'\r' "$dir/localstack-init.sh"; then
+            echo "::error::CRLF line endings in a bundled script"
+            exit 1
+          fi
+
+      - name: Create the GitHub Release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
+          DETECTOR_DIGEST: ${{ steps.detector.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+        run: |
+          cat > notes.md <<EOF
+          Prompt Patrol $VERSION. Unzip, follow README.md.
+
+          Images (linux/amd64 + linux/arm64):
+
+          - \`$IMAGE_PREFIX-api:$VERSION\` \`$API_DIGEST\`
+          - \`$IMAGE_PREFIX-worker:$VERSION\` \`$WORKER_DIGEST\`
+          - \`$IMAGE_PREFIX-detector:$VERSION\` \`$DETECTOR_DIGEST\`
+          - \`$IMAGE_PREFIX-web:$VERSION\` \`$WEB_DIGEST\`
+          EOF
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" "prompt-patrol-$VERSION.zip" \
+            --title "Prompt Patrol $VERSION" --notes-file notes.md "${flags[@]}"

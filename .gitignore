@@ -286,3 +286,6 @@ infra/AWS-ACCOUNTS.md
 # base model staged for the base image (~3.8GB, gated upstream)
 apps/detector/model/desklib-meld/
 apps/detector/model/meld-base/
+
+# Per-developer compose additions (published dev ports), see apps/web/README.md
+apps/docker-compose.override.yml

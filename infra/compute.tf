@@ -328,8 +328,8 @@ locals {
 
   # api and worker import the same settings.py, so both need API_HOST/PORT and
   # an https FRONTEND_URL on the redirect URI's host. No AWS_ENDPOINT_URL*:
-  # boto3 resolves the real endpoints. Calibration values exactly as in
-  # apps/docker-compose.desklib.yml.
+  # boto3 resolves the real endpoints. The calibration values below are the
+  # desklib fallback, only used by a detector too old to report its own.
   app_env = [for k, v in {
     ENVIRONMENT                  = "prod"
     API_HOST                     = "0.0.0.0"
@@ -428,8 +428,8 @@ resource "aws_ecs_task_definition" "worker" {
   }])
 }
 
-# No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib-meld
-# is baked into Dockerfile.desklib-meld. 4 vCPU / 10 GB (load test 2026-11-13,
+# No secrets, no task role: text in, score out. desklib + MELD is the only
+# model in apps/detector/Dockerfile. 4 vCPU / 10 GB (load test 2026-11-13,
 # apps/loadtest EXPERIMENT_LOG Entry 9): desklib + MELD is memory-bandwidth
 # bound, so a second physical core halves the time per check (2.236 -> 1.099 s)
 # and passes AC4 at 40/min (p95 5.8 s); 2 vCPU broke at 21/min under a batch.

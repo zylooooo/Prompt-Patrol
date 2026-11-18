@@ -64,7 +64,8 @@ fail before it touches anything.
 Everything billed by the hour is gated on `paused`: the NAT gateway, its
 Elastic IP and the five interface endpoints (about $4.70/day), the RDS
 instance, and since step 5 the ALB, the CloudFront VPC origin, the three ECS
-services and their task definitions, and the nightly session-purge schedule
+services and their task definitions, and the nightly purge schedules (sessions,
+and checks older than 90 days)
 (about $5/day more). To stop paying
 for it, set this in `terraform.tfvars`, apply, and commit:
 
@@ -112,7 +113,7 @@ push to main ─► CI builds api / worker / detector ─► GHCR (tag = commit 
 - GHCR packages are **public** (private storage on the free plan is 500 MB;
   the detector alone is several GB).
 - ECR keeps the newest 10 images per repo; GHCR keeps every build.
-- The detector image is `apps/detector/Dockerfile.desklib-meld`, built on a
+- The detector image is `apps/detector/Dockerfile`, built on a
   hand-pushed base image (see `docs/desklib-meld-release.md`).
 
 ## Compute and edge (step 5)

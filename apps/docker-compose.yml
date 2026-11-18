@@ -1,85 +1,38 @@
+# Prompt Patrol, the whole stack on one machine: desklib + MELD detector, API, batch worker, SPA, Postgres, and
+# LocalStack standing in for S3 + SQS. Also the hand-over package for running it locally (docs/local-handover.md).
+#
+# Docker needs about 12 GB of memory: the detector peaks at ~5.7 GB scoring single answers and reached ~7.3 GB under
+# sustained batch load in production.
+
+x-api-build: &api-build
+  context: ./api
+  dockerfile: Dockerfile
+
 services:
-  localstack:
-    image: localstack/localstack:3.8
-    container_name: prompt-patrol-localstack
-    restart: unless-stopped
-    environment:
-      - SERVICES=s3,sqs
-      - AWS_DEFAULT_REGION=us-east-1
-    ports:
-      - 127.0.0.1:4566:4566
-    volumes:
-      - ./api/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
-    networks:
-      - prompt-patrol-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-
-  # Provision the PostgreSQL database for local development
-  postgres:
-    image: postgres:18-alpine
-    container_name: prompt-patrol-postgres
-    restart: unless-stopped
-    env_file:
-      - ./api/.env
-    volumes:
-      - postgres_data:/var/lib/postgresql
-    ports:
-      - 5432:5432
-    networks:
-      - prompt-patrol-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  detector:
+  frontend:
+    image: prompt-patrol-web:local
     build:
-      context: ./detector
+      context: ./web
       dockerfile: Dockerfile
-    container_name: prompt-patrol-detector
     restart: unless-stopped
-    # No model cache volume any more: the Dockerfile bakes the model into the
-    # image, and a volume mounted over that path would shadow it with whatever
-    # an older build happened to leave behind.
-    networks:
-      - prompt-patrol-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 120s
+    ports:
+      - 127.0.0.1:5173:80
+    networks: [edge, alb]
+    depends_on:
+      api:
+        condition: service_healthy
 
-  # Start FastAPI Application
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    container_name: prompt-patrol-api
+    image: prompt-patrol-api:local
+    build: *api-build
     restart: unless-stopped
-    env_file:
-      - ./api/.env
-    ports:
-      # Loopback only. Nothing needs this on other interfaces - the frontend
-      # container reaches the API over the compose network and the Vite dev
-      # proxy reaches it via localhost. Keep it even though the password-less
-      # dev login (the original reason for this line) is gone: the API still
-      # terminates sessions over plain HTTP locally, so it should not be
-      # exposed to the LAN. Drop the prefix only for deliberate LAN testing.
-      - 127.0.0.1:8000:8000
-    networks:
-      - prompt-patrol-network
+    env_file: ./api/.env
+    networks: [alb, egress, isolated-api, data-api]
     depends_on:
       postgres:
         condition: service_healthy
       detector:
-        condition: service_healthy
+        condition: service_started # API can start while models load, checks fail until it is ready
       localstack:
         condition: service_healthy
     healthcheck:
@@ -89,22 +42,20 @@ services:
       retries: 5
       start_period: 30s
 
-  # SQS poll loop that calls checks_service.create_check() per batch row -
-  # see docs/superpowers/specs/2026-09-09-batches-module-design.md.
+  # SQS poll loop that calls checks_service.create_check() per batch row. No inbound, no internet.
   worker:
+    image: prompt-patrol-worker:local
     build:
-      # Repo root, not apps/ - the Dockerfile's COPY instructions are written
-      # repo-root-relative (apps/api/..., apps/worker/...) per Decision 6, so
-      # the context has to be one level up from this compose file.
+      # Repo root: the Dockerfile copies apps/api/... and apps/worker/...
       context: ..
       dockerfile: apps/worker/Dockerfile
-    container_name: prompt-patrol-worker
     restart: unless-stopped
-    env_file:
-      - ./api/.env
-    networks:
-      - prompt-patrol-network
+    env_file: ./api/.env
+    networks: [isolated-worker, data-worker]
     depends_on:
+      # The API applies migrations on start, so this keeps the worker off an old schema after an upgrade.
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       detector:
@@ -112,25 +63,92 @@ services:
       localstack:
         condition: service_healthy
 
-  # Frontend
-  frontend:
+  # desklib + MELD. The models are baked into the base image (public on GHCR, amd64 + arm64, pinned by digest), so it
+  # needs no internet at run time. See docs/desklib-meld-release.md. Don't mount a volume over the model paths.
+  detector:
+    image: prompt-patrol-detector:desklib-meld
     build:
-      context: ./web
+      context: ./detector
       dockerfile: Dockerfile
-    container_name: prompt-patrol-frontend
+      args:
+        BASE_IMAGE: ${DETECTOR_BASE_IMAGE:-ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112@sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec}
     restart: unless-stopped
+    environment:
+      # As production (infra/compute.tf, 4 vCPU task): one thread per physical core. Unset, torch takes every CPU in
+      # the Docker VM, which the load test measured as slower, and it starves the other containers.
+      - DETECTOR_TORCH_THREADS=2
+    networks: [isolated-api, isolated-worker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # two large models (~0.4B + ~1B parameters) to load before the first answer
+      start_period: 420s
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: ./api/.env
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks: [data-api, data-worker, data-purge]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:3.8
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3,sqs
+      - AWS_DEFAULT_REGION=us-east-1
     ports:
-      - 5173:80
+      - 127.0.0.1:4566:4566
+    volumes:
+      - ./api/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    # `egress` only so the port can be published (internal networks can't); real S3 is a public endpoint too.
+    networks: [egress, isolated-api, isolated-worker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # AWS runs these daily from EventBridge Scheduler (infra/compute.tf) as one-off tasks. Here: once at start, then
+  # every 24 h, with a data network of its own so it can reach only Postgres.
+  # purge_checks is the 90-day hard delete
+  purge:
+    image: prompt-patrol-api:local
+    build: *api-build
+    restart: unless-stopped
+    env_file: ./api/.env
+    # ponytail: fixed 24 h sleep, so it drifts from 03:00 SGT; use a real cron image if the time of day matters.
+    command: ["sh", "-c", "while true; do python -m scripts.purge_sessions; python -m scripts.purge_checks; sleep 86400; done"]
+    networks: [data-purge]
     depends_on:
-      postgres:
-        condition: service_healthy
+      # The API applies migrations on start, so the tables exist once it is healthy.
       api:
         condition: service_healthy
-    networks:
-      - prompt-patrol-network
 
 networks:
-  prompt-patrol-network:
+  edge: {}
+  alb:
+    internal: true
+  egress: {}
+  isolated-api:
+    internal: true
+  isolated-worker:
+    internal: true
+  data-api:
+    internal: true
+  data-worker:
+    internal: true
+  data-purge:
+    internal: true
 
 volumes:
   postgres_data:

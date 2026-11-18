@@ -15,11 +15,11 @@ wrongly flagging half as many students** (0.5% vs 1.2%).
 
 Test set, answers of 10+ words. The threshold was fixed on validation before test was looked at.
 
-| | **desklib + MELD (new)** | desklib (live today) |
-| --- | --- | --- |
-| AI answers caught | **70.3%** [63.2, 77.5] | 51.4% |
-| Students wrongly flagged | **0.52%** [0.0, 1.4] | 1.18% |
-| AUROC | **0.981** | 0.957 |
+|                          | **desklib + MELD (new)** | desklib (live today) |
+| ------------------------ | ------------------------ | -------------------- |
+| AI answers caught        | **70.3%** [63.2, 77.5]   | 51.4%                |
+| Students wrongly flagged | **0.52%** [0.0, 1.4]     | 1.18%                |
+| AUROC                    | **0.981**                | 0.957                |
 
 The gains are real, not noise: +18.6 pts AI caught [+16.0, +21.6] and +0.025 AUROC [+0.017, +0.032]. Brackets are
 95% intervals that resample whole questions.
@@ -27,8 +27,8 @@ The gains are real, not noise: +18.6 pts AI caught [+16.0, +21.6] and +0.025 AUR
 AI caught, by type of answer:
 
 | Raw AI | Edited | Paraphrased (light / heavy) | Spliced: 25% / 50% / 75% AI |
-| --- | --- | --- | --- |
-| 75% | 88% | 78% / 84% | **32%** / 56% / 63% |
+| ------ | ------ | --------------------------- | --------------------------- |
+| 75%    | 88%    | 78% / 84%                   | **32%** / 56% / 63%         |
 
 Students wrongly flagged, by dataset: Mohler 1.2% (4 of 346), EngSAF 0%, SPRAG 0%.
 
@@ -54,13 +54,13 @@ Average the two **log-odds** as in step 4, not the two probabilities. Otherwise 
 
 ## What's in `apps/detector/model/desklib-meld/`
 
-| File | What it is |
-| --- | --- |
-| `desklib-meld.json` | The config: threshold, both temperatures, the formula, base models with pinned revisions, token limits, and versions for the API |
-| `desklib-lora-adapter/` | desklib's fine-tuned weights (54 MB). Loads the same way as today's `desklib-lora-adapter/` |
-| `meld-soup-adapter/` + `meld-soup-head.safetensors` | MELD's fine-tuned weights (42 MB): three training runs averaged into one model |
-| `golden.json` | 23 answers with the probability each should get. Use it to test the new backend. Not in the base image |
-| `report.json` | Full numbers: validation choices, test results, checks, and the abstention-band table |
+| File                                                | What it is                                                                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `desklib-meld.json`                                 | The config: threshold, both temperatures, the formula, base models with pinned revisions, token limits, and versions for the API |
+| `desklib-lora-adapter/`                             | desklib's fine-tuned weights (54 MB). Loads the same way as the retired standalone desklib's adapter                              |
+| `meld-soup-adapter/` + `meld-soup-head.safetensors` | MELD's fine-tuned weights (42 MB): three training runs averaged into one model                                                   |
+| `golden.json`                                       | 23 answers with the probability each should get. Use it to test the new backend. Not in the base image                           |
+| `report.json`                                       | Full numbers: validation choices, test results, checks, and the abstention-band table                                            |
 
 ## Steps
 
@@ -95,12 +95,12 @@ detector would never flag anything. This is because the combined probability alm
 
 On validation:
 
-| Band | Students flagged | Students uncertain | AI flagged | AI uncertain |
-| --- | --- | --- | --- | --- |
-| none | 1.0% | 0% | 76.1% | 0.1% |
-| **±0.005 (suggested)** | 0.57% | 0.9% | 72.8% | 5.7% |
-| ±0.01 | 0.28% | 1.6% | 68.0% | 13.3% |
-| ±0.02 | 0% | 2.7% | 43.5% | 40.7% |
+| Band                   | Students flagged | Students uncertain | AI flagged | AI uncertain |
+| ---------------------- | ---------------- | ------------------ | ---------- | ------------ |
+| none                   | 1.0%             | 0%                 | 76.1%      | 0.1%         |
+| **±0.005 (suggested)** | 0.57%            | 0.9%               | 72.8%      | 5.7%         |
+| ±0.01                  | 0.28%            | 1.6%               | 68.0%      | 13.3%        |
+| ±0.02                  | 0%               | 2.7%               | 43.5%      | 40.7%        |
 
 **Suggested: ±0.005**, the same band desklib + RADAR uses. It halves the false flags at a cost of 3 pts of AI
 caught. Choose from this table only, never from test numbers.
@@ -114,7 +114,7 @@ instead of 76.1%. **For now the default, 0.9458, is kept.** The threshold now co
 
 ### 4. Build the detector backend ✅
 
-- [x] `DETECTOR_BACKEND=desklib-meld` (`apps/detector/app/desklib_meld.py`): desklib with this bundle's adapter and
+- [x] `apps/detector/app/desklib_meld.py`, now the only backend: desklib with this bundle's adapter and
   temperature.
 - [x] MELD loaded with `meld.py` from the pinned revision: soup adapter merged into the backbone, head loaded with
   `strict=False`, MELD's own `flagged` and threshold ignored. MELD comes from a copy inside the base image, not from
@@ -126,23 +126,19 @@ instead of 76.1%. **For now the default, 0.9458, is kept.** The threshold now co
   has no model files.
 - [x] `apps/detector/model/desklib-meld/` and `apps/detector/model/meld-base/` are in `.gitignore`.
 - [x] Docker images, in two layers:
-  - `Dockerfile.desklib-meld-base`: Python, the libraries, both base models and this bundle. Built once by
+  - `Dockerfile.base`: Python, the libraries, both base models and this bundle. Built once by
     someone with the files, after `scripts/prepare_desklib_meld_base.sh` copies MELD from their Hugging Face cache.
-  - `Dockerfile.desklib-meld`: the base plus `app/`. Anyone can rebuild it in seconds, with no model files, only the
+  - `Dockerfile`: the base plus `app/`. Anyone can rebuild it in seconds, with no model files, only the
     base image on GHCR (step 7).
-  - Both pin transformers 5.16.1, torch 2.14 and peft 0.20 (`requirements-desklib-meld.txt`), the versions the
-    release was scored with. The other detector images keep transformers 4.55.4.
+  - Both pin transformers 5.16.1, torch 2.14 and peft 0.20 (`requirements.txt`), the versions the
+    release was scored with. (The older detector images, with transformers 4.55.4, were deleted 2026-11-17.)
 - [ ] Memory and latency on the production machine (`ml-training/measure_latency.py`). Locally the detector peaks at
   **5.7 GB** and takes about 90 s to load. Long answers take longer, because MELD reads the whole answer.
 
 ### 5. Configure the API ✅
 
-`apps/docker-compose.desklib-meld.yml` runs the detector. It sets no API settings, because of step 6. To make it
-the default for a plain `docker compose up`, add this to `apps/.env`:
-
-```bash
-COMPOSE_FILE=docker-compose.yml:docker-compose.desklib-meld.yml
-```
+`apps/docker-compose.yml` runs this detector by default (the override files were removed 2026-11-16). It sets no
+API settings, because of step 6.
 
 Give Docker Desktop about 12 GB of memory.
 
@@ -160,24 +156,23 @@ detector runs.
 **Pushed 12 Nov 2026** to the existing `prompt-patrol-detector` package on GHCR, for both x86_64 (ECS) and
 ARM (Macs). Each machine pulls only its own architecture, about 5.9 GB:
 
-```
+```text
 ghcr.io/zylooooo/prompt-patrol-detector:ml-tori-20261112
   @sha256:5af123270be5d11b1a45ac61a9d604681147f0bbeb976c80982227f27ff260ec
 ```
 
 The tag follows the manual-push convention (`ml-<name>-<yyyymmdd>`), so it can be repointed. Everything that uses it
-(`Dockerfile.desklib-meld`, `apps/docker-compose.desklib-meld.yml`, CI) pins the digest, not only the tag. It is the
-**base layer, not a runnable detector**: it has no `CMD`. The runnable image is `Dockerfile.desklib-meld` on top.
+(`apps/detector/Dockerfile`, `apps/docker-compose.yml`, CI) pins the digest, not only the tag. It is the
+**base layer, not a runnable detector**: it has no `CMD`. The runnable image is `apps/detector/Dockerfile` on top.
 
 The package is **public**, like every image CI pushes there (`infra/README.md`), so pulling it needs no login, and
 nothing needs to go in `apps/.env`: the compose file and the Dockerfile default to this image.
 
 What it holds: Python and the libraries, desklib's and MELD's base models, and the release bundle's adapters, MELD
 head, `desklib-meld.json` and `report.json`. It does **not** hold `golden.json` (corpus text):
-`Dockerfile.desklib-meld-base.dockerignore` leaves it out, since only the golden test reads it. Never let corpus
+`Dockerfile.base.dockerignore` leaves it out, since only the golden test reads it. Never let corpus
 text or student answers into this image: it is public. The adapters were trained on student answers but hold no
-answer text, like `desklib-lora-adapter/`, which is in git and in the desklib images.
-
+answer text.
 
 #### Building and pushing a new base image
 
@@ -188,7 +183,7 @@ Only needed when the bundle, the base models or the libraries change. It needs t
 cd apps/detector
 ./scripts/prepare_desklib_meld_base.sh
 docker login ghcr.io                        # GitHub username + a classic token with write:packages
-docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.desklib-meld-base \
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.base \
   --label org.opencontainers.image.source=https://github.com/zylooooo/Prompt-Patrol \
   -t ghcr.io/zylooooo/prompt-patrol-detector:ml-<yourname>-<yyyymmdd> --push .
 docker buildx imagetools inspect ghcr.io/zylooooo/prompt-patrol-detector:ml-<yourname>-<yyyymmdd>
@@ -197,7 +192,7 @@ docker logout ghcr.io
 
 Never tag it with a commit SHA, which is what CI uses. `imagetools inspect` should list `linux/amd64` and
 `linux/arm64`, plus two `unknown/unknown` entries: those are buildx's provenance attestations (build metadata), not
-images. Copy the top `Digest` into `Dockerfile.desklib-meld`, `apps/docker-compose.desklib-meld.yml`, CI and this
+images. Copy the top `Digest` into `apps/detector/Dockerfile`, `apps/docker-compose.yml`, CI and this
 step.
 
 ### 8. Switch production over (open)
@@ -205,7 +200,7 @@ step.
 The API and the detector can be deployed in either order (step 6).
 
 - [x] The base image is on GHCR (step 7).
-- [x] CD workflow, "Build detector image": `file: ./apps/detector/Dockerfile.desklib-meld` and cache scope
+- [x] CD workflow, "Build detector image": `file: ./apps/detector/Dockerfile` and cache scope
   `detector-desklib-meld`. No build arg: the Dockerfile's `BASE_IMAGE` default is the pinned GHCR image, which is
   public, so pull-request builds need no GHCR login either.
 - [x] `infra/compute.tf`, detector task: `memory` from `"4096"` to `"8192"`. The model would run out of memory at

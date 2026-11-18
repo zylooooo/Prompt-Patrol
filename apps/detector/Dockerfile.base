@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # Base image for the desklib + MELD detector: Python, the libraries, both base models and the release bundle. The
-# slow, credentialed part, built once and shared; code changes rebuild only Dockerfile.desklib-meld on top of it.
+# slow, credentialed part, built once and shared; code changes rebuild only Dockerfile on top of it.
 #
 # MELD's repo (anon-review-meld-2026/meld) is gated, so this image does not download it: it copies the pinned
 # revision from a local Hugging Face cache, staged by prepare_desklib_meld_base.sh. Build it only on a machine that
@@ -9,11 +9,11 @@
 #
 #   cd apps/detector
 #   ./scripts/prepare_desklib_meld_base.sh
-#   docker build -f Dockerfile.desklib-meld-base -t prompt-patrol-detector-base:desklib-meld-v1 .
+#   docker build -f Dockerfile.base -t prompt-patrol-detector-base:desklib-meld-v1 .
 #
 # Holds a copy of MELD and the bundle's adapters, but not golden.json (corpus text, excluded by the dockerignore).
 # It is pushed to GHCR, where the detector package is public: never let corpus text or student answers into it.
-# Uses Dockerfile.desklib-meld-base.dockerignore, not .dockerignore.
+# Uses Dockerfile.base.dockerignore.
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -28,10 +28,12 @@ RUN useradd -m -u 1000 detectoruser \
 USER detectoruser
 ENV PATH="/home/detectoruser/.local/bin:${PATH}"
 
-# CPU-only torch first (see the default Dockerfile for why), at the version the release was scored with
-COPY requirements-desklib-meld.txt ./
+# CPU-only torch first, at the version the release was scored with. The default PyPI wheel bundles CUDA libraries
+# this service never uses and adds several GB to the image. Installing it first means peft's torch dependency is
+# already met, so pip doesn't fetch the CUDA build. CI's detector test job installs it the same way.
+COPY requirements.txt ./
 RUN pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements-desklib-meld.txt
+    && pip install --no-cache-dir -r requirements.txt
 
 # MELD's base model (~3.8GB) at the bundle's pinned revision, copied in by prepare_desklib_meld_base.sh.
 # A plain folder, not the HF cache: meld.py loads Scorer(model_dir) from a path.
@@ -42,8 +44,8 @@ COPY --chown=detectoruser:detectoruser model/meld-base/ /app/model/meld-base/
 COPY --chown=detectoruser:detectoruser model/desklib-meld/ /app/model/desklib-meld/
 
 # desklib's base model (~1.7GB, public) at the revision desklib-meld.json pins, plus checks that the staged MELD is
-# the revision the bundle was calibrated on. refs/main is pointed at the pinned revision so an offline
-# snapshot_download without a revision (today's desklib.py) also resolves to it.
+# the revision the bundle was calibrated on. refs/main is pointed at the pinned revision too, so an offline
+# snapshot_download without a revision also resolves to it (desklib_meld.py passes the revision).
 ENV HF_HOME=/home/detectoruser/.cache/huggingface
 RUN python - <<'EOF'
 import json, sys
@@ -68,7 +70,6 @@ EOF
 ENV HF_HUB_OFFLINE=1
 
 ENV MELD_BASE_DIR=/app/model/meld-base \
-    DESKLIB_MELD_DIR=/app/model/desklib-meld \
-    DESKLIB_ADAPTER_DIR=/app/model/desklib-meld/desklib-lora-adapter
+    DESKLIB_MELD_DIR=/app/model/desklib-meld
 LABEL org.opencontainers.image.title="prompt-patrol-detector-base" \
       org.opencontainers.image.version="desklib-meld-v1"

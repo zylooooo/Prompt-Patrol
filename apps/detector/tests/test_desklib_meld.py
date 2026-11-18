@@ -222,29 +222,16 @@ def test_calibration_reports_the_bundles_threshold_and_the_band_chosen_on_valida
 # --------------------------------------------------------------------------- wiring
 
 
-def test_the_desklib_meld_backend_is_used_when_selected(monkeypatch):
-    monkeypatch.setattr(baseline, "BACKEND", "desklib-meld")
-    monkeypatch.setattr(baseline, "desklib_meld", desklib_meld, raising=False)
+def test_score_text_scores_with_desklib_meld():
     with patch("desklib_meld.score", return_value=(0.97, True)) as fake:
         result = baseline.score_text("an answer")
     fake.assert_called_once_with("an answer")
     assert result == baseline.Score(raw_score=0.97, truncated=True)
 
 
-def test_the_desklib_meld_backend_reports_its_own_calibration(monkeypatch):
-    monkeypatch.setattr(baseline, "BACKEND", "desklib-meld")
-    monkeypatch.setattr(baseline, "desklib_meld", desklib_meld, raising=False)
+def test_the_service_reports_desklib_melds_calibration():
     with patch("desklib_meld.settings", return_value=config()):
         assert baseline.calibration() == desklib_meld.calibration()
-
-
-def test_warm_up_runs_one_desklib_meld_score_when_selected(monkeypatch):
-    monkeypatch.setattr(baseline, "BACKEND", "desklib-meld")
-    monkeypatch.setattr(baseline, "desklib_meld", desklib_meld, raising=False)
-    with patch("desklib_meld.score", return_value=(0.5, False)) as fake:
-        baseline.warm_up()
-    fake.assert_called_once()
-    assert baseline.status() == "ready"
 
 
 # --------------------------------------------------------------------------- the real models

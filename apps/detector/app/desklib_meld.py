@@ -1,6 +1,6 @@
 """desklib + MELD: the fine-tuned desklib detector and the MELD 3-seed soup, their calibrated scores averaged.
 
-Selected with DETECTOR_BACKEND=desklib-meld (see baseline.py); built by Dockerfile.desklib-meld. Mirrors how the
+The served model (baseline.py calls it; the image is Dockerfile on top of Dockerfile.base). Mirrors how the
 release was scored in ml-training/release_desklib_meld.py (docs/desklib-meld-release.md):
   1. the submitted text is cleaned once with clean_text, and the same cleaned text goes to both models (only the copy
      sent to the models; the submitted answer itself is never changed);
@@ -175,7 +175,7 @@ def score(text: str) -> tuple[float, bool]:
     """(calibrated probability the answer is AI-written, whether either model cut the text).
 
     desklib reads only the first 256 tokens, so a long answer reports truncated even though MELD read all of it (up
-    to its 16,384-token cap), as for the desklib + RADAR ensemble."""
+    to its 16,384-token cap)."""
     import torch
 
     config = settings()

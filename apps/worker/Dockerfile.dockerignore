@@ -1,0 +1,8 @@
+# The worker builds from the repo root (it copies apps/api and apps/worker), so without this every build sends the
+# whole repo, .git and node_modules included, to the daemon. Allow-list: only what the Dockerfile COPYs.
+*
+!apps/api/requirements.txt
+!apps/api/app/
+!apps/worker/requirements.txt
+!apps/worker/worker/
+**/__pycache__

@@ -16,6 +16,7 @@ SMU CS480 Capstone Project: a web-based triage tool that flags potentially AI-ge
 | [`apps/data-pipeline`](apps/data-pipeline/README.md) | Corpus tooling: dataset ingest and cleaning, the AI-answer generation harness, and the splicer      |
 | [`ml-training`](ml-training/README.md)               | Detector training, evaluation and MLflow tracking                                                   |
 | [`docs/openapi.yaml`](docs/openapi.yaml)             | The API contract, with a changelog and decision log at the bottom                                   |
+| [`docs/local-handover.md`](docs/local-handover.md)   | Running the whole app on one machine with Docker Compose (the sponsor hand-over)                    |
 | `postman/`                                           | Postman collection and environment for exercising the API by hand                                   |
 | [`PRODUCT.md`](PRODUCT.md), [`DESIGN.md`](DESIGN.md) | Product context and the frontend design system                                                      |
 
@@ -76,21 +77,13 @@ The diagram source is [`docs/assets/prompt-patrol-aws-architecture.drawio`](docs
 
 ## Local dev
 
-1. `cd apps && docker compose up -d --build` — starts Postgres, LocalStack (S3 + SQS), the detector service, the API, the batch worker, and an nginx-served production build of the frontend on <http://localhost:5173>. The API reads `apps/api/.env` (copy it from `.env.example`), and `apps/api/app/config/settings.py` refuses to start unless all six `AUTH0_*` variables are set — an incomplete Auth0 configuration is a startup failure rather than a runtime one, on the grounds that an app nobody can sign into should say so immediately. The API also applies migrations on start (`apps/api/entrypoint.sh`), so the tables are there by the time it answers its health check. A failed migration stops the container rather than leaving it serving errors, so `docker compose logs api` is the first place to look if it does not come up.
-2. `docker exec prompt-patrol-api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"` — allowlist yourself; there's no self-service signup. This also creates your Auth0 credential — Auth0 emails you a one-time link to set your password before signing in. Must be run as `-m scripts.provision_user`, not `python scripts/provision_user.py` — the latter fails with `ModuleNotFoundError: No module named 'db'` since Python puts the script's own folder on `sys.path` instead of the app root.
-To apply a migration you have just written without restarting anything, `docker exec prompt-patrol-api alembic upgrade head` still works — it runs inside the container, so it uses the container's `DB_URL` and there is no host/`localhost` hostname mismatch to worry about.
+1. `cd apps && docker compose up -d --build` — starts Postgres, LocalStack (S3 + SQS), the desklib + MELD detector, the API, the batch worker, a daily purge job, and an nginx-served production build of the frontend on <http://localhost:5173>. The networks mirror the AWS subnet tiers (see the header of `apps/docker-compose.yml`): only the frontend and LocalStack have host ports (loopback only), and of the backend services only the API can reach the internet. The API and worker never share a network, and Postgres is reachable only from the API, worker and purge job. Docker needs about 12 GB of memory for the detector. The API reads `apps/api/.env` (copy it from `.env.example`), and `apps/api/app/config/settings.py` refuses to start unless all six `AUTH0_*` variables are set — an incomplete Auth0 configuration is a startup failure rather than a runtime one, on the grounds that an app nobody can sign into should say so immediately. The API also applies migrations on start (`apps/api/entrypoint.sh`), so the tables are there by the time it answers its health check. A failed migration stops the container rather than leaving it serving errors, so `docker compose logs api` is the first place to look if it does not come up.
+2. `docker compose exec api sh -c "cd /app && python -m scripts.provision_user add <your-dev-tenant-email> root_admin"` — allowlist yourself; there's no self-service signup. This also creates your Auth0 credential — Auth0 emails you a one-time link to set your password before signing in. Must be run as `-m scripts.provision_user`, not `python scripts/provision_user.py` — the latter fails with `ModuleNotFoundError: No module named 'db'` since Python puts the script's own folder on `sys.path` instead of the app root.
+To apply a migration you have just written without restarting anything, `docker compose exec api alembic upgrade head` (from `apps/`) still works — it runs inside the container, so it uses the container's `DB_URL` and there is no host/`localhost` hostname mismatch to worry about.
+
+Sign-in goes through the frontend's nginx, as it goes through CloudFront in AWS, so `AUTH0_REDIRECT_URI` is `http://localhost:5173/api/auth/callback`, and that URL must be in the Auth0 application's Allowed Callback URLs. [`docs/local-handover.md`](docs/local-handover.md) is the same setup written for someone outside the team.
 
 The frontend container is a production build, so it does not pick up edits. To work on the frontend with hot reload, stop it (`docker compose stop frontend`) and run the Vite dev server instead — see [the frontend README](apps/web/README.md).
-
-### Running the fine-tuned detector
-
-The default stack serves the RoBERTa baseline. To serve the fine-tuned desklib model instead, layer the override file on top:
-
-```sh
-cd apps && docker compose -f docker-compose.yml -f docker-compose.desklib.yml up -d --build
-```
-
-The override swaps the detector image and sets the matching model version, threshold and abstention band on the API and worker, so the three stay in step. The first build downloads a ~1.7 GB base model, and Docker needs roughly 8 GB of memory. See [`apps/detector`](apps/detector/README.md) for details.
 
 ## Tests
 

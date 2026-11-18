@@ -1,38 +1,15 @@
 import logging
-import os
 import threading
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Literal
 
-import desklib
+import desklib_meld
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "roberta-base-openai-detector-v0"
-MODEL_NAME = "openai-community/roberta-base-openai-detector"
-MAX_TOKENS = 512
-
-# "roberta" (default, the original baseline), "desklib" (the fine-tuned desklib detector, see desklib.py),
-# "ensemble" (desklib + RADAR, see ensemble.py) or "desklib-meld" (desklib + MELD, see desklib_meld.py). Set by
-# docker-compose.desklib.yml, docker-compose.ensemble.yml or docker-compose.desklib-meld.yml; the default image is
-# unchanged.
-BACKEND = os.getenv("DETECTOR_BACKEND", "roberta")
-if BACKEND == "desklib":
-    MODEL_VERSION = desklib.MODEL_VERSION
-elif BACKEND == "ensemble":
-    import ensemble
-
-    MODEL_VERSION = ensemble.MODEL_VERSION
-elif BACKEND == "desklib-meld":
-    import desklib_meld
-
-    MODEL_VERSION = desklib_meld.MODEL_VERSION
-elif BACKEND != "roberta":
-    # an unknown name used to fall through to roberta silently, which then fails offline with a confusing error
-    raise ValueError(f"unknown DETECTOR_BACKEND {BACKEND!r}: use roberta, desklib, ensemble or desklib-meld")
-
-_AI_LABEL = "fake"
+# The served model: desklib + MELD (desklib_meld.py, docs/desklib-meld-release.md). This module keeps what is not
+# model-specific: the scoring lock, the load status and the warm-up.
+MODEL_VERSION = desklib_meld.MODEL_VERSION
 
 # "loading" until warm_up finishes, then "ready" or "failed" for good.
 Status = Literal["loading", "ready", "failed"]
@@ -44,10 +21,10 @@ class Score:
     truncated: bool
 
 
-# The pipeline is a process-wide singleton holding a HuggingFace *fast*
-# tokenizer - a Rust object that refuses concurrent use with "RuntimeError:
-# Already borrowed". routes.py runs every request in a worker thread, so two
-# requests arriving together hit exactly that, and one of them 500s.
+# The models are process-wide singletons holding HuggingFace *fast* tokenizers -
+# Rust objects that refuse concurrent use with "RuntimeError: Already borrowed".
+# routes.py runs every request in a worker thread, so two requests arriving
+# together hit exactly that, and one of them 500s.
 #
 # Nothing sent this service concurrent traffic until batch screening did, which
 # is why it went unnoticed. Serialising is the right trade: a forward pass is
@@ -59,25 +36,11 @@ _status: Status = "loading"
 _status_lock = threading.Lock()
 
 
-@lru_cache(maxsize=1)
-def _pipeline():
-    from transformers import pipeline
-
-    logger.info("Loading baseline detector model %s", MODEL_NAME)
-    return pipeline("text-classification", model=MODEL_NAME, top_k=None)
-
-
 def calibration() -> dict:
     """The running model and the decision settings fitted for it: model_version, calibration_version, threshold and
     abstention_band. Sent with every score so the API applies what was fitted for this model, not a hand-copied value
-    that can go stale. The roberta baseline is uncalibrated (None), which the API answers with its own defaults."""
-    if BACKEND == "desklib":
-        return desklib.calibration()
-    if BACKEND == "ensemble":
-        return ensemble.calibration()
-    if BACKEND == "desklib-meld":
-        return desklib_meld.calibration()
-    return {"model_version": MODEL_VERSION, "calibration_version": None, "threshold": None, "abstention_band": None}
+    that can go stale."""
+    return desklib_meld.calibration()
 
 
 def status() -> Status:
@@ -99,14 +62,7 @@ def warm_up() -> None:
     # otherwise still leave several seconds of work for the first caller.
     try:
         with _lock:
-            if BACKEND == "desklib":
-                desklib.score("warm up")
-            elif BACKEND == "ensemble":
-                ensemble.score("warm up")
-            elif BACKEND == "desklib-meld":
-                desklib_meld.score("warm up")
-            else:
-                _pipeline()(["warm up"], truncation=True, max_length=MAX_TOKENS)
+            desklib_meld.score("warm up")
     except Exception:
         logger.exception("Detector model failed to load")
         _set_status("failed")
@@ -117,29 +73,8 @@ def warm_up() -> None:
 
 
 def score_text(text: str) -> Score:
-    if BACKEND == "desklib":
-        with _lock:
-            probability, truncated = desklib.score(text)
-        return Score(raw_score=probability, truncated=truncated)
-
-    if BACKEND == "ensemble":
-        with _lock:
-            probability, truncated = ensemble.score(text)
-        return Score(raw_score=probability, truncated=truncated)
-
-    if BACKEND == "desklib-meld":
-        with _lock:
-            probability, truncated = desklib_meld.score(text)
-        return Score(raw_score=probability, truncated=truncated)
-
-    # Loading is inside the lock too: lru_cache does not make the miss atomic,
-    # so a cold start under concurrency would otherwise build the model twice.
+    # The models load inside the lock too: lru_cache does not make the miss atomic, so a cold start under concurrency
+    # would otherwise build them twice.
     with _lock:
-        clf = _pipeline()
-        tokenizer = clf.tokenizer
-        token_count = len(tokenizer.encode(text, add_special_tokens=True))
-        [scores] = clf([text], truncation=True, max_length=MAX_TOKENS)
-
-    truncated = token_count > MAX_TOKENS
-    ai_score = next(s["score"] for s in scores if s["label"].lower() == _AI_LABEL)
-    return Score(raw_score=round(float(ai_score), 4), truncated=truncated)
+        probability, truncated = desklib_meld.score(text)
+    return Score(raw_score=probability, truncated=truncated)
