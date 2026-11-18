@@ -85,7 +85,8 @@ export interface CheckResult {
 export type DetectorStatus = "ready" | "loading" | "unavailable";
 
 export interface DetectorCapabilities {
-  modelVersion: string;
+  // null until the detector has reported which model it runs (it is still loading)
+  modelVersion: string | null;
   calibrationVersion: string | null;
   requiresQuestionText: boolean;
   minAnswerChars: number;

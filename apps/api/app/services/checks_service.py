@@ -19,6 +19,7 @@ from models import AbstainReasonEnum, Batch, BatchRowFailure, Check, StrictnessE
 from .detector_client import (
     CALIBRATION_VERSION,
     MODEL_VERSION,
+    UNREPORTED_MODEL_VERSION,
     Score,
     reported_calibration_version,
     reported_model_version,
@@ -75,6 +76,7 @@ def detector_capabilities() -> dict:
         "supports_spans": False,
     }
 
+
 @dataclass(frozen=True)
 class AppliedSettings:
     """How one score is read: recorded on the check, so every verdict names the model and the numbers behind it."""
@@ -110,7 +112,7 @@ def _settings_for(result: Score, strictness: str) -> AppliedSettings:
     another model's scores. A detector too old to report falls back to the environment, exactly as before."""
     if result.model_version is None:
         return AppliedSettings(
-            model_version=MODEL_VERSION,
+            model_version=MODEL_VERSION or UNREPORTED_MODEL_VERSION,
             calibration_version=CALIBRATION_VERSION if CALIBRATION_VERSION else None,
             threshold=THRESHOLDS[strictness],
             abstention_band=ABSTENTION_BAND,

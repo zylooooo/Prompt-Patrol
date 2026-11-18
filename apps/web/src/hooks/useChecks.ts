@@ -12,6 +12,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { useAuth } from "./useAuth";
 import type { User } from "../api/auth";
 import { ApiError } from "../api/client";
@@ -60,7 +61,23 @@ export const detectorStatusQueryOptions = () =>
   });
 
 export function useDetectorStatus() {
-  return useQuery(detectorStatusQueryOptions());
+  const queryClient = useQueryClient();
+  const query = useQuery(detectorStatusQueryOptions());
+  const previous = useRef(query.data);
+
+  useEffect(() => {
+    if (query.data === "ready" && previous.current !== "ready") {
+      // Capabilities are cached for an hour, so if they were first fetched while the detector was loading they name
+      // no model. The API learns the real model and calibration from the same /health call that just returned
+      // "ready", so refetching now is guaranteed to get them.
+      void queryClient.invalidateQueries({
+        queryKey: checkKeys.capabilities(),
+      });
+    }
+    previous.current = query.data;
+  }, [query.data, queryClient]);
+
+  return query;
 }
 
 export function useHistory() {
