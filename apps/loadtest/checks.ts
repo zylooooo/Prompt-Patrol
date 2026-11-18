@@ -271,6 +271,9 @@ export function singleCheck() {
     exec.vu.metrics.tags.step = String(Math.min(Math.max(step, 0), STEP_RATES.length - 1));
   }
   const a = answers[Math.floor(Math.random() * answers.length)];
+  // Word count rides along in requests.csv (extra_tags): is S flat in answer length?
+  const params = api("check");
+  params.tags = { ...params.tags, words: String(a.answer_text.split(/\s+/).filter(Boolean).length) };
   const r = http.post(
     `${BASE_URL}/api/checks`,
     JSON.stringify({
@@ -279,7 +282,7 @@ export function singleCheck() {
       strictness: "standard",
       retain_answer: false,
     }),
-    api("check"),
+    params,
   );
   // A fast error must never look like good latency: 201 alone isn't enough.
   let ok = false;

@@ -429,21 +429,21 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 # No secrets, no task role: text in, score out. DETECTOR_BACKEND=desklib-meld
-# is baked into Dockerfile.desklib-meld. 8 GB: desklib + MELD peaks at ~5.7 GB
-# locally (two models), over the 4 GB that desklib alone fitted in (PP-533:
-# ~3 GB). Apply before the deploy that ships it: CD copies the latest
-# revision. 2 vCPU stays: PP-533 Phase 9 measured 1 vCPU 58% slower on
-# the same CPU. var.detector_torch_threads pins torch to one thread, as a second
-# added nothing (Phase 7); CD copies the latest revision, so it sticks across
-# deploys. startPeriod 300 (the ECS maximum) covers the model load,
-# as in compose.
+# is baked into Dockerfile.desklib-meld. 4 vCPU / 10 GB (load test 2026-11-13,
+# apps/loadtest EXPERIMENT_LOG Entry 9): desklib + MELD is memory-bandwidth
+# bound, so a second physical core halves the time per check (2.236 -> 1.099 s)
+# and passes AC4 at 40/min (p95 5.8 s); 2 vCPU broke at 21/min under a batch.
+# 10 GB because 4 vCPU / 8 GB peaked at 91% memory. var.detector_torch_threads
+# = 2, one per physical core (4 threads was 9% slower). CD copies the latest
+# revision, so apply before the deploy that should carry it. startPeriod 300
+# (the ECS maximum) covers the model load, as in compose.
 resource "aws_ecs_task_definition" "detector" {
   count                    = var.paused ? 0 : 1
   family                   = "prompt-patrol-detector"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "2048"
-  memory                   = "8192"
+  cpu                      = "4096"
+  memory                   = "10240"
   execution_role_arn       = aws_iam_role.execution.arn
 
   runtime_platform {
