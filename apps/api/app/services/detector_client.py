@@ -29,7 +29,7 @@ UNREPORTED_MODEL_VERSION = "unreported"
 CALIBRATION_VERSION = os.getenv("DETECTOR_CALIBRATION_VERSION") or None
 
 # What the detector reports about itself, in /score and /health bodies
-REPORTED_FIELDS = ("model_version", "calibration_version", "threshold", "abstention_band")
+REPORTED_FIELDS = ("model_version", "calibration_version", "threshold", "abstention_band", "strictness_levels")
 
 # Short on purpose: this backs a status badge that polls, so a detector that has
 # stopped answering should read as "unavailable" quickly rather than hold the
@@ -57,6 +57,9 @@ class Score:
     calibration_version: str | None = None
     threshold: float | None = None
     abstention_band: float | None = None
+    # {level: {"target_fpr", "threshold", "abstention_band"}} when the detector has a pair fitted for each strictness
+    # level; None when threshold/abstention_band above are its only pair (an older detector, or no levels fitted).
+    strictness_levels: dict[str, dict[str, float]] | None = None
 
 
 # The last calibration the detector reported, for the status badge and the capabilities endpoint, which have no score
@@ -81,6 +84,21 @@ def reported_calibration_version() -> str | None:
     return CALIBRATION_VERSION
 
 
+def has_reported() -> bool:
+    """Whether the detector itself has said which model it runs (else only the environment's fallback is known)."""
+    return bool(_reported.get("model_version"))
+
+
+def reported_threshold() -> float | None:
+    """The single threshold the detector last reported (None before it has reported, or when it is uncalibrated)."""
+    return _reported.get("threshold") if has_reported() else None
+
+
+def reported_strictness_levels() -> dict[str, dict[str, float]] | None:
+    """The per-level settings the detector last reported, or None (not reported yet, or it has only one pair)."""
+    return _reported.get("strictness_levels")
+
+
 async def score_text(text: str) -> Score:
     response = await _client.post("/score", json={"text": text})
     response.raise_for_status()
@@ -93,6 +111,7 @@ async def score_text(text: str) -> Score:
         calibration_version=body.get("calibration_version"),
         threshold=body.get("threshold"),
         abstention_band=body.get("abstention_band"),
+        strictness_levels=body.get("strictness_levels"),
     )
 
 
