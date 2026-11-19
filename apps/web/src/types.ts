@@ -15,9 +15,9 @@ export const STRICTNESS_TEXT: Record<Strictness, string> = {
 };
 
 export const STRICTNESS_HINT: Record<Strictness, string> = {
-  lenient: "Flags more answers, so more are flagged by mistake.",
+  lenient: "Flags only the strongest cases, so fewer are flagged by mistake.",
   standard: "A balance between catching more answers and flagging fewer by mistake.",
-  strict: "Flags only the strongest cases, so fewer are flagged by mistake.",
+  strict: "Flags more answers, so more are flagged by mistake.",
 };
 
 export type AbstainReason =
@@ -92,6 +92,9 @@ export interface DetectorCapabilities {
   minAnswerChars: number;
   maxAnswerChars: number;
   strictnessLevels: Strictness[];
+  // The threshold a check at each level is judged against (only the levels the
+  // server knows one for)
+  thresholds: Partial<Record<Strictness, number>>;
   supportsExplanation: boolean;
   supportsSpans: boolean;
 }

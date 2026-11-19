@@ -155,9 +155,11 @@ async def test_get_detector_capabilities(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_strictness_flag_off_offers_and_accepts_only_standard(client, db_session):
+async def test_strictness_flag_off_offers_and_accepts_only_standard(client, db_session, monkeypatch):
     """STRICTNESS_ENABLED defaults off: the picker's levels collapse to one and
     a client still sending another level gets a 400, not a silent remap."""
+    # Pinned, not left to the default: a developer's apps/api/.env may turn it on
+    monkeypatch.setattr("services.checks_service.STRICTNESS_ENABLED", False)
     await _signed_in(client, db_session, email="ta6@smu.edu.sg")
 
     body = (await client.get("/api/detector")).json()
@@ -428,8 +430,8 @@ async def test_the_detector_settings_are_stored_not_re_derived(client, db_sessio
     fetched = (await client.get(f"/api/checks/{created['check_id']}")).json()["detector"]
 
     assert fetched["strictness_applied"] == "strict"
-    assert fetched["threshold_applied"] == 0.65
-    assert fetched["target_fpr"] == 0.001
+    assert fetched["threshold_applied"] == 0.4
+    assert fetched["target_fpr"] == 0.05
 
 
 @pytest.mark.asyncio
@@ -581,7 +583,7 @@ async def test_an_unsupervised_assistant_may_still_read_their_own_history(client
 @pytest.mark.asyncio
 async def test_a_check_records_the_calibration_the_detector_reported(client, db_session, monkeypatch):
     """The verdict and the stored record use the detector's own threshold and band, not the API's environment."""
-    # "lenient" on purpose: its uncalibrated threshold (0.4) is far from the reported one, so this shows the override
+    # "strict" on purpose: its uncalibrated threshold (0.4) is far from the reported one, so this shows the override
     monkeypatch.setattr("services.checks_service.STRICTNESS_ENABLED", True)
     await _signed_in(client, db_session)
     reported = Score(
@@ -593,7 +595,7 @@ async def test_a_check_records_the_calibration_the_detector_reported(client, db_
         abstention_band=0.005,
     )
     with patch("services.checks_service.score_text", new=AsyncMock(return_value=reported)):
-        response = await client.post("/api/checks", json={"answer_text": AI_LIKE, "strictness": "lenient"})
+        response = await client.post("/api/checks", json={"answer_text": AI_LIKE, "strictness": "strict"})
 
     assert response.status_code == 201
     body = response.json()

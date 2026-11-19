@@ -91,8 +91,10 @@ def write_settings(tmp_path, monkeypatch, values):
 @pytest.fixture(autouse=True)
 def fresh_caches():
     desklib_meld.settings.cache_clear()
+    desklib_meld.strictness_levels.cache_clear()
     yield
     desklib_meld.settings.cache_clear()
+    desklib_meld.strictness_levels.cache_clear()
 
 
 # --------------------------------------------------------------------------- combining
@@ -209,14 +211,69 @@ def test_load_desklib_fails_loudly_when_the_adapter_is_missing(tmp_path, monkeyp
     desklib_meld.load_desklib.cache_clear()
 
 
-def test_calibration_reports_the_bundles_threshold_and_the_band_chosen_on_validation():
+LEVELS = {
+    "lenient": {"target_fpr": 0.01, "threshold": 0.945775, "abstention_band": 0.005},
+    "standard": {"target_fpr": 0.02, "threshold": 0.934459, "abstention_band": 0.006},
+    "strict": {"target_fpr": 0.05, "threshold": 0.814079, "abstention_band": 0.0148},
+}
+
+
+def write_levels(tmp_path, monkeypatch, **overrides):
+    values = {
+        "model_version": desklib_meld.MODEL_VERSION,
+        "bundle_calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
+        "levels_version": "lenient1-standard2-strict5-logitband-v1",
+        "levels": LEVELS,
+    } | overrides
+    (tmp_path / "strictness_levels.json").write_text(json.dumps(values))
+    monkeypatch.setattr(desklib_meld, "STRICTNESS_PATH", tmp_path / "strictness_levels.json")
+
+
+def test_calibration_without_strictness_levels_reports_the_bundles_one_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(desklib_meld, "STRICTNESS_PATH", tmp_path / "missing.json")
     with patch("desklib_meld.settings", return_value=config()):
         assert desklib_meld.calibration() == {
             "model_version": "desklib-meld-ensemble-v1",
             "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
             "threshold": 0.945775,
             "abstention_band": 0.005,
+            "strictness_levels": None,
         }
+
+
+def test_calibration_reports_every_levels_pair_and_the_standard_one_as_the_default(tmp_path, monkeypatch):
+    write_levels(tmp_path, monkeypatch)
+    with patch("desklib_meld.settings", return_value=config()):
+        assert desklib_meld.calibration() == {
+            "model_version": "desklib-meld-ensemble-v1",
+            "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1+lenient1-standard2-strict5-logitband-v1",
+            "threshold": 0.934459,
+            "abstention_band": 0.006,
+            "strictness_levels": LEVELS,
+        }
+
+
+def test_strictness_levels_fitted_for_another_bundle_fail_loudly(tmp_path, monkeypatch):
+    write_levels(tmp_path, monkeypatch, bundle_calibration_version="desklib3.000-meld2.000-thr0.9000-v1")
+    with patch("desklib_meld.settings", return_value=config()), pytest.raises(ValueError, match="refit"):
+        desklib_meld.calibration()
+
+
+def test_strictness_levels_out_of_order_fail_loudly(tmp_path, monkeypatch):
+    swapped = LEVELS | {"strict": LEVELS["standard"], "standard": LEVELS["strict"]}
+    write_levels(tmp_path, monkeypatch, levels=swapped)
+    with patch("desklib_meld.settings", return_value=config()), pytest.raises(ValueError, match="ordered"):
+        desklib_meld.calibration()
+
+
+def test_the_tracked_strictness_levels_match_the_release():
+    """The strictness_levels.json in the repo is the one fit_strictness_levels.py wrote for this release: its
+    lenient level is the bundle's own 1% threshold, and it passes the same checks the detector runs at start-up."""
+    with patch("desklib_meld.settings", return_value=config()):
+        levels = desklib_meld.strictness_levels()
+    assert levels is not None
+    assert levels["levels"]["lenient"]["threshold"] == config()["threshold"]
+    assert [levels["levels"][k]["target_fpr"] for k in ("lenient", "standard", "strict")] == [0.01, 0.02, 0.05]
 
 
 # --------------------------------------------------------------------------- wiring

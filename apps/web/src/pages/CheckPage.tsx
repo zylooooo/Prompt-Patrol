@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useAuth } from "../hooks/useAuth";
 import BatchTab from "../components/BatchTab";
 import { useSearchParams } from "react-router-dom";
@@ -10,6 +10,7 @@ import SingleCheckTab from "../components/SingleCheckTab";
 import Tabs, { type TabOption } from "../components/ui/Tabs";
 import UnassignedNotice from "../components/UnassignedNotice";
 import ModelStatusBadge from "../components/ModelStatusBadge";
+import type { Strictness } from "../types";
 
 type TabId = "single" | "batch";
 
@@ -37,6 +38,21 @@ export default function CheckPage() {
     setOpened((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
   }
 
+  // Each tab keeps its own picker; the badge shows the threshold of the one on
+  // screen.
+  const [strictness, setStrictness] = useState<Record<TabId, Strictness>>({
+    single: "standard",
+    batch: "standard",
+  });
+  const onSingleStrictness = useCallback(
+    (value: Strictness) => setStrictness((prev) => ({ ...prev, single: value })),
+    [],
+  );
+  const onBatchStrictness = useCallback(
+    (value: Strictness) => setStrictness((prev) => ({ ...prev, batch: value })),
+    [],
+  );
+
   const panel = (id: TabId, content: ReactNode) =>
     opened.has(id) && (
       <PageScroll
@@ -57,7 +73,11 @@ export default function CheckPage() {
       <PageHeader
         title="Check answers"
         subtitle="Check short answers and flag the ones worth a closer look."
-        actions={unassigned ? undefined : <ModelStatusBadge />}
+        actions={
+          unassigned ? undefined : (
+            <ModelStatusBadge strictness={strictness[tab]} />
+          )
+        }
       />
 
       {unassigned ? (
@@ -72,8 +92,11 @@ export default function CheckPage() {
               ariaLabel="Check mode"
             />
           </div>
-          {panel("single", <SingleCheckTab />)}
-          {panel("batch", <BatchTab />)}
+          {panel(
+            "single",
+            <SingleCheckTab onStrictnessChange={onSingleStrictness} />,
+          )}
+          {panel("batch", <BatchTab onStrictnessChange={onBatchStrictness} />)}
         </>
       )}
     </Page>

@@ -20,6 +20,9 @@ class ScoreResponse(BaseModel):
     calibration_version: str | None
     threshold: float | None
     abstention_band: float | None
+    # {level: {target_fpr, threshold, abstention_band}} when each strictness level has its own fitted pair; None when
+    # threshold/abstention_band above apply to every level.
+    strictness_levels: dict[str, dict[str, float]] | None = None
 
 
 @router.post("/score", response_model=ScoreResponse)
