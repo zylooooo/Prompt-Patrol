@@ -1,0 +1,27 @@
+{
+  "model_version": "desklib-meld-ensemble-v1",
+  "bundle_calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
+  "levels_version": "lenient1-standard2-strict5-logitband-v1",
+  "levels": {
+    "lenient": {
+      "target_fpr": 0.01,
+      "threshold": 0.945775,
+      "abstention_band": 0.005
+    },
+    "standard": {
+      "target_fpr": 0.02,
+      "threshold": 0.934459,
+      "abstention_band": 0.006
+    },
+    "strict": {
+      "target_fpr": 0.05,
+      "threshold": 0.814079,
+      "abstention_band": 0.0148
+    }
+  },
+  "fitted_on": "v0.1-extended val (answers >= 10 words), scores logged by release-desklib-meld-ensemble-v1",
+  "source_run_id": "04da6e99ed3e41c9ae6742ae5c0fcbf1",
+  "band_rule": "every level's uncertain zone 0.1955 wide in log-odds, the width of lenient's +-0.005 (the widest on [0.0, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08] leaving <= 6% of AI answers uncertain)",
+  "fitted": "2026-11-19",
+  "git_commit": "83b83d6-dirty"
+}
