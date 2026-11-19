@@ -35,6 +35,8 @@ const CHECKS_PATH = "/api/checks";
 interface StrictnessLevelResponse {
   level: string;
   target_fpr: number | null;
+  // What a check at this level is judged against; null until the model is known
+  threshold?: number | null;
 }
 
 interface DetectorResponse {
@@ -54,6 +56,17 @@ function toStrictnessLevels(rows: StrictnessLevelResponse[]): Strictness[] {
     .filter((level): level is Strictness => level in STRICTNESS_TEXT);
 }
 
+function toThresholds(
+  rows: StrictnessLevelResponse[],
+): Partial<Record<Strictness, number>> {
+  const thresholds: Partial<Record<Strictness, number>> = {};
+  for (const row of rows) {
+    if (row.level in STRICTNESS_TEXT && typeof row.threshold === "number")
+      thresholds[row.level as Strictness] = row.threshold;
+  }
+  return thresholds;
+}
+
 function toDetectorCapabilities(row: DetectorResponse): DetectorCapabilities {
   return {
     modelVersion: row.model_version ?? null,
@@ -62,6 +75,7 @@ function toDetectorCapabilities(row: DetectorResponse): DetectorCapabilities {
     minAnswerChars: row.min_answer_chars,
     maxAnswerChars: row.max_answer_chars,
     strictnessLevels: toStrictnessLevels(row.strictness_levels ?? []),
+    thresholds: toThresholds(row.strictness_levels ?? []),
     supportsExplanation: row.supports_explanation,
     supportsSpans: row.supports_spans,
   };

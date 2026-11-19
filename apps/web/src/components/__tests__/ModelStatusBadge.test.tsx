@@ -19,10 +19,21 @@ const CAPABILITIES = {
   requires_question_text: false,
   min_answer_chars: 10,
   max_answer_chars: 10000,
-  strictness_levels: [{ level: "standard", target_fpr: 0.01 }],
+  strictness_levels: [
+    { level: "standard", target_fpr: 0.02, threshold: 0.934459 },
+  ],
   supports_explanation: false,
   supports_spans: false,
 };
+
+const CALIBRATION =
+  "desklib3.332-meld2.233-thr0.9458-v1+lenient1-standard2-strict5-logitband-v1";
+
+const LEVELS = [
+  { level: "lenient", target_fpr: 0.01, threshold: 0.945775 },
+  { level: "standard", target_fpr: 0.02, threshold: 0.934459 },
+  { level: "strict", target_fpr: 0.05, threshold: 0.814079 },
+];
 
 const FALLBACK = "checking detector";
 
@@ -42,11 +53,13 @@ function stubApi({
   statusFails = false,
   capabilitiesFail = false,
   calibrationVersion = null,
+  levels = CAPABILITIES.strictness_levels,
 }: {
   status?: string;
   statusFails?: boolean;
   capabilitiesFail?: boolean;
   calibrationVersion?: string | null;
+  levels?: typeof CAPABILITIES.strictness_levels;
 } = {}) {
   vi.stubGlobal("fetch", (path: string) => {
     if (path === STATUS_PATH) {
@@ -56,7 +69,11 @@ function stubApi({
     }
     return capabilitiesFail
       ? Promise.reject(new Error("network down"))
-      : ok({ ...CAPABILITIES, calibration_version: calibrationVersion });
+      : ok({
+          ...CAPABILITIES,
+          strictness_levels: levels,
+          calibration_version: calibrationVersion,
+        });
   });
 }
 
@@ -92,15 +109,52 @@ describe("ModelStatusBadge", () => {
     );
   });
 
-  it("names the calibration version once the detector reports one", async () => {
-    stubApi({ calibrationVersion: "desklib-temp1.944-v1" });
+  it("shows the threshold, not the calibration version, once calibrated", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
 
     renderWithProviders(<ModelStatusBadge />);
 
     await waitFor(() =>
       expect(
-        screen.getByText("roberta-base-openai-detector-v0 · desklib-temp1.944-v1"),
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.93"),
       ).toBeDefined(),
+    );
+    expect(screen.queryByText(/logitband/)).toBeNull();
+  });
+
+  it("shows the threshold of the strictness picked on the page", async () => {
+    stubApi({ calibrationVersion: CALIBRATION, levels: LEVELS });
+
+    renderWithProviders(<ModelStatusBadge strictness="strict" />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.81"),
+      ).toBeDefined(),
+    );
+  });
+
+  it("falls back to the standard threshold for a level not on offer", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
+
+    renderWithProviders(<ModelStatusBadge strictness="strict" />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.93"),
+      ).toBeDefined(),
+    );
+  });
+
+  it("keeps the calibration version in the hover text", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
+
+    const { container } = renderWithProviders(<ModelStatusBadge />);
+
+    await waitFor(() =>
+      expect(container.querySelector("[title]")?.getAttribute("title")).toBe(
+        `Detector ready. Calibration ${CALIBRATION}`,
+      ),
     );
   });
 
