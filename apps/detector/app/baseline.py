@@ -63,6 +63,8 @@ def warm_up() -> None:
     try:
         with _lock:
             desklib_meld.score("warm up")
+        # A strictness_levels.json fitted for another bundle fails here, at start-up, not on every score
+        calibration()
     except Exception:
         logger.exception("Detector model failed to load")
         _set_status("failed")

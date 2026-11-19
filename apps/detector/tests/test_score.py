@@ -16,6 +16,11 @@ CALIBRATED = {
     "calibration_version": "desklib3.332-meld2.233-thr0.9458-v1",
     "threshold": 0.945775,
     "abstention_band": 0.005,
+    "strictness_levels": {
+        "lenient": {"target_fpr": 0.01, "threshold": 0.945775, "abstention_band": 0.005},
+        "standard": {"target_fpr": 0.02, "threshold": 0.934459, "abstention_band": 0.006},
+        "strict": {"target_fpr": 0.05, "threshold": 0.814079, "abstention_band": 0.0148},
+    },
 }
 
 
@@ -65,7 +70,10 @@ def test_a_failed_load_is_reported_as_failed_not_as_still_loading():
 
 
 def test_warm_up_runs_one_score_and_leaves_the_model_ready():
-    with patch("desklib_meld.score", return_value=(0.5, False)) as scored:
+    with (
+        patch("desklib_meld.score", return_value=(0.5, False)) as scored,
+        patch("baseline.calibration", return_value=CALIBRATED),
+    ):
         baseline.warm_up()
 
     scored.assert_called_once()
@@ -80,6 +88,16 @@ def test_warm_up_survives_a_model_that_will_not_load():
 
     assert baseline.status() == "failed"
     assert client.get("/health").status_code == 503
+
+
+def test_warm_up_fails_on_strictness_levels_fitted_for_another_bundle():
+    with (
+        patch("desklib_meld.score", return_value=(0.5, False)),
+        patch("baseline.calibration", side_effect=ValueError("fitted on another bundle")),
+    ):
+        baseline.warm_up()
+
+    assert baseline.status() == "failed"
 
 
 def test_score_returns_the_score_with_the_threshold_and_band_fitted_for_the_running_model():
