@@ -39,7 +39,6 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-import mlflow
 import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
@@ -71,6 +70,8 @@ TARGET = Path(__file__).resolve().parent.parent / "apps" / "detector" / "app" / 
 
 
 def latest_run(run_name: str):
+    import mlflow
+
     runs = mlflow.search_runs(search_all_experiments=True, filter_string=f"tags.mlflow.runName = '{run_name}'",
                               order_by=["attributes.start_time DESC"], output_format="list")
     runs = [r for r in runs if r.info.status == "FINISHED"]
@@ -88,6 +89,8 @@ def git_commit() -> str:
 
 
 def fetch_scores(run_id: str | None) -> tuple[Path, str]:
+    # imported here, not at the top: CI installs only requirements-test.txt, which has no mlflow
+    import mlflow
     from tracking import setup_mlflow
 
     setup_mlflow()
