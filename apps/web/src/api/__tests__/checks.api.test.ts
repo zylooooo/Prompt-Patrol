@@ -24,9 +24,9 @@ const CAPABILITIES = {
   max_answer_chars: 10000,
   max_tokens_scored: 512,
   strictness_levels: [
-    { level: "lenient", target_fpr: 0.05 },
-    { level: "standard", target_fpr: 0.01 },
-    { level: "strict", target_fpr: 0.001 },
+    { level: "lenient", target_fpr: 0.01, threshold: 0.945775 },
+    { level: "standard", target_fpr: 0.02, threshold: 0.934459 },
+    { level: "strict", target_fpr: 0.05, threshold: 0.814079 },
   ],
   calibration_version: null,
   supports_confidence: false,
@@ -111,6 +111,7 @@ describe("getCapabilities", () => {
       minAnswerChars: 10,
       maxAnswerChars: 10000,
       strictnessLevels: ["lenient", "standard", "strict"],
+      thresholds: { lenient: 0.945775, standard: 0.934459, strict: 0.814079 },
       supportsExplanation: false,
       supportsSpans: false,
     });

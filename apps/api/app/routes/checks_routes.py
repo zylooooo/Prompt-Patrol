@@ -54,7 +54,8 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
 
 class DetectorStatusResponse(BaseModel):
     status: Status
-    model_version: str
+    # None until the detector has reported which model it runs
+    model_version: str | None
 
 
 @router.get("/detector")

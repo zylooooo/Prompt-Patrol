@@ -1,4 +1,5 @@
 import ModelStatusBadge from "../ModelStatusBadge";
+import { checkKeys } from "../../api/checks";
 import { renderWithProviders } from "../../test/render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
@@ -18,12 +19,23 @@ const CAPABILITIES = {
   requires_question_text: false,
   min_answer_chars: 10,
   max_answer_chars: 10000,
-  strictness_levels: [{ level: "standard", target_fpr: 0.01 }],
+  strictness_levels: [
+    { level: "standard", target_fpr: 0.02, threshold: 0.934459 },
+  ],
   supports_explanation: false,
   supports_spans: false,
 };
 
-const FALLBACK = "demo detector · scores uncalibrated";
+const CALIBRATION =
+  "desklib3.332-meld2.233-thr0.9458-v1+lenient1-standard2-strict5-logitband-v1";
+
+const LEVELS = [
+  { level: "lenient", target_fpr: 0.01, threshold: 0.945775 },
+  { level: "standard", target_fpr: 0.02, threshold: 0.934459 },
+  { level: "strict", target_fpr: 0.05, threshold: 0.814079 },
+];
+
+const FALLBACK = "checking detector";
 
 const STATUS_PATH = "/api/detector/status";
 
@@ -41,11 +53,13 @@ function stubApi({
   statusFails = false,
   capabilitiesFail = false,
   calibrationVersion = null,
+  levels = CAPABILITIES.strictness_levels,
 }: {
   status?: string;
   statusFails?: boolean;
   capabilitiesFail?: boolean;
   calibrationVersion?: string | null;
+  levels?: typeof CAPABILITIES.strictness_levels;
 } = {}) {
   vi.stubGlobal("fetch", (path: string) => {
     if (path === STATUS_PATH) {
@@ -55,7 +69,11 @@ function stubApi({
     }
     return capabilitiesFail
       ? Promise.reject(new Error("network down"))
-      : ok({ ...CAPABILITIES, calibration_version: calibrationVersion });
+      : ok({
+          ...CAPABILITIES,
+          strictness_levels: levels,
+          calibration_version: calibrationVersion,
+        });
   });
 }
 
@@ -91,15 +109,52 @@ describe("ModelStatusBadge", () => {
     );
   });
 
-  it("names the calibration version once the detector reports one", async () => {
-    stubApi({ calibrationVersion: "desklib-temp1.944-v1" });
+  it("shows the threshold, not the calibration version, once calibrated", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
 
     renderWithProviders(<ModelStatusBadge />);
 
     await waitFor(() =>
       expect(
-        screen.getByText("roberta-base-openai-detector-v0 · desklib-temp1.944-v1"),
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.93"),
       ).toBeDefined(),
+    );
+    expect(screen.queryByText(/logitband/)).toBeNull();
+  });
+
+  it("shows the threshold of the strictness picked on the page", async () => {
+    stubApi({ calibrationVersion: CALIBRATION, levels: LEVELS });
+
+    renderWithProviders(<ModelStatusBadge strictness="strict" />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.81"),
+      ).toBeDefined(),
+    );
+  });
+
+  it("falls back to the standard threshold for a level not on offer", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
+
+    renderWithProviders(<ModelStatusBadge strictness="strict" />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("roberta-base-openai-detector-v0 · flags above 0.93"),
+      ).toBeDefined(),
+    );
+  });
+
+  it("keeps the calibration version in the hover text", async () => {
+    stubApi({ calibrationVersion: CALIBRATION });
+
+    const { container } = renderWithProviders(<ModelStatusBadge />);
+
+    await waitFor(() =>
+      expect(container.querySelector("[title]")?.getAttribute("title")).toBe(
+        `Detector ready. Calibration ${CALIBRATION}`,
+      ),
     );
   });
 
@@ -147,6 +202,46 @@ describe("ModelStatusBadge", () => {
     // Spelled out visibly, not left to the amber dot alone.
     // (amber is also the pre-fetch default, so wait for the text itself).
     expect(await screen.findByText("detector starting up")).toBeDefined();
+  });
+
+  it("names the model once a detector that was loading becomes ready, without a reload", async () => {
+    // The API only learns the model from the detector's /health once it is ready, so capabilities fetched while it
+    // loads name no model. They are cached for an hour; the ready transition must refetch them.
+    let detectorStatus = "loading";
+    vi.stubGlobal("fetch", (path: string) => {
+      if (path === STATUS_PATH) {
+        return ok({ status: detectorStatus, model_version: null });
+      }
+      return ok({
+        ...CAPABILITIES,
+        model_version:
+          detectorStatus === "ready" ? "desklib-meld-ensemble-v1" : null,
+        calibration_version: null,
+      });
+    });
+
+    const { client } = renderWithProviders(<ModelStatusBadge />);
+    expect(await screen.findByText("detector starting up")).toBeDefined();
+
+    detectorStatus = "ready";
+    await client.refetchQueries({ queryKey: checkKeys.detectorStatus() });
+
+    expect(
+      await screen.findByText("desklib-meld-ensemble-v1 · uncalibrated"),
+    ).toBeDefined();
+  });
+
+  it("says ready rather than naming a model before the API has heard one", async () => {
+    vi.stubGlobal("fetch", (path: string) =>
+      path === STATUS_PATH
+        ? ok({ status: "ready", model_version: null })
+        : ok({ ...CAPABILITIES, model_version: null, calibration_version: null }),
+    );
+
+    renderWithProviders(<ModelStatusBadge />);
+
+    expect(await screen.findByText("detector ready")).toBeDefined();
+    expect(screen.queryByText(/null|undefined/)).toBeNull();
   });
 
   it("goes red when the detector is down", async () => {

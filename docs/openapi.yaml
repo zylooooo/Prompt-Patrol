@@ -18,6 +18,16 @@ openapi: 3.0.3
 # history. A generic audit log would be a second, redundant store.
 #
 # CHANGELOG
+#   0.37.0 Each strictness level has its own fitted threshold and abstention
+#          band: `lenient` 1%, `standard` 2%, `strict` 5% target FPR (was
+#          lenient 5% / standard 1% / strict 0.1%). A stricter level now flags
+#          more, not fewer; the uncalibrated thresholds flip with it (lenient
+#          0.65, strict 0.4). `standard`, the default, now flags at 2% FPR. The
+#          detector reports every level's pair; `strictness_levels[].target_fpr`
+#          and a check's `target_fpr` come from it. `strictness_levels[]`
+#          gains a nullable `threshold` (additive) so the SPA's detector badge
+#          can show the picked level's threshold instead of the calibration
+#          version. See DECISION LOG [0.37.0].
 #   0.36.0 Strictness is behind a server flag, `STRICTNESS_ENABLED`, off by
 #          default. Off, GET /api/detector lists only `standard` in
 #          `strictness_levels`, and POST /api/checks / POST /api/batches
@@ -384,7 +394,7 @@ openapi: 3.0.3
 
 info:
   title: Prompt Patrol API
-  version: 0.36.0
+  version: 0.37.0
   description: |
     Instructor-facing decision-support API for flagging potentially AI-generated
     short answers in software engineering courses.
@@ -583,22 +593,23 @@ info:
     ### Strictness, not thresholds
 
     The client sends a named strictness level. The server maps it to a
-    threshold calibrated for the *currently served model* at a target false
-    positive rate on the Mohler validation split.
+    threshold and abstention band fitted for the *currently served model* at a
+    target false positive rate on the extended validation split.
 
     | `strictness` | Target FPR | Instructor-facing meaning              |
     |--------------|-----------|-----------------------------------------|
-    | `lenient`    | 5%        | Flag more, accept more false alarms     |
-    | `standard`   | 1%        | Default                                 |
-    | `strict`     | 0.1%      | Flag only high-confidence cases         |
+    | `lenient`    | 1%        | Flag only high-confidence cases         |
+    | `standard`   | 2%        | Default                                 |
+    | `strict`     | 5%        | Flag more, accept more false alarms     |
 
-    Target FPRs are provisional pending E2/E3 calibration results — the enum
-    is stable, the numbers behind it are not.
+    The target FPR is where the threshold sits before the abstention band;
+    answers within the band come back `uncertain`, so fewer than the target
+    share of student answers are flagged. The served detector reports the
+    numbers (`strictness_levels[].target_fpr`); this table is the default.
 
-    Only `standard` (1% FPR) has a fitted threshold today, so the server
-    offers only `standard` until the `STRICTNESS_ENABLED` flag is turned on:
-    read the levels from `GET /api/detector` `strictness_levels`, never a
-    hardcoded list. See DECISION LOG [0.36.0].
+    The server offers only `standard` until the `STRICTNESS_ENABLED` flag is
+    turned on: read the levels from `GET /api/detector` `strictness_levels`,
+    never a hardcoded list. See DECISION LOG [0.36.0], [0.37.0].
 
     A raw threshold from the client would defeat this entirely: score scales
     are model-specific, so a stored `0.5` means something different after every
@@ -2642,7 +2653,7 @@ components:
         | otherwise | `human_written` | null |
 
         `threshold` is the server-side value for the requested `strictness`:
-        `lenient` 0.4, `standard` 0.5, `strict` 0.65. That is a word-count
+        `lenient` 0.65, `standard` 0.5, `strict` 0.4. That is a word-count
         floor plus a fixed-width band — candidates (a) and (b), with the band
         width a placeholder, not a calibration output. `low_signal` is
         reserved and never produced today. None of these numbers is part of
@@ -3188,6 +3199,16 @@ components:
                 format: float
                 nullable: true
                 description: NULL before E2 calibration exists.
+              threshold:
+                type: number
+                format: float
+                nullable: true
+                description: |
+                  The `raw_score` threshold a check at this level is judged
+                  against right now (the same value a check records as
+                  `threshold_applied`), for display: the SPA's detector badge
+                  shows the picked level's. NULL while no model is known.
+                  Display only; clients still branch on `verdict`.
         calibration_version:
           type: string
           nullable: true
@@ -3302,6 +3323,35 @@ components:
 
 # =============================================================================
 # DECISION LOG
+#
+# [0.37.0] Strictness levels at 1% / 2% / 5% FPR, each with its own band;
+#          a stricter detector flags more.
+#
+#   PROBLEM. [0.36.0] hid the picker because only the 1% threshold was
+#   fitted. The planned 0.1% level cannot be fitted: validation holds 703
+#   student answers, so 0.1% is less than one answer.
+#   DECISION. `lenient` 1%, `standard` 2%, `strict` 5%: "strict" means a
+#   stricter detector, which flags more answers and so more students by
+#   mistake (the previous mapping had it the other way round; the uncalibrated
+#   thresholds flip too). The same calibrated probabilities cut at three
+#   places (no recalibration), fitted with ml-training/fit_strictness_levels.py
+#   from the release run's logged val scores. `lenient` reproduces the
+#   release's own threshold. Every level's abstention band is the same
+#   width in log-odds (0.1955) as `lenient`'s +-0.005, the widest band that
+#   leaves at most 6% of AI answers uncertain on validation: +-0.005 /
+#   +-0.006 / +-0.0148. The calibrated probabilities pile up near 0.95, so
+#   one probability width would not mean the same at 0.81, and an
+#   uncertain-share budget per level runs away where answers are sparse
+#   (at 0.81 it never binds). The detector keeps them in its tracked
+#   strictness_levels.json (tied to the bundle's calibration_version, so a
+#   rebuilt bundle fails start-up until they are refit) and reports every
+#   level's pair with each score; the API applies the one for the requested
+#   level and records its `target_fpr` on the check.
+#   CONSEQUENCE. `standard`, the default, moves from 1% to 2% FPR.
+#   REJECTED. Writing the levels into the release bundle: it is baked into
+#   the base image, so every change would need a base-image rebuild. A
+#   separate uncertain-share budget per level: it gave the 5% level +-0.08,
+#   the top of the grid, which cut its students flagged from 4.8% to 3.4%.
 #
 # [0.36.0] Strictness is behind a feature flag until it is calibrated.
 #

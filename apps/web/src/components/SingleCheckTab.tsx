@@ -1,5 +1,5 @@
 import Button from "./ui/Button";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ResultPanel from "./ResultPanel";
 import { wordCount } from "../lib/format";
 import { useToast } from "../hooks/useToast";
@@ -18,7 +18,15 @@ import {
 const FIELD_CLASS =
   "w-full rounded-md border border-input-border bg-input-bg text-sm text-foreground placeholder:text-input-placeholder transition focus-visible:bg-accent-soft";
 
-export default function SingleCheckTab() {
+interface SingleCheckTabProps {
+  // Told the picked level (and the one restored from a draft), so the page's
+  // detector badge shows the threshold a check will use
+  onStrictnessChange?: (value: Strictness) => void;
+}
+
+export default function SingleCheckTab({
+  onStrictnessChange,
+}: SingleCheckTabProps = {}) {
   const userId = useAuth().user?.id ?? null;
   const [initial] = useState(() => (userId ? readCheckDraft(userId) : null));
   const [answer, setAnswer] = useState(initial?.answer ?? "");
@@ -26,6 +34,9 @@ export default function SingleCheckTab() {
   const [strictness, setStrictness] = useState<Strictness>(
     initial?.strictness ?? "standard",
   );
+  useEffect(() => {
+    onStrictnessChange?.(strictness);
+  }, [strictness, onStrictnessChange]);
   const check = useCheckAnswer();
   const { showToast } = useToast();
 

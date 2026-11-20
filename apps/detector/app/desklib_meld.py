@@ -10,9 +10,11 @@ release was scored in ml-training/release_desklib_meld.py (docs/desklib-meld-rel
   3. each is divided by its own temperature, the two are averaged with weight_meld, and the result goes through a
      sigmoid, so raw_score is a calibrated probability that the answer is AI-written. Averaging the log-odds, not the
      probabilities, is what the threshold was fitted on.
-Every number comes from desklib-meld.json in the bundle. The decision threshold (0.945775, fitted on validation at 1%
-FPR) and the abstention band are reported with every score (calibration()), so the API applies the ones fitted for
-this model.
+Every number comes from desklib-meld.json in the bundle. The decision thresholds and abstention bands are reported with
+every score (calibration()), so the API applies the ones fitted for this model: one pair per strictness level from
+strictness_levels.json (ml-training/fit_strictness_levels.py: lenient 1%, standard 2% and strict 5% FPR on
+validation, the same calibrated scores cut at three places; stricter flags more), or, without that file, the bundle's
+single 1% threshold with ABSTENTION_BAND.
 """
 
 import importlib.util
@@ -37,6 +39,10 @@ DESKLIB_MAX_TOKENS = 256
 # to 0.57%, 72.8% of AI answers are still flagged and 5.7% come back uncertain. Not the API's old default of 0.08: the
 # combined probability rarely exceeds ~0.995, so a wide band would mark every AI answer uncertain.
 ABSTENTION_BAND = 0.005
+# Per-level thresholds and bands, fitted on the same validation scores. Tracked in git next to this code rather than in
+# the bundle, so changing them needs no base-image rebuild; tied to the bundle by its calibration_version.
+STRICTNESS_PATH = Path(os.getenv("STRICTNESS_LEVELS_PATH", str(Path(__file__).with_name("strictness_levels.json"))))
+STRICTNESS_LEVELS = ("lenient", "standard", "strict")
 _REQUIRED = ("model_version", "calibration_version", "threshold", "weight_meld", "cleaning_version", "desklib", "meld")
 _REQUIRED_DESKLIB = ("base_model", "base_revision", "adapter", "temperature", "max_tokens")
 _REQUIRED_MELD = ("base_revision", "adapter", "head", "temperature")
@@ -71,14 +77,62 @@ def settings() -> dict:
     return values
 
 
-def calibration() -> dict:
-    """The model and the decision settings fitted for it (from desklib-meld.json), reported with every score."""
+@lru_cache(maxsize=1)
+def strictness_levels() -> dict | None:
+    """{level: {target_fpr, threshold, abstention_band}} from strictness_levels.json, or None when there is no file
+    (then every level gets the bundle's one threshold). Fails loudly when the file was fitted for another bundle."""
+    if not STRICTNESS_PATH.exists():
+        return None
+    values = json.loads(STRICTNESS_PATH.read_text())
     config = settings()
+    if values.get("model_version") != MODEL_VERSION:
+        raise ValueError(f"{STRICTNESS_PATH.name} is for {values.get('model_version')}, this code is {MODEL_VERSION}")
+    if values.get("bundle_calibration_version") != config["calibration_version"]:
+        raise ValueError(
+            f"{STRICTNESS_PATH.name} was fitted on {values.get('bundle_calibration_version')}, the bundle is "
+            f"{config['calibration_version']}: refit it with ml-training/fit_strictness_levels.py --write"
+        )
+    levels = values.get("levels", {})
+    if sorted(levels) != sorted(STRICTNESS_LEVELS):
+        raise ValueError(f"{STRICTNESS_PATH.name} has levels {sorted(levels)}, expected {sorted(STRICTNESS_LEVELS)}")
+    for level, v in levels.items():
+        if not (0 < v["threshold"] < 1 and v["abstention_band"] >= 0 and 0 < v["target_fpr"] < 1):
+            raise ValueError(f"{STRICTNESS_PATH.name}: {level} has an impossible setting {v}")
+    # A stricter detector flags more, so its threshold is lower
+    if not levels["strict"]["threshold"] < levels["standard"]["threshold"] < levels["lenient"]["threshold"]:
+        raise ValueError(f"{STRICTNESS_PATH.name}: thresholds are not ordered strict < standard < lenient")
+    return {
+        "version": values["levels_version"],
+        "levels": {
+            level: {k: float(levels[level][k]) for k in ("target_fpr", "threshold", "abstention_band")}
+            for level in STRICTNESS_LEVELS
+        },
+    }
+
+
+def calibration() -> dict:
+    """The model and the decision settings fitted for it, reported with every score.
+
+    threshold and abstention_band are the standard level's, for an API that reads only one pair; strictness_levels
+    holds every level's (None without strictness_levels.json, when the bundle's one threshold is all there is). The
+    calibration_version names the levels too, so a check records which set its verdict came from."""
+    config = settings()
+    fitted = strictness_levels()
+    if fitted is None:
+        return {
+            "model_version": MODEL_VERSION,
+            "calibration_version": config["calibration_version"],
+            "threshold": config["threshold"],
+            "abstention_band": ABSTENTION_BAND,
+            "strictness_levels": None,
+        }
+    standard = fitted["levels"]["standard"]
     return {
         "model_version": MODEL_VERSION,
-        "calibration_version": config["calibration_version"],
-        "threshold": config["threshold"],
-        "abstention_band": ABSTENTION_BAND,
+        "calibration_version": f"{config['calibration_version']}+{fitted['version']}",
+        "threshold": standard["threshold"],
+        "abstention_band": standard["abstention_band"],
+        "strictness_levels": fitted["levels"],
     }
 
 

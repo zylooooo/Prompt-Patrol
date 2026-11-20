@@ -40,7 +40,13 @@ const FIELD_LABEL: Record<CanonicalField, string> = {
 const ALERT_CLASS =
   "rounded-md bg-danger-soft px-4 py-3 text-[13px] text-danger";
 
-export default function BatchTab() {
+interface BatchTabProps {
+  // Told the picked level (and the one restored from a draft), so the page's
+  // detector badge shows the threshold a check will use
+  onStrictnessChange?: (value: Strictness) => void;
+}
+
+export default function BatchTab({ onStrictnessChange }: BatchTabProps = {}) {
   const userId = useAuth().user?.id ?? null;
   const [draft] = useState(() => (userId ? readBatchDraft(userId) : null));
   const [rawText, setRawText] = useState<string | null>(draft?.rawText ?? null);
@@ -69,6 +75,9 @@ export default function BatchTab() {
   const [strictness, setStrictness] = useState<Strictness>(
     draft?.strictness ?? "standard",
   );
+  useEffect(() => {
+    onStrictnessChange?.(strictness);
+  }, [strictness, onStrictnessChange]);
   const [errorsExpanded, setErrorsExpanded] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

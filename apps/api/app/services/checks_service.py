@@ -19,9 +19,13 @@ from models import AbstainReasonEnum, Batch, BatchRowFailure, Check, StrictnessE
 from .detector_client import (
     CALIBRATION_VERSION,
     MODEL_VERSION,
+    UNREPORTED_MODEL_VERSION,
     Score,
+    has_reported,
     reported_calibration_version,
     reported_model_version,
+    reported_strictness_levels,
+    reported_threshold,
     score_text,
 )
 
@@ -29,14 +33,18 @@ logger = logging.getLogger(__name__)
 
 DETECTOR_TIMEOUT_SECONDS = 10
 
-# For an uncalibrated model (the roberta baseline): one threshold per strictness level and a wide band.
-UNCALIBRATED_THRESHOLDS: dict[str, float] = {"lenient": 0.4, "standard": 0.5, "strict": 0.65}
+# For an uncalibrated model (the roberta baseline): one threshold per strictness level and a wide band. A stricter
+# level flags more, so it has the lower threshold.
+UNCALIBRATED_THRESHOLDS: dict[str, float] = {"lenient": 0.65, "standard": 0.5, "strict": 0.4}
 UNCALIBRATED_ABSTENTION_BAND = 0.08
-TARGET_FPR: dict[str, float] = {"lenient": 0.05, "standard": 0.01, "strict": 0.001}
+# The share of student answers each level is fitted to flag on validation: a stricter detector flags more answers,
+# and so more students by mistake (openapi.yaml [0.37.0]). A detector that reports its own strictness_levels reports
+# these too (and its numbers win); these are for display and for a detector that doesn't.
+TARGET_FPR: dict[str, float] = {"lenient": 0.01, "standard": 0.02, "strict": 0.05}
 
-# A calibrated detector reports its own threshold and band with every score (Score.threshold / abstention_band), and
-# those are what _settings_for applies. Only the 1% FPR threshold has been fitted for any model, so until the 5% and
-# 0.1% ones are, every strictness level uses that one threshold so no level behaves wildly.
+# A calibrated detector reports its own settings with every score, and those are what _settings_for applies: one
+# threshold and band per strictness level (Score.strictness_levels, fitted by ml-training/fit_strictness_levels.py),
+# or, from a detector without them, its one threshold and band (Score.threshold / abstention_band) for every level.
 #
 # DETECTOR_THRESHOLD and ABSTENTION_BAND are only the fallback for a detector too old to report them (and the e2e
 # stub). Kept under the old names below so a fallback keeps working exactly as before.
@@ -59,21 +67,43 @@ def strictness_levels() -> list[str]:
     return list(TARGET_FPR) if STRICTNESS_ENABLED else ["standard"]
 
 
+def _target_fpr(level: str, reported: dict[str, dict[str, float]] | None) -> float:
+    if reported and level in reported:
+        return reported[level]["target_fpr"]
+    return TARGET_FPR[level]
+
+
+def _threshold(level: str, reported: dict[str, dict[str, float]] | None) -> float | None:
+    """The threshold a check at this level would be judged against, picked as _settings_for picks it. None while
+    nothing names the model (a loading detector and no DETECTOR_MODEL_VERSION): no guessed threshold for it."""
+    if not has_reported():
+        return THRESHOLDS[level] if reported_model_version() is not None else None
+    if reported and level in reported:
+        return reported[level]["threshold"]
+    threshold = reported_threshold()
+    return threshold if threshold is not None else UNCALIBRATED_THRESHOLDS[level]
+
+
 def detector_capabilities() -> dict:
-    """What GET /api/detector returns. The model and calibration are the ones the detector last reported (see
-    detector_client._remember), so they name what is actually running."""
+    """What GET /api/detector returns. The model, calibration, target FPRs and thresholds are the ones the detector
+    last reported (see detector_client._remember), so they name what is actually running."""
+    reported = reported_strictness_levels()
     return {
         "model_version": reported_model_version(),
         "requires_question_text": False,
         "min_answer_chars": 10,
         "max_answer_chars": 10000,
         "max_tokens_scored": 512,
-        "strictness_levels": [{"level": level, "target_fpr": TARGET_FPR[level]} for level in strictness_levels()],
+        "strictness_levels": [
+            {"level": level, "target_fpr": _target_fpr(level, reported), "threshold": _threshold(level, reported)}
+            for level in strictness_levels()
+        ],
         "calibration_version": reported_calibration_version(),
         "supports_confidence": False,
         "supports_explanation": False,
         "supports_spans": False,
     }
+
 
 @dataclass(frozen=True)
 class AppliedSettings:
@@ -83,6 +113,7 @@ class AppliedSettings:
     calibration_version: str | None
     threshold: float
     abstention_band: float
+    target_fpr: float
 
 
 # (setting, environment value, reported value) already warned about, so a mismatch is logged once, not per check
@@ -110,21 +141,32 @@ def _settings_for(result: Score, strictness: str) -> AppliedSettings:
     another model's scores. A detector too old to report falls back to the environment, exactly as before."""
     if result.model_version is None:
         return AppliedSettings(
-            model_version=MODEL_VERSION,
+            model_version=MODEL_VERSION or UNREPORTED_MODEL_VERSION,
             calibration_version=CALIBRATION_VERSION if CALIBRATION_VERSION else None,
             threshold=THRESHOLDS[strictness],
             abstention_band=ABSTENTION_BAND,
+            target_fpr=TARGET_FPR[strictness],
         )
 
-    if result.threshold is not None:
-        threshold = result.threshold
-        _warn_if_env_disagrees(
-            "threshold", _ENV_THRESHOLD, threshold, _ENV_THRESHOLD is not None and float(_ENV_THRESHOLD) == threshold
-        )
+    level = (result.strictness_levels or {}).get(strictness)
+    if level is not None:
+        # Fitted for this level. DETECTOR_THRESHOLD / ABSTENTION_BAND are one value for every level, so there is
+        # nothing sensible to compare them with here.
+        threshold, band, target_fpr = level["threshold"], level["abstention_band"], level["target_fpr"]
     else:
-        threshold = UNCALIBRATED_THRESHOLDS[strictness]
-    band = result.abstention_band if result.abstention_band is not None else UNCALIBRATED_ABSTENTION_BAND
-    _warn_if_env_disagrees("abstention_band", _ENV_BAND, band, _ENV_BAND is not None and float(_ENV_BAND) == band)
+        if result.threshold is not None:
+            threshold = result.threshold
+            _warn_if_env_disagrees(
+                "threshold",
+                _ENV_THRESHOLD,
+                threshold,
+                _ENV_THRESHOLD is not None and float(_ENV_THRESHOLD) == threshold,
+            )
+        else:
+            threshold = UNCALIBRATED_THRESHOLDS[strictness]
+        band = result.abstention_band if result.abstention_band is not None else UNCALIBRATED_ABSTENTION_BAND
+        _warn_if_env_disagrees("abstention_band", _ENV_BAND, band, _ENV_BAND is not None and float(_ENV_BAND) == band)
+        target_fpr = TARGET_FPR[strictness]
     env_model = os.getenv("DETECTOR_MODEL_VERSION")
     _warn_if_env_disagrees("model_version", env_model, result.model_version, env_model == result.model_version)
     env_calibration = os.getenv("DETECTOR_CALIBRATION_VERSION") or None
@@ -139,6 +181,7 @@ def _settings_for(result: Score, strictness: str) -> AppliedSettings:
         calibration_version=result.calibration_version,
         threshold=threshold,
         abstention_band=band,
+        target_fpr=target_fpr,
     )
 
 
@@ -197,7 +240,7 @@ async def create_check(
         calibration_version=applied.calibration_version,
         strictness_applied=StrictnessEnum(strictness),
         threshold_applied=applied.threshold,
-        target_fpr=TARGET_FPR[strictness],
+        target_fpr=applied.target_fpr,
         used_question_text=False,
         # The judgement is recorded either way; only the text is withheld.
         answer_text=answer_text if retain_answer else None,
