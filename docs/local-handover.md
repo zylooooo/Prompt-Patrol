@@ -18,6 +18,11 @@ uploads from the browser) can be reached from the machine, and only from `localh
 worker have no ports and no internet access. Only the API can reach the internet, for Auth0. Check history is
 hard-deleted after 90 days by the `purge` service, as in AWS.
 
+![Prompt Patrol local architecture, orchestrated by Docker Compose](assets/prompt-patrol-local-architecture.png)
+
+The diagram source is [`assets/prompt-patrol-local-architecture.drawio`](assets/prompt-patrol-local-architecture.drawio).
+Re-export the PNG from draw.io when `release/compose.yml` changes.
+
 Differences from AWS: no HTTPS and no WAF (the browser treats `localhost` as secure), and access rules are per
 network rather than per port. Uploaded batch CSVs are not expired after 60 days as they are in AWS.
 

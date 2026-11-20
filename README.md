@@ -78,6 +78,19 @@ Production runs at <https://app.prompt-patrol.com>, with every regional resource
 
 The diagram source is [`docs/assets/prompt-patrol-aws-architecture.drawio`](docs/assets/prompt-patrol-aws-architecture.drawio). Edit it in draw.io and re-export the PNG when the infrastructure changes. [`infra/README.md`](infra/README.md) covers how each piece is provisioned.
 
+### Local deployment (Docker Compose)
+
+![Prompt Patrol local architecture, orchestrated by Docker Compose](docs/assets/prompt-patrol-local-architecture.png)
+
+This is how the sponsor runs the app: the whole stack on one machine from the prebuilt images in [`release/compose.yml`](release/compose.yml). It mirrors the AWS tiers on a smaller scale, with the same service roles and network separation. The numbered steps in the diagram are explained in its side panel. In short:
+
+- **Edge.** Only the web app (`localhost:5173`) and the S3 stand-in (`localhost:4566`, for batch CSV uploads from the browser) are published to the host. nginx serves the SPA and forwards `/api/*` to the API, as CloudFront does in AWS.
+- **Services.** The api, worker, detector, Postgres and a daily `purge` job run as separate containers. LocalStack stands in for S3 and SQS, with the same bucket, queue and DLQ the Terraform creates.
+- **Networks.** Each edge in the diagram is labelled with its Compose network. Only the api can reach the internet, for Auth0. The detector, worker, Postgres and `purge` have no ports and no internet route.
+- **Internet.** Auth0 (sign-in and provisioning) and Resend (Auth0's emails) are the only external dependencies, so the machine must be online.
+
+The diagram source is [`docs/assets/prompt-patrol-local-architecture.drawio`](docs/assets/prompt-patrol-local-architecture.drawio). Edit it in draw.io and re-export the PNG when `release/compose.yml` changes. To run it, see [`release/README.md`](release/README.md).
+
 ## Local dev
 
 1. `cd apps && docker compose up -d --build` — starts Postgres, LocalStack (S3 + SQS), the desklib + MELD detector, the API, the batch worker, a daily purge job, and an nginx-served production build of the frontend on <http://localhost:5173>. The networks mirror the AWS subnet tiers (see the header of `apps/docker-compose.yml`): only the frontend and LocalStack have host ports (loopback only), and of the backend services only the API can reach the internet. The API and worker never share a network, and Postgres is reachable only from the API, worker and purge job. Docker needs about 12 GB of memory for the detector. The API reads `apps/api/.env` (copy it from `.env.example`), and `apps/api/app/config/settings.py` refuses to start unless all six `AUTH0_*` variables are set — an incomplete Auth0 configuration is a startup failure rather than a runtime one, on the grounds that an app nobody can sign into should say so immediately. The API also applies migrations on start (`apps/api/entrypoint.sh`), so the tables are there by the time it answers its health check. A failed migration stops the container rather than leaving it serving errors, so `docker compose logs api` is the first place to look if it does not come up.

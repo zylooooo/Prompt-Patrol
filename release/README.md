@@ -142,3 +142,7 @@ Only the web app (port 5173) and the S3 stand-in (port 4566, for batch CSV uploa
 from the machine, and only from `localhost`. The database, detector and worker have no ports and no internet access.
 Only the API can reach the internet, for Auth0. The architecture design is intentional and we want to follow our
 intended production environment on cloud as closely as possible.
+
+See the [local architecture diagram](https://github.com/zylooooo/Prompt-Patrol/blob/main/docs/assets/prompt-patrol-local-architecture.png)
+for how the containers, networks and the two published ports fit together. It is a link rather than an embedded image
+because the docs folder is not part of this package.
