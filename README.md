@@ -1,6 +1,9 @@
 # Prompt-Patrol
 
 [![CI](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml/badge.svg)](https://github.com/zylooooo/Prompt-Patrol/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/zylooooo/Prompt-Patrol?include_prereleases&label=release)](https://github.com/zylooooo/Prompt-Patrol/releases)
+
+**Want to run it on your own machine?** Download the bundle from the [latest release](https://github.com/zylooooo/Prompt-Patrol/releases); the README inside it walks through setup. Pre-built images are in [Packages](https://github.com/zylooooo/Prompt-Patrol/pkgs/container/prompt-patrol-api).
 
 SMU CS480 Capstone Project: a web-based triage tool that flags potentially AI-generated short student answers for an instructor to review. It is a triage aid, not a verdict system. Every flag is a prompt for human judgement, and `uncertain` is a first-class outcome rather than an error.
 
@@ -74,6 +77,19 @@ Production runs at <https://app.prompt-patrol.com>, with every regional resource
 - **Delivery.** GitHub Actions assumes a deploy role via OIDC (no stored keys), pushes images to ECR, rolls the ECS services and syncs the SPA.
 
 The diagram source is [`docs/assets/prompt-patrol-aws-architecture.drawio`](docs/assets/prompt-patrol-aws-architecture.drawio). Edit it in draw.io and re-export the PNG when the infrastructure changes. [`infra/README.md`](infra/README.md) covers how each piece is provisioned.
+
+### Local deployment (Docker Compose)
+
+![Prompt Patrol local architecture, orchestrated by Docker Compose](docs/assets/prompt-patrol-local-architecture.png)
+
+This is how the sponsor runs the app: the whole stack on one machine from the prebuilt images in [`release/compose.yml`](release/compose.yml). It mirrors the AWS tiers on a smaller scale, with the same service roles and network separation. The numbered steps in the diagram are explained in its side panel. In short:
+
+- **Edge.** Only the web app (`localhost:5173`) and the S3 stand-in (`localhost:4566`, for batch CSV uploads from the browser) are published to the host. nginx serves the SPA and forwards `/api/*` to the API, as CloudFront does in AWS.
+- **Services.** The api, worker, detector, Postgres and a daily `purge` job run as separate containers. LocalStack stands in for S3 and SQS, with the same bucket, queue and DLQ the Terraform creates.
+- **Networks.** Each edge in the diagram is labelled with its Compose network. Only the api can reach the internet, for Auth0. The detector, worker, Postgres and `purge` have no ports and no internet route.
+- **Internet.** Auth0 (sign-in and provisioning) and Resend (Auth0's emails) are the only external dependencies, so the machine must be online.
+
+The diagram source is [`docs/assets/prompt-patrol-local-architecture.drawio`](docs/assets/prompt-patrol-local-architecture.drawio). Edit it in draw.io and re-export the PNG when `release/compose.yml` changes. To run it, see [`release/README.md`](release/README.md).
 
 ## Local dev
 
