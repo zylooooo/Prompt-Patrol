@@ -1,15 +1,17 @@
 # Prompt Patrol: run it on your own machine
 
-Prompt patrol is an instructor-facign tool that flags potentially AI-generated short student answers for human review.
-This guide will walk you through how to runs the whole application locally on your own machine using docker images,
+Prompt Patrol is an instructor-facing tool that flags potentially AI-generated short student answers for human review.
+This guide walks you through running the whole application on your own machine from prebuilt Docker images,
 orchestrated with Docker Compose. All released images are stored in our personal
 [GitHub Container Registry (GHCR)](<https://github.com/zylooooo?tab=packages&repo_name=Prompt-Patrol>). Running the
 [`compose.yml`](compose.yml) will pull the latest released images from GHCR. Finally, the app will be orchestrated with
 `Docker Compose`.
 
-> **NOTE**: There are some parts of the application like the Authentication Provider (Auth0) and the SMTP service (Resend)
-> which requires an internet connection. It will be a sharead tenant across every local instance of Prompt Patrol that
-> might be run.
+> **NOTE**: Sign-in (Auth0) and email (Resend) are online services, so the machine must be connected to the internet.
+>
+> **Run only one copy of Prompt Patrol per Auth0 tenant.** Each copy has its own database, but they would share the
+> tenant's accounts: adding or deleting a user on one copy removes the sign-in for that email on every other copy
+> ("not set up yet"). If more than one copy is needed, each one needs its own Auth0 tenant. Ask the team.
 
 ## What you need
 
@@ -60,8 +62,10 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 Fill in every blank value in `.env`:
 
 - **Auth0 values** (`AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH0_M2M_CLIENT_ID`,
-  `AUTH0_M2M_CLIENT_SECRET`): the team sends these separately. They are never inside this package.
-  <!-- TODO: replace with the final instructions once the sponsor decides hosted vs your-own Auth0 tenant. -->
+  `AUTH0_M2M_CLIENT_SECRET`): they are never inside this package. Either copy them yourself from the Auth0 dashboard
+  (Applications → the login app and the M2M app → Settings) once the team gives you admin access to the tenant, or
+  the team sends them to you over a secure channel. Rotate both client secrets once you have them, so only you hold
+  working copies.
 - **Database**: pick any `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, then build `DB_URL` from them:
   `postgresql+asyncpg://<user>:<password>@postgres:5432/<db>`. Use letters and digits in the password.
 - **`SESSION_SECRET`**: at least 32 random characters, for example
@@ -70,7 +74,7 @@ Fill in every blank value in `.env`:
 Leave everything else as it is. If a required value is blank, the API stops at start and `docker compose logs api`
 names it. (A blank `POSTGRES_*` value shows up in `docker compose logs postgres` instead.)
 
-> *If you are unsure of what values to put in the `.env` file, you can reach out to the development team for assistance.
+> If you are unsure what to put in `.env`, ask the development team.
 
 ## 3. Start
 
@@ -108,8 +112,33 @@ docker compose down -v         # delete everything, including the database
 docker compose logs api        # first place to look if something doesn't start
 ```
 
-Uploaded batch CSVs stay until `docker compose down -v`, so remove the stack when you are done with real student data.
-Check history is deleted automatically after 90 days.
+Uploaded batch CSVs and queued batch work are held in memory by LocalStack (the S3/SQS stand-in), not on disk, so
+restarting it, the stack or the machine clears them. **Let running batches finish before you stop the stack.** Users
+and check history live in the database volume and survive restarts until `docker compose down -v`. Check history is
+deleted automatically after 90 days.
+
+`.env` holds your passwords and Auth0 secrets. Don't share it, and don't paste the output of `docker compose config`
+or `docker inspect` anywhere: both print those values.
+
+## Back up and restore the database
+
+`docker compose down -v` deletes every user and all check history, with no undo. Take a backup first:
+
+```sh
+docker compose exec postgres sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" -f /tmp/backup.dump'
+docker compose cp postgres:/tmp/backup.dump ./backup.dump
+```
+
+To restore into a running stack:
+
+```sh
+docker compose stop api worker purge frontend
+docker compose cp ./backup.dump postgres:/tmp/backup.dump
+docker compose exec postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/backup.dump'
+docker compose up -d
+```
+
+The backup contains student data. Keep it somewhere private and delete it when you no longer need it.
 
 ## Upgrade
 
